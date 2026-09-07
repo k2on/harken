@@ -1,12 +1,10 @@
-//! A to-do list on Exo, in iced. Runs on the desktop.
+//! A to-do list on Exo, in iced, on the desktop (`just desktop`) and in a
+//! browser (`just web`).
 //!
-//! The browser target is written and does not yet build: iced is fine on wasm,
-//! but `wasm32-unknown-unknown` has no SQLite for Diesel to sit on. See "The
-//! browser build is blocked on SQLite" in `docs/decisions.md` for what was
-//! tried and what the two remaining routes are.
-//!
-//! What would differ between the two targets is one line — where the database
-//! lives — because the engine is sans-io and has no idea which it is in.
+//! The same [`exo::Client`] drives both. What differs between the two targets
+//! is one line — where the database lives — and that is the point: the engine
+//! is sans-io and has no idea which of the two it is in. How SQLite comes to
+//! exist in a browser at all is in `docs/decisions.md`.
 
 pub mod todo;
 
@@ -23,7 +21,9 @@ fn open() -> exo::Result<exo::Connection> {
     exo::open_path(dir.join("exo-iced-demo.db"))
 }
 
-/// In the browser, in memory — once there is a SQLite here to open at all.
+/// In the browser, in memory: `sqlite-wasm-rs` registers a memory VFS by
+/// default. It can also persist to OPFS, which needs an async handshake before
+/// the first query — worth doing, and not what this example is for.
 #[cfg(target_arch = "wasm32")]
 fn open() -> exo::Result<exo::Connection> {
     exo::open_memory()
@@ -164,4 +164,37 @@ pub fn start() {
     let _ = iced::application(App::boot, App::update, App::view)
         .title("exo · to-do")
         .run();
+}
+
+/// Exercises Exo end to end and reports what happened, so a browser can prove
+/// the engine works there independently of whether anything renders.
+///
+/// Called from the page as `?selftest`; the desktop has the test suite instead.
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen]
+pub fn exo_self_test() -> String {
+    console_error_panic_hook::set_once();
+    let mut app = App::boot();
+    app.update(Message::Typed("buy oat milk".into()));
+    app.update(Message::Add);
+    app.update(Message::Typed("book the ferry".into()));
+    app.update(Message::Add);
+    let first = app.items[0].id;
+    app.update(Message::Toggle(first, true));
+    // A mutation the app itself refuses must not reach the pending queue.
+    app.update(Message::Typed("   ".into()));
+    app.update(Message::Add);
+    let refused = !app.note.is_empty();
+
+    format!(
+        "items={:?} done={:?} pending={} cursor={} refused_empty={}",
+        app.items
+            .iter()
+            .map(|i| i.text.as_str())
+            .collect::<Vec<_>>(),
+        app.items.iter().map(|i| i.done).collect::<Vec<_>>(),
+        app.pending,
+        app.client.cursor(),
+        refused,
+    )
 }

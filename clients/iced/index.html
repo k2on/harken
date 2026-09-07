@@ -14,10 +14,15 @@
   <body>
     <p id="boot">loading exo…</p>
     <script type="module">
-      import init from "./pkg/exo_iced_demo.js";
+      import init, { exo_self_test } from "./pkg/exo_iced_demo.js";
       // The wasm module's `start` runs the app; drop the placeholder once it has.
       await init();
       document.getElementById("boot")?.remove();
+      // `?selftest` drives Exo directly and prints the result, so the engine can
+      // be checked in a browser without depending on anything rendering.
+      if (location.search.includes("selftest")) {
+        console.log("EXO_SELF_TEST " + exo_self_test());
+      }
     </script>
   </body>
 </html>
