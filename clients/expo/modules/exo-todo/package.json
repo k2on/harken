@@ -1,0 +1,50 @@
+{
+  "name": "exo-todo",
+  "version": "0.1.0",
+  "description": "The Exo to-do client, generated from crates/ffi. Do not write domain logic here.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/maxkoon/harken.git"
+  },
+  "author": "harken",
+  "license": "MIT",
+  "private": true,
+  "main": "src/index.tsx",
+  "source": "src/index.tsx",
+  "types": "src/index.tsx",
+  "files": [
+    "src",
+    "cpp",
+    "android",
+    "ios",
+    "ExoTodo.podspec",
+    "!**/build",
+    "!**/.cxx"
+  ],
+  "scripts": {
+    "ubrn:android": "ubrn build android --config ubrn.config.yaml --and-generate",
+    "ubrn:ios": "ubrn build ios --config ubrn.config.yaml --and-generate",
+    "ubrn:clean": "rm -rf cpp android ios src/generated src/index.tsx src/NativeExoTodo.ts ExoTodo.podspec"
+  },
+  "dependencies": {
+    "@ubjs/core": "0.31.0-5",
+    "uniffi-bindgen-react-native": "0.31.0-5"
+  },
+  "peerDependencies": {
+    "react": "*",
+    "react-native": "*"
+  },
+  "codegenConfig": {
+    "name": "RNExoTodoSpec",
+    "type": "all",
+    "jsSrcsDir": "src",
+    "android": {
+      "javaPackageName": "com.exotodo"
+    }
+  },
+  "create-react-native-library": {
+    "type": "turbo-module",
+    "languages": "cpp",
+    "version": "0.42.3"
+  }
+}

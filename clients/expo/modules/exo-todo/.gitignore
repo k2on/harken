@@ -1,0 +1,14 @@
+# Everything here is generated from `crates/ffi` by `just ffi-bindings`. It is
+# ignored rather than committed so it cannot drift from the Rust it came from:
+# if it is not in the tree, nobody can edit it by hand and then wonder why the
+# next build overwrites them. What *is* committed is `package.json` and
+# `ubrn.config.yaml` — the inputs.
+android/
+cpp/
+ios/
+src/generated/
+src/index.tsx
+src/NativeExoTodo.ts
+ExoTodo.podspec
+build/
+node_modules/

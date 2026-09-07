@@ -1,0 +1,28 @@
+[package]
+name = "exo-todo-ffi"
+version = "0.1.0"
+description = "UniFFI bindings for the demo to-do client: one Rust definition, generated into TypeScript for the Expo app."
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+# `cdylib` is what the Android/iOS builds load and what `ubrn generate jsi
+# bindings --library` reads the UniFFI metadata back out of. `staticlib` is what
+# an iOS xcframework links. `lib` keeps `cargo test` and rust-analyzer working.
+crate-type = ["cdylib", "staticlib", "lib"]
+name = "exo_todo_ffi"
+
+[dependencies]
+# No `ws` feature: the socket lives in JavaScript. React Native already has a
+# WebSocket, exactly as a browser does, and `transport/web.rs` exists because
+# that was already true once. Keeping it there is what leaves `tungstenite`, a
+# TLS stack and a thread out of the mobile binary — the frames are tens of bytes
+# a few times a second, so what crosses the bridge is not where the time goes.
+exo.workspace = true
+thiserror.workspace = true
+todo.workspace = true
+# Proc-macro mode: no UDL file, no build script. The Rust below *is* the
+# interface definition, which is the point — there is no second place to keep
+# in step.
+uniffi.workspace = true
