@@ -1,0 +1,32 @@
+[package]
+name = "exo-iced-demo"
+version = "0.1.0"
+description = "The same to-do list as the examples, in iced. Desktop today; the browser is blocked on SQLite."
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+# cdylib for the browser (wasm-bindgen needs it), rlib so the desktop binary
+# can link the same code.
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+diesel.workspace = true
+exo = { path = "../../crates/exo" }
+iced.workspace = true
+serde.workspace = true
+
+# Native: a real SQLite on a real filesystem, so the list is durable.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+libsqlite3-sys.workspace = true
+
+# Browser. NOT YET BUILDABLE — see "The browser build is blocked on SQLite" in
+# docs/decisions.md. iced itself is fine on wasm; SQLite is what stops it. These
+# stay declared because they are correct and are what the browser build needs
+# once the SQLite question is settled.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+console_error_panic_hook = "0.1"
+getrandom = { version = "0.2", features = ["js"] }
+iced = { workspace = true, features = ["webgl"] }
+wasm-bindgen = "0.2"
