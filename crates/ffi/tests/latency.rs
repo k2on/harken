@@ -16,7 +16,7 @@
 
 use std::time::Instant;
 
-const MODULE: &[u8] = petros_mutators::BUNDLED;
+const MODULE: &[u8] = petros_wasm_host::BUNDLED;
 
 fn median(mut v: Vec<f64>) -> f64 {
     v.sort_by(|a, b| a.partial_cmp(b).unwrap());
@@ -27,7 +27,7 @@ fn median(mut v: Vec<f64>) -> f64 {
 #[test]
 #[ignore = "a measurement, not an assertion: run it with `just latency`"]
 fn the_cost_of_the_thread() {
-    use petros_mutators::Mutators;
+    use petros_wasm_host::Mutators;
 
     let m = Mutators::load(MODULE).unwrap();
     let mut conn = petros::open_memory().unwrap();

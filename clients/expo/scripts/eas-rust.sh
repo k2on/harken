@@ -63,7 +63,7 @@ case "$stage" in
       cargo build -p todo-wasm --target wasm32-unknown-unknown --profile mutators
       # Writes src/mutators.gen.ts, which is gitignored and therefore not in the
       # upload — the bundler needs it to exist before it runs, which is now.
-      cargo run -q -p emit-mutators
+      cargo run -q -p petros-codegen
     )
 
     echo "--- cross-compiling the engine and generating the turbo module"

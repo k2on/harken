@@ -26,10 +26,10 @@
 
 use std::sync::Mutex;
 
-use petros_mutators::app;
+use petros_wasm_host::app;
 
 use petros::{decode, encode, AutoCtx, Client, MutationError, ServerMsg};
-use petros_mutators::WasmTodo;
+use petros_wasm_host::WasmTodo;
 use todo::list;
 
 uniffi::setup_scaffolding!();
@@ -159,7 +159,7 @@ impl TodoClient {
     /// mutate("SetDone", r#"{"id": "67e55084-...", "done": true}"#)
     /// ```
     pub fn mutate(&self, kind: String, args: String) -> Result<(), TodoError> {
-        let payload = petros_mutators::app::from_json(&kind, &args)
+        let payload = petros_wasm_host::app::from_json(&kind, &args)
             .map_err(|message| TodoError::Refused { reason: message })?;
         self.with(|c| {
             c.mutate(payload)?;
@@ -227,12 +227,12 @@ impl TodoClient {
     /// the first mutation, so a bad push fails loudly and the old one keeps
     /// running.
     pub fn load_mutators(&self, wasm: Vec<u8>) -> Result<u64, TodoError> {
-        petros_mutators::load(&wasm).map_err(|message| TodoError::Engine { message })
+        petros_wasm_host::load(&wasm).map_err(|message| TodoError::Engine { message })
     }
 
     /// Which module is running, or zero if none has been installed yet.
     pub fn mutators_generation(&self) -> u64 {
-        petros_mutators::generation()
+        petros_wasm_host::generation()
     }
 
     // ---------------------------------------------------------- the transport

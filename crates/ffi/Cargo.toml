@@ -22,7 +22,7 @@ name = "petros_todo_ffi"
 petros.workspace = true
 # The wasm host, shared with the server and the terminal peers so that every
 # one of them runs the same `apply`.
-petros-mutators.workspace = true
+petros-wasm-host.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 todo = { workspace = true, features = ["storage"] }
@@ -36,4 +36,4 @@ uniffi.workspace = true
 # `just mutators` produces.
 ciborium.workspace = true
 diesel = { workspace = true, features = ["sqlite"] }
-petros-mutators.workspace = true
+petros-wasm-host.workspace = true
