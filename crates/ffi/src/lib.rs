@@ -26,8 +26,11 @@
 
 use std::sync::Mutex;
 
+use exo_mutators::app;
+
 use exo::{decode, encode, AutoCtx, Client, Id, MutationError, ServerMsg};
-use todo::{list, Todo, TodoApp};
+use exo_mutators::WasmTodo;
+use todo::list;
 
 uniffi::setup_scaffolding!();
 
@@ -110,13 +113,13 @@ fn parse_id(id: &str) -> Result<Id, TodoError> {
 /// view to read.
 #[derive(uniffi::Object)]
 pub struct TodoClient {
-    inner: Mutex<Client<TodoApp>>,
+    inner: Mutex<Client<WasmTodo>>,
 }
 
 impl TodoClient {
     fn with<T>(
         &self,
-        f: impl FnOnce(&mut Client<TodoApp>) -> Result<T, TodoError>,
+        f: impl FnOnce(&mut Client<WasmTodo>) -> Result<T, TodoError>,
     ) -> Result<T, TodoError> {
         let mut guard = self.inner.lock().map_err(|_| TodoError::Engine {
             message: "the client lock was poisoned by an earlier panic".into(),
@@ -135,7 +138,7 @@ impl TodoClient {
     #[uniffi::constructor]
     pub fn open(db_path: String, actor: String) -> Result<Self, TodoError> {
         let conn = exo::open_path(&db_path)?;
-        let client = Client::<TodoApp>::open(conn, actor, AutoCtx::system())?;
+        let client = Client::<WasmTodo>::open(conn, actor, AutoCtx::system())?;
         Ok(TodoClient {
             inner: Mutex::new(client),
         })
@@ -143,19 +146,26 @@ impl TodoClient {
 
     // ------------------------------------------------------------ mutations
 
-    /// Add a to-do. Returns the new entry's id.
+    /// Add a to-do.
     ///
     /// Refused if the text is blank — checked here, against the view the caller
     /// is actually looking at, so an intent that is invalid never reaches the
     /// pending queue or the wire.
-    pub fn add(&self, text: String) -> Result<String, TodoError> {
-        self.with(|c| Ok(c.mutate(Todo::add(&text))?.to_string()))
+    ///
+    /// Returns nothing on purpose. The row's id is generated inside the module
+    /// by `fill_auto` and belongs to the log, not to this call; read it from the
+    /// next [`list`](Self::list), which is where every other caller gets it.
+    pub fn add(&self, text: String) -> Result<(), TodoError> {
+        self.with(|c| {
+            c.mutate(app::add(&text))?;
+            Ok(())
+        })
     }
 
     pub fn set_done(&self, id: String, done: bool) -> Result<(), TodoError> {
         let id = parse_id(&id)?;
         self.with(|c| {
-            c.mutate(Todo::SetDone { id, done })?;
+            c.mutate(app::set_done(id.as_uuid().as_bytes(), done))?;
             Ok(())
         })
     }
@@ -163,7 +173,7 @@ impl TodoClient {
     pub fn remove(&self, id: String) -> Result<(), TodoError> {
         let id = parse_id(&id)?;
         self.with(|c| {
-            c.mutate(Todo::Remove { id })?;
+            c.mutate(app::remove(id.as_uuid().as_bytes()))?;
             Ok(())
         })
     }
@@ -187,6 +197,26 @@ impl TodoClient {
             .lock()
             .map(|mut c| c.pending_len() as u32)
             .unwrap_or(0)
+    }
+
+    // ---------------------------------------------------------- hot reload
+
+    /// Install a mutator module, replacing whatever was running.
+    ///
+    /// This is the whole hot-reload path on this side: Metro pushes the new
+    /// bytes, the app calls this, and the next mutation runs the new `apply`.
+    /// Returns the generation, which moves on every successful swap.
+    ///
+    /// A module that does not export the ABI is rejected here rather than at
+    /// the first mutation, so a bad push fails loudly and the old one keeps
+    /// running.
+    pub fn load_mutators(&self, wasm: Vec<u8>) -> Result<u64, TodoError> {
+        exo_mutators::load(&wasm).map_err(|message| TodoError::Engine { message })
+    }
+
+    /// Which module is running, or zero if none has been installed yet.
+    pub fn mutators_generation(&self) -> u64 {
+        exo_mutators::generation()
     }
 
     // ---------------------------------------------------------- the transport
@@ -213,7 +243,7 @@ impl TodoClient {
 
     /// Hand one frame from the server to the engine.
     pub fn recv(&self, frame: Vec<u8>) -> Result<(), TodoError> {
-        let msg: ServerMsg<Todo> = decode(&frame)?;
+        let msg: ServerMsg<app::Payload> = decode(&frame)?;
         self.with(|c| Ok(c.recv(msg)?))
     }
 

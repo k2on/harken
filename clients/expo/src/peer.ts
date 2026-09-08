@@ -19,6 +19,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Paths } from 'expo-file-system';
 import { TodoClient, type TodoClientLike, type TodoItem } from 'exo-todo';
 
+import { MUTATORS_BUILD, installMutators, watchMutators } from './mutators';
+
 /** How often the transport is pumped. Small enough to feel live. */
 const TICK_MS = 50;
 
@@ -29,6 +31,8 @@ export type PeerState = {
   online: boolean;
   /** The last thing worth saying out loud: an error, a rejection, a status. */
   note: string;
+  /** Which mutator module is running. Moves on every hot swap. */
+  mutators: number;
 };
 
 export type Peer = PeerState & {
@@ -65,6 +69,7 @@ export function usePeer(actor: string, server: string): Peer {
     pending: 0,
     online: false,
     note: '',
+    mutators: 0,
   });
 
   const snapshot = useCallback((client: TodoClientLike) => {
@@ -74,6 +79,7 @@ export function usePeer(actor: string, server: string): Peer {
       pending: client.pendingLen(),
       online: socketRef.current !== null,
       note: noteRef.current,
+      mutators: Number(client.mutatorsGeneration()),
     });
   }, []);
 
@@ -156,9 +162,28 @@ export function usePeer(actor: string, server: string): Peer {
       return;
     }
     clientRef.current = client;
+
+    // The domain arrives as a wasm module rather than being linked in, so it
+    // has to be installed before the first mutation — and reinstalled whenever
+    // Metro pushes a new one. That second line is the whole hot-reload story:
+    // the database, the socket and the React tree all survive it, and only
+    // `apply` changes underneath them.
+    try {
+      installMutators(client);
+      noteRef.current = `mutators ${MUTATORS_BUILD}`;
+    } catch (e) {
+      noteRef.current = `could not install the mutators: ${messageOf(e)}`;
+    }
+    const unwatch = watchMutators(client, (generation, build) => {
+      noteRef.current =
+        generation < 0 ? `the new mutators would not load: ${build}` : `mutators ${build} · gen ${generation}`;
+      dirtyRef.current = true;
+    });
+
     dirtyRef.current = true;
     connect();
     return () => {
+      unwatch();
       disconnect('');
       clientRef.current = null;
       // The Rust object is reference counted; let go of it explicitly rather

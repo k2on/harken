@@ -37,6 +37,17 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "eas": {
+        "projectId": "REPLACE-ME-RUN-eas-init"
+      }
+    },
+    "updates": {
+      "url": "https://u.expo.dev/REPLACE-ME-RUN-eas-init"
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
     }
   }
 }

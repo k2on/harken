@@ -20,9 +20,18 @@ name = "exo_todo_ffi"
 # TLS stack and a thread out of the mobile binary — the frames are tens of bytes
 # a few times a second, so what crosses the bridge is not where the time goes.
 exo.workspace = true
+# The wasm host, shared with the server and the terminal peers so that every
+# one of them runs the same `apply`.
+exo-mutators.workspace = true
 thiserror.workspace = true
 todo.workspace = true
 # Proc-macro mode: no UDL file, no build script. The Rust below *is* the
 # interface definition, which is the point — there is no second place to keep
 # in step.
 uniffi.workspace = true
+
+[dev-dependencies]
+# The tests apply real mutations, so they need a database and the module that
+# `just mutators` produces.
+diesel = { workspace = true, features = ["sqlite"] }
+exo-mutators.workspace = true

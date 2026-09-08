@@ -106,7 +106,7 @@ export default function Todo() {
           <Text style={s.pillText}>{peer.online ? 'online' : 'offline'}</Text>
         </Pressable>
         <Text style={s.statusText} numberOfLines={2}>
-          cursor {peer.cursor} · {peer.pending} pending
+          cursor {peer.cursor} · {peer.pending} pending · mutators v{peer.mutators}
           {peer.note ? `  ·  ${peer.note}` : ''}
         </Text>
       </View>
