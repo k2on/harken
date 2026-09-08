@@ -1,24 +1,21 @@
 //! Everything that needs a real SQLite: the tables, the rows, the Diesel host
 //! and the `petros::App` the native peers run.
 //!
-//! Reads go through Diesel's DSL, with `check_for_backend` verifying at compile
-//! time that each model still matches its table. Writes do not, and cannot:
-//! `apply` is compiled to wasm as well as linked, and the wasm build has no
-//! SQLite and no Diesel — only a channel to the host's, which carries SQL text.
-//! That asymmetry is the price of a domain the phone can replace without a
-//! rebuild, and `tests/conformance.rs` is what covers the half the compiler
-//! cannot.
+//! The read model goes through Diesel's DSL, with `check_for_backend` verifying
+//! at compile time that each model still matches its table. Writes go through
+//! checked SQL instead — `apply` is compiled to wasm as well as linked, and the
+//! wasm build has no SQLite and no Diesel, only a channel to the host's. What
+//! covers that half is `petros-sql`, which prepares every statement against
+//! `schema.sql` at build time.
 //!
 //! Behind the `storage` feature, because the wasm build wants
 //! [`domain`](crate::domain) and none of this.
 
 use ciborium::value::Value;
 use diesel::connection::SimpleConnection;
-use diesel::deserialize::QueryableByName;
 use diesel::prelude::*;
-use diesel::sql_query;
-use diesel::sql_types::BigInt;
 use diesel::sqlite::Sqlite as SqliteBackend;
+use petros::backend::SqliteStore;
 use petros::{ActorId, App, AutoCtx, Connection, Id, Mutation, MutationError, Transaction};
 use serde::{Deserialize, Serialize};
 
@@ -127,41 +124,6 @@ pub fn favorites(conn: &mut Connection) -> petros::Result<Vec<Song>> {
 #[serde(transparent)]
 pub struct Payload(pub Value);
 
-/// The database, handed to `apply` and nothing else.
-struct Sqlite<'a>(&'a mut Connection);
-
-impl crate::domain::Host for Sqlite<'_> {
-    fn query_int(&mut self, sql: &str) -> i64 {
-        #[derive(QueryableByName)]
-        struct Row {
-            #[diesel(sql_type = BigInt)]
-            v: i64,
-        }
-        sql_query(format!("SELECT ({sql}) AS v"))
-            .load::<Row>(&mut *self.0)
-            .ok()
-            .and_then(|rows| rows.first().map(|r| r.v))
-            .unwrap_or(0)
-    }
-
-    fn query_exists(&mut self, sql: &str) -> bool {
-        #[derive(QueryableByName)]
-        struct Row {
-            #[diesel(sql_type = BigInt)]
-            v: i64,
-        }
-        sql_query(format!("SELECT EXISTS({sql}) AS v"))
-            .load::<Row>(&mut *self.0)
-            .ok()
-            .and_then(|rows| rows.first().map(|r| r.v != 0))
-            .unwrap_or(false)
-    }
-
-    fn exec(&mut self, sql: &str) {
-        let _ = self.0.batch_execute(sql);
-    }
-}
-
 impl Mutation for Payload {
     fn fill_auto(&mut self, ctx: &mut AutoCtx) {
         let uuid = ctx.uuid().as_uuid().as_bytes().to_vec();
@@ -169,7 +131,7 @@ impl Mutation for Payload {
     }
 
     fn apply(&self, tx: &mut Transaction, actor: &ActorId) -> Result<(), MutationError> {
-        crate::domain::apply(&mut Sqlite(tx.conn()), &self.0, actor.as_str())
+        crate::domain::apply(&mut SqliteStore(tx.conn()), &self.0, actor.as_str())
             .map_err(MutationError::rejected)
     }
 }
@@ -186,23 +148,11 @@ impl App for HarkenApp {
     }
 }
 
-/// The app's tables. `table!` above describes them; it does not create them, so
-/// this is the other half and the two are mirrored by hand.
-pub const SCHEMA: &str = "\
-    CREATE TABLE IF NOT EXISTS song (
-        id       BLOB PRIMARY KEY NOT NULL,
-        title    TEXT NOT NULL,
-        artist   TEXT NOT NULL,
-        pos      BIGINT NOT NULL,
-        added_ms BIGINT NOT NULL,
-        actor    TEXT NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS favorite (
-        song_id      BLOB PRIMARY KEY NOT NULL,
-        pos          BIGINT NOT NULL,
-        favorited_ms BIGINT NOT NULL,
-        actor        TEXT NOT NULL
-    );";
+/// The one description of this app's tables.
+///
+/// `migrate` runs it, and `petros-sql` prepares every statement in the domain
+/// against it at build time. There is no second copy to drift from.
+pub const SCHEMA: &str = include_str!("../schema.sql");
 
 // ------------------------------------------------------------------ authoring
 

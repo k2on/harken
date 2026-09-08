@@ -35,7 +35,10 @@ impl<Message> canvas::Program<Message> for Heart {
         _cursor: mouse::Cursor,
     ) -> Vec<canvas::Geometry> {
         let mut frame = canvas::Frame::new(renderer, bounds.size());
-        let Size { width: w, height: h } = bounds.size();
+        let Size {
+            width: w,
+            height: h,
+        } = bounds.size();
         // Proportions of a plain valentine heart: the dip at the top centre,
         // a lobe either side, and the two curves meeting at the point.
         let at = |x: f32, y: f32| Point::new(x * w, y * h);

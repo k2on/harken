@@ -31,19 +31,13 @@ fn the_cost_of_the_thread() {
 
     let m = Mutators::load(MODULE).unwrap();
     let mut conn = petros::open_memory().unwrap();
-    petros::diesel::connection::SimpleConnection::batch_execute(
-        &mut conn,
-        "CREATE TABLE todo (id BLOB PRIMARY KEY NOT NULL, text TEXT NOT NULL,
-          done BOOL NOT NULL DEFAULT 0, pos BIGINT NOT NULL,
-          created_ms BIGINT NOT NULL, actor TEXT NOT NULL);",
-    )
-    .unwrap();
+    petros::diesel::connection::SimpleConnection::batch_execute(&mut conn, harken::SCHEMA).unwrap();
     let mut auto = petros::AutoCtx::seeded(1);
 
     let mut fill = vec![];
     let mut apply = vec![];
     for i in 0..100 {
-        let raw = harken::add(&format!("item {i}"));
+        let raw = harken::add_song(&format!("item {i}"), "Bicep");
         let mut bytes = Vec::new();
         ciborium::into_writer(&raw.0, &mut bytes).unwrap();
 
@@ -84,14 +78,16 @@ fn fsync_or_wasm() {
         ))
         .unwrap();
         let mut client =
-            petros::Client::<harken::TodoApp>::open(conn, "alice", petros::AutoCtx::system())
+            petros::Client::<harken::HarkenApp>::open(conn, "alice", petros::AutoCtx::system())
                 .unwrap();
 
-        client.mutate(harken::add("warm")).unwrap();
+        client.mutate(harken::add_song("warm", "Bicep")).unwrap();
         let mut ts = vec![];
         for i in 0..25 {
             let t = Instant::now();
-            client.mutate(harken::add(&format!("tap {i}"))).unwrap();
+            client
+                .mutate(harken::add_song(&format!("tap {i}"), "Bicep"))
+                .unwrap();
             ts.push(t.elapsed().as_secs_f64() * 1000.0);
         }
         println!("    synchronous = {:<7} {:>7.2} ms", sync, median(ts));
@@ -127,13 +123,15 @@ fn one_tap_at_a_fixed_depth() {
             ))
             .unwrap();
             let mut c =
-                petros::Client::<harken::TodoApp>::open(conn, "alice", petros::AutoCtx::system())
+                petros::Client::<harken::HarkenApp>::open(conn, "alice", petros::AutoCtx::system())
                     .unwrap();
             for i in 0..depth {
-                c.mutate(harken::add(&format!("filler {i}"))).unwrap();
+                c.mutate(harken::add_song(&format!("filler {i}"), "Bicep"))
+                    .unwrap();
             }
             let t = Instant::now();
-            c.mutate(harken::add("the tap being timed")).unwrap();
+            c.mutate(harken::add_song("the tap being timed", "Bicep"))
+                .unwrap();
             ts.push(t.elapsed().as_secs_f64() * 1000.0);
             drop(c);
             let _ = std::fs::remove_dir_all(&dir);

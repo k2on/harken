@@ -20,6 +20,7 @@ ciborium = "0.2"
 petros = { path = "../petros/crates/petros" }
 petros-wasm-host = { path = "../petros/crates/petros-wasm-host" }
 petros-schema = { path = "../petros/crates/petros-schema" }
+petros-sql = { path = "../petros/crates/petros-sql" }
 petros-testkit = { path = "../petros/crates/petros-testkit" }
 petros-wasm-guest = { path = "../petros/crates/petros-wasm-guest" }
 petros-axum = { path = "../petros/crates/petros-axum" }

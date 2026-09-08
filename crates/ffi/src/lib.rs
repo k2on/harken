@@ -194,7 +194,10 @@ impl HarkenClient {
 
     /// The heart, on.
     pub fn favorite(&self, id: String) -> Result<(), HarkenError> {
-        self.mutate("Favorite".into(), serde_json::json!({ "id": id }).to_string())
+        self.mutate(
+            "Favorite".into(),
+            serde_json::json!({ "id": id }).to_string(),
+        )
     }
 
     /// The heart, off. The song stays in the library.

@@ -17,16 +17,14 @@
 //! rebuild. `tests/conformance.rs` drives the same mutations through both and
 //! compares the rows, because "two builds of one source" is a claim.
 //!
-//! The SQL is written out rather than built with Diesel, and that is not a
-//! preference: the wasm build has no SQLite and no Diesel, only a channel to
-//! the host's. Reads go through the ORM — see [`crate::storage`] — because they
-//! never cross that boundary.
+//! The SQL is real SQL, and it is checked: `petros_sql::exec!` and
+//! `petros_sql::query!` prepare each statement against `schema.sql` at build
+//! time with SQLite as the judge. So `FavoriteAll` is one statement rather than
+//! a scan and a write per song — which on a phone is a boundary crossing per
+//! song — and a misspelled column is a compile error even though this code runs
+//! inside a sandbox with no SQLite in it.
 
 use petros_schema::cbor::{set, Value};
-
-// The contract, not a copy of it: the same three methods the wasm module
-// imports and the same escaping both builds go through.
-pub use petros_schema::{lit, Host, Lit};
 
 petros_schema::mutations! {
     /// Put a song in the library.
@@ -36,23 +34,23 @@ petros_schema::mutations! {
         }
         // The same entry arriving twice is a no-op, which is what makes
         // redelivery safe.
-        if host.query_exists(&format!(
-            "SELECT 1 FROM song WHERE id = {}",
-            lit(Lit::Blob(&id))
-        )) {
+        let already = petros_sql::query_one!(
+            host, "SELECT 1 AS \"found: Int\" FROM song WHERE id = ?", id);
+        if already.is_some() {
             return Ok(());
         }
-        let last = host.query_int("SELECT COALESCE(MAX(pos), 0) FROM song");
-        host.exec(&format!(
-            "INSERT INTO song (id, title, artist, pos, added_ms, actor) \
-             VALUES ({}, {}, {}, {}, {}, {})",
-            lit(Lit::Blob(&id)),
-            lit(Lit::Text(title.trim())),
-            lit(Lit::Text(artist.trim())),
-            lit(Lit::Int(last + 1)),
-            lit(Lit::Int(added_ms)),
-            lit(Lit::Text(actor)),
-        ));
+        // `pos` is read out of current state: "put it at the end", an intent,
+        // not "put it at 3", a fact.
+        let last = petros_sql::query_one!(
+            host, "SELECT COALESCE(MAX(pos), 0) AS \"last: Int\" FROM song")
+            .map(|r| r.last).unwrap_or(0);
+        let (title, artist) = (title.trim().to_string(), artist.trim().to_string());
+        petros_sql::exec!(
+            host,
+            "INSERT INTO song (id, title, artist, pos, added_ms, actor)
+             VALUES (?, ?, ?, ?, ?, ?)",
+            id, title, artist, last + 1, added_ms, actor
+        );
         Ok(())
     }
 
@@ -63,7 +61,9 @@ petros_schema::mutations! {
     AddAlbum {} auto { tracks: Array, added_ms: Integer } => |host, actor| {
         // Read the end of the library once, then count up. Re-reading between
         // inserts would give the same answer and cost five more round trips.
-        let mut pos = host.query_int("SELECT COALESCE(MAX(pos), 0) FROM song");
+        let mut pos = petros_sql::query_one!(
+            host, "SELECT COALESCE(MAX(pos), 0) AS \"last: Int\" FROM song")
+            .map(|r| r.last).unwrap_or(0);
         for track in tracks {
             let Some(id) = petros_schema::cbor::field(track, "id")
                 .and_then(petros_schema::cbor::as_bytes)
@@ -75,102 +75,86 @@ petros_schema::mutations! {
             if title.trim().is_empty() {
                 continue;
             }
-            if host.query_exists(&format!(
-                "SELECT 1 FROM song WHERE id = {}",
-                lit(Lit::Blob(&id))
-            )) {
+            let already = petros_sql::query_one!(
+                host, "SELECT 1 AS \"found: Int\" FROM song WHERE id = ?", id);
+            if already.is_some() {
                 continue;
             }
             pos += 1;
-            host.exec(&format!(
-                "INSERT INTO song (id, title, artist, pos, added_ms, actor) \
-                 VALUES ({}, {}, {}, {}, {}, {})",
-                lit(Lit::Blob(&id)),
-                lit(Lit::Text(title.trim())),
-                lit(Lit::Text(artist.trim())),
-                lit(Lit::Int(pos)),
-                lit(Lit::Int(added_ms)),
-                lit(Lit::Text(actor)),
-            ));
+            let (title, artist) = (title.trim().to_string(), artist.trim().to_string());
+            petros_sql::exec!(
+                host,
+                "INSERT INTO song (id, title, artist, pos, added_ms, actor)
+                 VALUES (?, ?, ?, ?, ?, ?)",
+                id, title, artist, pos, added_ms, actor
+            );
         }
         Ok(())
     }
 
     /// Add a song to the favourites playlist, at the end.
     ///
-    /// Favouriting a song that is gone is a no-op rather than an error: an
-    /// entry earlier in the log may have removed it. So is favouriting one that
-    /// is already there — the playlist is a set with an order, and a song holds
-    /// the position it first got.
+    /// Favouriting a song that is gone is a no-op rather than an error: an entry
+    /// earlier in the log may have removed it. So is favouriting one already
+    /// there — the playlist is a set with an order, and a song keeps the place
+    /// it first got.
     Favorite { id: Id } auto { favorited_ms: Integer } => |host, actor| {
-        if !host.query_exists(&format!(
-            "SELECT 1 FROM song WHERE id = {}",
-            lit(Lit::Blob(&id))
-        )) {
+        let song = petros_sql::query_one!(
+            host, "SELECT 1 AS \"found: Int\" FROM song WHERE id = ?", id);
+        if song.is_none() {
             return Ok(());
         }
-        if host.query_exists(&format!(
-            "SELECT 1 FROM favorite WHERE song_id = {}",
-            lit(Lit::Blob(&id))
-        )) {
+        let already = petros_sql::query_one!(
+            host, "SELECT 1 AS \"found: Int\" FROM favorite WHERE song_id = ?", id);
+        if already.is_some() {
             return Ok(());
         }
-        // "Put it at the end of the playlist", read from current state. An
-        // entry that lands underneath yours moves you down, which is the rebase
-        // made visible.
-        let last = host.query_int("SELECT COALESCE(MAX(pos), 0) FROM favorite");
-        host.exec(&format!(
-            "INSERT INTO favorite (song_id, pos, favorited_ms, actor) \
-             VALUES ({}, {}, {}, {})",
-            lit(Lit::Blob(&id)),
-            lit(Lit::Int(last + 1)),
-            lit(Lit::Int(favorited_ms)),
-            lit(Lit::Text(actor)),
-        ));
+        let last = petros_sql::query_one!(
+            host, "SELECT COALESCE(MAX(pos), 0) AS \"last: Int\" FROM favorite")
+            .map(|r| r.last).unwrap_or(0);
+        petros_sql::exec!(
+            host,
+            "INSERT INTO favorite (song_id, pos, favorited_ms, actor) VALUES (?, ?, ?, ?)",
+            id, last + 1, favorited_ms, actor
+        );
         Ok(())
     }
 
     /// Take a song back out of the playlist. The song itself stays.
     Unfavorite { id: Id } => |host, actor| {
         let _ = actor;
-        host.exec(&format!(
-            "DELETE FROM favorite WHERE song_id = {}",
-            lit(Lit::Blob(&id))
-        ));
+        petros_sql::exec!(host, "DELETE FROM favorite WHERE song_id = ?", id);
         Ok(())
     }
 
     /// Favourite everything in the library that is not already favourited.
     ///
-    /// One entry rather than one per song, so it covers songs another peer
-    /// added in the meantime. That is what makes it an intent.
+    /// One entry rather than one per song, so it covers songs another peer added
+    /// in the meantime — that is what makes it an intent. And one *statement*,
+    /// which is what checked SQL buys: a typed query builder would make this a
+    /// scan and a write per song, and each of those is a boundary crossing on a
+    /// phone.
     FavoriteAll {} auto { favorited_ms: Integer } => |host, actor| {
-        host.exec(&format!(
-            "INSERT INTO favorite (song_id, pos, favorited_ms, actor) \
-             SELECT s.id, \
-                    (SELECT COALESCE(MAX(pos), 0) FROM favorite) \
-                        + ROW_NUMBER() OVER (ORDER BY s.pos, s.id), \
-                    {}, {} \
-               FROM song s \
-              WHERE NOT EXISTS (SELECT 1 FROM favorite f WHERE f.song_id = s.id) \
+        petros_sql::exec!(
+            host,
+            "INSERT INTO favorite (song_id, pos, favorited_ms, actor)
+             SELECT s.id,
+                    (SELECT COALESCE(MAX(pos), 0) FROM favorite)
+                      + ROW_NUMBER() OVER (ORDER BY s.pos, s.id),
+                    ?, ?
+               FROM song s
+              WHERE NOT EXISTS (SELECT 1 FROM favorite f WHERE f.song_id = s.id)
               ORDER BY s.pos, s.id",
-            lit(Lit::Int(favorited_ms)),
-            lit(Lit::Text(actor)),
-        ));
+            favorited_ms, actor
+        );
         Ok(())
     }
 
     /// Remove a song from the library, and from the playlist with it.
     RemoveSong { id: Id } => |host, actor| {
         let _ = actor;
-        host.exec(&format!(
-            "DELETE FROM favorite WHERE song_id = {}",
-            lit(Lit::Blob(&id))
-        ));
-        host.exec(&format!(
-            "DELETE FROM song WHERE id = {}",
-            lit(Lit::Blob(&id))
-        ));
+        petros_sql::exec!(host, "DELETE FROM favorite WHERE song_id = ?", id);
+        petros_sql::exec!(host, "DELETE FROM song WHERE id = ?", id);
         Ok(())
     }
 }
@@ -206,7 +190,10 @@ pub fn fill_auto(mutation: &mut Value, uuid: Vec<u8>, now_ms: i64) {
                 .map(|n| {
                     Value::Map(vec![
                         (Value::Text("id".into()), Value::Bytes(seed.id())),
-                        (Value::Text("title".into()), Value::Text(format!("Track {n}"))),
+                        (
+                            Value::Text("title".into()),
+                            Value::Text(format!("Track {n}")),
+                        ),
                         (Value::Text("artist".into()), Value::Text(album.into())),
                     ])
                 })

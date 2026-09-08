@@ -6,7 +6,7 @@
 //! That makes "nothing is loaded yet" a state only a fresh process can observe,
 //! and cargo gives each test file one.
 
-use harken_ffi::TodoClient;
+use harken_ffi::HarkenClient;
 
 #[test]
 fn mutating_without_a_module_is_refused_rather_than_ignored() {
@@ -14,7 +14,7 @@ fn mutating_without_a_module_is_refused_rather_than_ignored() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
 
-    let client = TodoClient::open(
+    let client = HarkenClient::open(
         dir.join("peer.db").to_string_lossy().into_owned(),
         "alice".into(),
     )
@@ -22,13 +22,13 @@ fn mutating_without_a_module_is_refused_rather_than_ignored() {
 
     assert_eq!(client.mutators_generation(), 0);
     let refused = client
-        .add("too early".into())
+        .add_song("too early".into(), "nobody".into())
         .expect_err("no module is loaded");
     assert!(
         format!("{refused}").contains("no mutator module"),
         "the failure should say why: {refused}"
     );
-    assert!(client.list().expect("list").is_empty());
+    assert!(client.library().expect("library").is_empty());
 
     let _ = std::fs::remove_dir_all(&dir);
 }

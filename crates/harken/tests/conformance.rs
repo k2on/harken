@@ -56,37 +56,14 @@ fn rows(conn: &mut Connection) -> Vec<Row> {
     .expect("read back")
 }
 
-/// The native side, exactly as `harken::Payload`'s `Mutation::apply` runs it.
-struct Native<'a>(&'a mut Connection);
-
-impl harken::domain::Host for Native<'_> {
-    fn query_int(&mut self, sql: &str) -> i64 {
-        #[derive(QueryableByName)]
-        struct V {
-            #[diesel(sql_type = BigInt)]
-            v: i64,
-        }
-        sql_query(format!("SELECT ({sql}) AS v"))
-            .load::<V>(&mut *self.0)
-            .ok()
-            .and_then(|r| r.first().map(|r| r.v))
-            .unwrap_or(0)
-    }
-    fn query_exists(&mut self, sql: &str) -> bool {
-        #[derive(QueryableByName)]
-        struct V {
-            #[diesel(sql_type = BigInt)]
-            v: i64,
-        }
-        sql_query(format!("SELECT EXISTS({sql}) AS v"))
-            .load::<V>(&mut *self.0)
-            .ok()
-            .and_then(|r| r.first().map(|r| r.v != 0))
-            .unwrap_or(false)
-    }
-    fn exec(&mut self, sql: &str) {
-        let _ = self.0.batch_execute(sql);
-    }
+/// The native side, exactly as `harken::Payload`'s `Mutation::apply` runs it:
+/// the same checked SQL, through a store backed by a real connection.
+fn native_apply(
+    conn: &mut Connection,
+    payload: &harken::Payload,
+    actor: &str,
+) -> Result<(), String> {
+    harken::domain::apply(&mut petros::backend::SqliteStore(conn), &payload.0, actor)
 }
 
 fn encode(p: &harken::Payload) -> Vec<u8> {
@@ -116,7 +93,7 @@ fn both_ways(script: &[(&str, serde_json::Value)]) -> (Vec<Row>, Vec<Row>) {
     let mut native_db = database();
     for p in &payloads {
         // A refusal is a legitimate outcome; both sides must reach the same one.
-        let _ = harken::domain::apply(&mut Native(&mut native_db), &p.0, "alice");
+        let _ = native_apply(&mut native_db, p, "alice");
     }
 
     let module = Mutators::load(MODULE).expect("load the module");
@@ -137,7 +114,10 @@ fn every_verb_produces_the_same_rows_natively_and_in_wasm() {
     let ghost = "67e55084-765d-446c-9191-4ff9861f6d8e";
     let script: Vec<(&str, serde_json::Value)> = vec![
         ("AddSong", json!({ "title": "Glue", "artist": "Bicep" })),
-        ("AddSong", json!({ "title": "  Opal  ", "artist": "  Bicep  " })),
+        (
+            "AddSong",
+            json!({ "title": "  Opal  ", "artist": "  Bicep  " }),
+        ),
         // Refused by both, and refused identically.
         ("AddSong", json!({ "title": "   ", "artist": "nobody" })),
         ("AddAlbum", json!({})),
@@ -178,14 +158,17 @@ fn refusals_match_too() {
     let mut auto = AutoCtx::seeded(11);
 
     for (kind, args) in [
-        ("AddSong", serde_json::json!({ "title": "", "artist": "nobody" })),
+        (
+            "AddSong",
+            serde_json::json!({ "title": "", "artist": "nobody" }),
+        ),
         ("Frobnicate", serde_json::json!({})),
     ] {
         let mut p = harken::from_value(kind, args).expect("author");
         <harken::Payload as petros::Mutation>::fill_auto(&mut p, &mut auto);
 
         let mut a = database();
-        let native = harken::domain::apply(&mut Native(&mut a), &p.0, "alice");
+        let native = native_apply(&mut a, &p, "alice");
         let mut b = database();
         let wasm = module
             .apply(&mut b, &encode(&p), "alice")

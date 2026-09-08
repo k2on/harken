@@ -1,4 +1,6 @@
 [package]
+# `heart.rs` is a module the iced example includes, not an example of its own.
+autoexamples = false
 name = "harken"
 version = "0.1.0"
 description = "The demo to-do domain: apply and fill_auto once, plus the read model and the native host."
@@ -19,6 +21,7 @@ ws = ["storage", "petros/ws"]
 [dependencies]
 ciborium.workspace = true
 petros-schema = { workspace = true, features = ["cbor"] }
+petros-sql.workspace = true
 diesel = { workspace = true, optional = true }
 petros = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }

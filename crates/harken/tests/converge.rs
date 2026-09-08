@@ -45,7 +45,11 @@ fn the_domain_converges_when_peers_go_dark_and_come_back() {
         "9 shared + 4 dark + 4 lit, none lost and none duplicated"
     );
     let playlist = harken::favorites(sim.conn(0)).unwrap();
-    assert_eq!(playlist.len(), 17, "both FavoriteAll intents, merged by replay");
+    assert_eq!(
+        playlist.len(),
+        17,
+        "both FavoriteAll intents, merged by replay"
+    );
     let places: Vec<i64> = playlist.iter().filter_map(|s| s.favorite_pos).collect();
     let mut sorted = places.clone();
     sorted.sort_unstable();
