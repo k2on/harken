@@ -1,6 +1,6 @@
 /**
  * The list. The same to-do list the TUI and the iced window show, because it is
- * the same `apply` — see `crates/todo`.
+ * the same `apply` — see `crates/harken`.
  *
  * Take it offline with the button, add something, add something in another peer
  * too, come back: your item slides down the list as the entries the server
@@ -9,7 +9,7 @@
 
 import { useState } from 'react';
 import { Stack, useLocalSearchParams } from 'expo-router';
-import type { TodoItem } from 'petros-todo';
+import type { TodoItem } from 'harken-native';
 import {
   FlatList,
   KeyboardAvoidingView,

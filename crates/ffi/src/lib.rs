@@ -30,8 +30,8 @@ pub mod app;
 
 use app::WasmTodo;
 
+use harken::list;
 use petros::{decode, encode, AutoCtx, Client, MutationError, ServerMsg};
-use todo::list;
 
 uniffi::setup_scaffolding!();
 
@@ -52,8 +52,8 @@ pub struct TodoItem {
     pub actor: String,
 }
 
-impl From<todo::Item> for TodoItem {
-    fn from(item: todo::Item) -> Self {
+impl From<harken::Item> for TodoItem {
+    fn from(item: harken::Item) -> Self {
         TodoItem {
             id: item.id.to_string(),
             text: item.text,

@@ -79,10 +79,10 @@ jobs:
       - name: Build the Rust and the turbo module
         run: |
           nix develop .#android --command bash -c '
-            cargo build -p todo-wasm --target wasm32-unknown-unknown --profile mutators
+            cargo build -p harken-wasm --target wasm32-unknown-unknown --profile mutators
             cargo run -q -p petros-codegen
             cd clients/expo && bun install
-            cd modules/petros-todo
+            cd modules/harken-native
             ../../node_modules/.bin/ubrn build android \
               --config ubrn.config.yaml --and-generate --release
           '
@@ -99,7 +99,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: petros-todo-android
+          name: harken-android
           path: clients/expo/android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
 
@@ -117,7 +117,7 @@ jobs:
         run: |
           nix develop --command bash -c '
             cd clients/expo && bun install
-            cd modules/petros-todo
+            cd modules/harken-native
             ../../node_modules/.bin/ubrn build ios \
               --config ubrn.config.yaml --and-generate --release
           '

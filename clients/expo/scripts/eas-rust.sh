@@ -60,14 +60,14 @@ case "$stage" in
     echo "--- building the mutator module"
     (
       cd "$root"
-      cargo build -p todo-wasm --target wasm32-unknown-unknown --profile mutators
+      cargo build -p harken-wasm --target wasm32-unknown-unknown --profile mutators
       # Writes src/mutators.gen.ts, which is gitignored and therefore not in the
       # upload — the bundler needs it to exist before it runs, which is now.
       cargo run -q -p petros-codegen
     )
 
     echo "--- cross-compiling the engine and generating the turbo module"
-    cd "$app/modules/petros-todo"
+    cd "$app/modules/harken-native"
     "$app/node_modules/.bin/ubrn" build android \
       --config ubrn.config.yaml --and-generate --release
     ;;

@@ -1,5 +1,5 @@
 [package]
-name = "petros-todo-ffi"
+name = "harken-ffi"
 version = "0.1.0"
 description = "UniFFI bindings for the demo to-do client: one Rust definition, generated into TypeScript for the Expo app."
 edition.workspace = true
@@ -11,7 +11,7 @@ rust-version.workspace = true
 # bindings --library` reads the UniFFI metadata back out of. `staticlib` is what
 # an iOS xcframework links. `lib` keeps `cargo test` and rust-analyzer working.
 crate-type = ["cdylib", "staticlib", "lib"]
-name = "petros_todo_ffi"
+name = "harken_ffi"
 
 [dependencies]
 # The payload the log stores is CBOR, and the App impl below is what makes it
@@ -29,7 +29,7 @@ petros.workspace = true
 petros-wasm-host.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-todo = { workspace = true, features = ["storage"] }
+harken = { workspace = true, features = ["storage"] }
 # Proc-macro mode: no UDL file, no build script. The Rust below *is* the
 # interface definition, which is the point — there is no second place to keep
 # in step.

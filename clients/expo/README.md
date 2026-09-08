@@ -18,11 +18,11 @@ src/theme.ts          eight colours
 
 Everything else — what a to-do is, what `add` means, how `pos` is computed, what
 the wire format is, when a mutation is refused, how the rebase works — lives in
-`crates/todo` and reaches here through `crates/ffi` as generated bindings. A
+`crates/harken` and reaches here through `crates/ffi` as generated bindings. A
 second `apply` in a second language is two definitions of the same thing, and
 the first time they disagree the replicas diverge silently. So there is one.
 
-`modules/petros-todo/` is generated and gitignored. Do not edit it; change the Rust
+`modules/harken-native/` is generated and gitignored. Do not edit it; change the Rust
 and run:
 
 ```sh

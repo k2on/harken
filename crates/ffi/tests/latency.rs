@@ -16,7 +16,7 @@
 
 use std::time::Instant;
 
-const MODULE: &[u8] = petros_todo_ffi::app::BUNDLED;
+const MODULE: &[u8] = harken_ffi::app::BUNDLED;
 
 fn median(mut v: Vec<f64>) -> f64 {
     v.sort_by(|a, b| a.partial_cmp(b).unwrap());
@@ -43,7 +43,7 @@ fn the_cost_of_the_thread() {
     let mut fill = vec![];
     let mut apply = vec![];
     for i in 0..100 {
-        let raw = todo::add(&format!("item {i}"));
+        let raw = harken::add(&format!("item {i}"));
         let mut bytes = Vec::new();
         ciborium::into_writer(&raw.0, &mut bytes).unwrap();
 
@@ -84,14 +84,14 @@ fn fsync_or_wasm() {
         ))
         .unwrap();
         let mut client =
-            petros::Client::<todo::TodoApp>::open(conn, "alice", petros::AutoCtx::system())
+            petros::Client::<harken::TodoApp>::open(conn, "alice", petros::AutoCtx::system())
                 .unwrap();
 
-        client.mutate(todo::add("warm")).unwrap();
+        client.mutate(harken::add("warm")).unwrap();
         let mut ts = vec![];
         for i in 0..25 {
             let t = Instant::now();
-            client.mutate(todo::add(&format!("tap {i}"))).unwrap();
+            client.mutate(harken::add(&format!("tap {i}"))).unwrap();
             ts.push(t.elapsed().as_secs_f64() * 1000.0);
         }
         println!("    synchronous = {:<7} {:>7.2} ms", sync, median(ts));
@@ -127,13 +127,13 @@ fn one_tap_at_a_fixed_depth() {
             ))
             .unwrap();
             let mut c =
-                petros::Client::<todo::TodoApp>::open(conn, "alice", petros::AutoCtx::system())
+                petros::Client::<harken::TodoApp>::open(conn, "alice", petros::AutoCtx::system())
                     .unwrap();
             for i in 0..depth {
-                c.mutate(todo::add(&format!("filler {i}"))).unwrap();
+                c.mutate(harken::add(&format!("filler {i}"))).unwrap();
             }
             let t = Instant::now();
-            c.mutate(todo::add("the tap being timed")).unwrap();
+            c.mutate(harken::add("the tap being timed")).unwrap();
             ts.push(t.elapsed().as_secs_f64() * 1000.0);
             drop(c);
             let _ = std::fs::remove_dir_all(&dir);

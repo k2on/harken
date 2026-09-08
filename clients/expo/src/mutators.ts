@@ -12,7 +12,7 @@
  * at startup from the bundle it shipped with.
  */
 
-import type { TodoClientLike } from 'petros-todo';
+import type { TodoClientLike } from 'harken-native';
 
 import { MUTATORS_BUILD, MUTATORS_WASM_B64 } from './mutators.gen';
 

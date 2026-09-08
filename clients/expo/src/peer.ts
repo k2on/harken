@@ -2,7 +2,7 @@
  * A peer of an Petros server, for React.
  *
  * Everything that decides anything lives in Rust: `TodoClient` comes from
- * `crates/ffi`, which wraps `crates/todo`, which is the one definition of the
+ * `crates/ffi`, which wraps `crates/harken`, which is the one definition of the
  * mutations and the queries. Nothing below re-implements any of it — there is
  * no `apply` here, no CBOR, no notion of what a to-do is. Two `apply`s that
  * disagree make replicas diverge silently, so there is only ever one.
@@ -17,10 +17,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Paths } from 'expo-file-system';
-import { TodoClient, type TodoClientLike, type TodoItem } from 'petros-todo';
+import { TodoClient, type TodoClientLike, type TodoItem } from 'harken-native';
 
 import { MUTATORS_BUILD, installMutators, watchMutators } from './mutators';
-// Generated from crates/todo-wasm/src/verbs.rs, rewritten by `just mutators`
+// Generated from crates/harken-wasm/src/verbs.rs, rewritten by `just mutators`
 // every time the module is. A call site naming a verb the module does not have,
 // or passing the wrong arguments to one it does, is a `tsc` error — which is
 // where the engine's deliberately generic `mutate(kind, args)` gives up its
