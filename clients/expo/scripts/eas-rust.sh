@@ -67,7 +67,7 @@ case "$stage" in
     )
 
     echo "--- cross-compiling the engine and generating the turbo module"
-    cd "$app/modules/exo-todo"
+    cd "$app/modules/petros-todo"
     "$app/node_modules/.bin/ubrn" build android \
       --config ubrn.config.yaml --and-generate --release
     ;;

@@ -1,10 +1,10 @@
 {
-  "name": "exo-expo",
+  "name": "petros-expo",
   "main": "expo-router/entry",
   "version": "1.0.0",
   "dependencies": {
     "@expo/ui": "~57.0.16",
-    "exo-todo": "workspace:*",
+    "petros-todo": "workspace:*",
     "expo": "~57.0.20",
     "expo-constants": "~57.0.17",
     "expo-dev-client": "^57.0.18",
@@ -40,8 +40,8 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "lint": "expo lint",
-    "ubrn:android": "cd modules/exo-todo && ubrn build android --config ubrn.config.yaml --and-generate",
-    "ubrn:ios": "cd modules/exo-todo && ubrn build ios --config ubrn.config.yaml --and-generate",
+    "ubrn:android": "cd modules/petros-todo && ubrn build android --config ubrn.config.yaml --and-generate",
+    "ubrn:ios": "cd modules/petros-todo && ubrn build ios --config ubrn.config.yaml --and-generate",
     "build:android": "eas build --platform android --profile development",
     "update": "eas update --branch preview",
     "eas-build-pre-install": "bash ./scripts/eas-rust.sh pre",

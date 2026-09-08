@@ -2,16 +2,16 @@
 //! the module, the module writes the row, and swapping the module mid-session
 //! changes what the next mutation does without disturbing the database.
 
-use exo_todo_ffi::TodoClient;
+use petros_todo_ffi::TodoClient;
 
-const MODULE: &[u8] = exo_mutators::BUNDLED;
+const MODULE: &[u8] = petros_mutators::BUNDLED;
 
 /// The point of all of it: a mutation made through the public client runs the
 /// module, not a linked `apply` — and swapping the module changes what the very
 /// next mutation does, with the database and the connection carrying on.
 #[test]
 fn the_client_runs_the_module() {
-    let dir = std::env::temp_dir().join(format!("exo-wasm-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("petros-wasm-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let db = dir.join("peer.db").to_string_lossy().into_owned();
@@ -65,7 +65,7 @@ fn the_client_runs_the_module() {
 /// new uniffi export or a native build.
 #[test]
 fn a_verb_the_ffi_never_heard_of() {
-    let dir = std::env::temp_dir().join(format!("exo-generic-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("petros-generic-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
 

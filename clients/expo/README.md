@@ -1,6 +1,6 @@
-# exo · expo
+# petros · expo
 
-A peer of the same Exo server the terminal and desktop examples join, on a
+A peer of the same Petros server the terminal and desktop examples join, on a
 phone. The first screen asks who you are and which server to talk to; the second
 is the to-do list.
 
@@ -22,7 +22,7 @@ the wire format is, when a mutation is refused, how the rebase works — lives i
 second `apply` in a second language is two definitions of the same thing, and
 the first time they disagree the replicas diverge silently. So there is one.
 
-`modules/exo-todo/` is generated and gitignored. Do not edit it; change the Rust
+`modules/petros-todo/` is generated and gitignored. Do not edit it; change the Rust
 and run:
 
 ```sh

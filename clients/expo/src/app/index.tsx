@@ -59,7 +59,7 @@ export default function Connect() {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       <ScrollView contentContainerStyle={s.page} keyboardShouldPersistTaps="handled">
-        <Text style={s.title}>exo</Text>
+        <Text style={s.title}>petros</Text>
         <Text style={s.blurb}>
           An offline-first peer of the same server the terminal and desktop examples join. Add
           something here and it appears there; pull the plug and it waits.

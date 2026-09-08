@@ -1,5 +1,5 @@
 /**
- * A peer of an Exo server, for React.
+ * A peer of an Petros server, for React.
  *
  * Everything that decides anything lives in Rust: `TodoClient` comes from
  * `crates/ffi`, which wraps `crates/todo`, which is the one definition of the
@@ -17,7 +17,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Paths } from 'expo-file-system';
-import { TodoClient, type TodoClientLike, type TodoItem } from 'exo-todo';
+import { TodoClient, type TodoClientLike, type TodoItem } from 'petros-todo';
 
 import { MUTATORS_BUILD, installMutators, watchMutators } from './mutators';
 // Generated from crates/todo-wasm/src/verbs.rs, rewritten by `just mutators`
@@ -85,7 +85,7 @@ export type Peer = PeerState & {
  *  device are two peers, exactly as `--user` is on the desktop. */
 function databasePath(actor: string): string {
   const dir = Paths.document.uri.replace(/^file:\/\//, '').replace(/\/$/, '');
-  return `${dir}/exo-demo-${actor.replace(/[^a-zA-Z0-9._-]/g, '_')}.db`;
+  return `${dir}/petros-demo-${actor.replace(/[^a-zA-Z0-9._-]/g, '_')}.db`;
 }
 
 function messageOf(e: unknown): string {

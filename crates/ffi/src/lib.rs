@@ -26,10 +26,10 @@
 
 use std::sync::Mutex;
 
-use exo_mutators::app;
+use petros_mutators::app;
 
-use exo::{decode, encode, AutoCtx, Client, MutationError, ServerMsg};
-use exo_mutators::WasmTodo;
+use petros::{decode, encode, AutoCtx, Client, MutationError, ServerMsg};
+use petros_mutators::WasmTodo;
 use todo::list;
 
 uniffi::setup_scaffolding!();
@@ -85,10 +85,12 @@ pub enum TodoError {
     Engine { message: String },
 }
 
-impl From<exo::Error> for TodoError {
-    fn from(e: exo::Error) -> Self {
+impl From<petros::Error> for TodoError {
+    fn from(e: petros::Error) -> Self {
         match e {
-            exo::Error::Mutation(MutationError::Rejected(reason)) => TodoError::Refused { reason },
+            petros::Error::Mutation(MutationError::Rejected(reason)) => {
+                TodoError::Refused { reason }
+            }
             other => TodoError::Engine {
                 message: other.to_string(),
             },
@@ -96,7 +98,7 @@ impl From<exo::Error> for TodoError {
     }
 }
 
-/// A peer of an Exo server.
+/// A peer of an Petros server.
 ///
 /// `Client` owns a SQLite connection, which is `Send` but not `Sync`, and
 /// Diesel needs `&mut` even to read — so every method here takes the lock. That
@@ -122,14 +124,14 @@ impl TodoClient {
 
 #[uniffi::export]
 impl TodoClient {
-    /// Open the peer's database, running Exo's migrations and the app's.
+    /// Open the peer's database, running Petros's migrations and the app's.
     ///
     /// `db_path` is a file the caller owns — on React Native, somewhere under
     /// the app's documents directory. `actor` is who this peer is; it is opaque
-    /// to Exo and ends up on every row this peer authors.
+    /// to Petros and ends up on every row this peer authors.
     #[uniffi::constructor]
     pub fn open(db_path: String, actor: String) -> Result<Self, TodoError> {
-        let conn = exo::open_path(&db_path)?;
+        let conn = petros::open_path(&db_path)?;
         let client = Client::<WasmTodo>::open(conn, actor, AutoCtx::system())?;
         Ok(TodoClient {
             inner: Mutex::new(client),
@@ -157,7 +159,7 @@ impl TodoClient {
     /// mutate("SetDone", r#"{"id": "67e55084-...", "done": true}"#)
     /// ```
     pub fn mutate(&self, kind: String, args: String) -> Result<(), TodoError> {
-        let payload = exo_mutators::app::from_json(&kind, &args)
+        let payload = petros_mutators::app::from_json(&kind, &args)
             .map_err(|message| TodoError::Refused { reason: message })?;
         self.with(|c| {
             c.mutate(payload)?;
@@ -225,12 +227,12 @@ impl TodoClient {
     /// the first mutation, so a bad push fails loudly and the old one keeps
     /// running.
     pub fn load_mutators(&self, wasm: Vec<u8>) -> Result<u64, TodoError> {
-        exo_mutators::load(&wasm).map_err(|message| TodoError::Engine { message })
+        petros_mutators::load(&wasm).map_err(|message| TodoError::Engine { message })
     }
 
     /// Which module is running, or zero if none has been installed yet.
     pub fn mutators_generation(&self) -> u64 {
-        exo_mutators::generation()
+        petros_mutators::generation()
     }
 
     // ---------------------------------------------------------- the transport

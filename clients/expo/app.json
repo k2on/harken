@@ -1,11 +1,11 @@
 {
   "expo": {
-    "name": "exo \u00b7 to-do",
-    "slug": "exo-expo",
+    "name": "petros \u00b7 to-do",
+    "slug": "petros-expo",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "exoexpo",
+    "scheme": "petrosexpo",
     "userInterfaceStyle": "automatic",
     "ios": {
       "icon": "./assets/expo.icon"
@@ -18,7 +18,7 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "dev.harken.exotodo"
+      "package": "dev.harken.petrostodo"
     },
     "web": {
       "output": "static",

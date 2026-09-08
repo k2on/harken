@@ -9,7 +9,7 @@
 
 import { useState } from 'react';
 import { Stack, useLocalSearchParams } from 'expo-router';
-import type { TodoItem } from 'exo-todo';
+import type { TodoItem } from 'petros-todo';
 import {
   FlatList,
   KeyboardAvoidingView,
@@ -46,7 +46,7 @@ export default function Todo() {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
     >
-      <Stack.Screen options={{ title: `exo · ${user}` }} />
+      <Stack.Screen options={{ title: `petros · ${user}` }} />
 
       <View style={s.entry}>
         <TextInput

@@ -16,7 +16,7 @@
 
 use std::time::Instant;
 
-const MODULE: &[u8] = exo_mutators::BUNDLED;
+const MODULE: &[u8] = petros_mutators::BUNDLED;
 
 fn median(mut v: Vec<f64>) -> f64 {
     v.sort_by(|a, b| a.partial_cmp(b).unwrap());
@@ -27,18 +27,18 @@ fn median(mut v: Vec<f64>) -> f64 {
 #[test]
 #[ignore = "a measurement, not an assertion: run it with `just latency`"]
 fn the_cost_of_the_thread() {
-    use exo_mutators::Mutators;
+    use petros_mutators::Mutators;
 
     let m = Mutators::load(MODULE).unwrap();
-    let mut conn = exo::open_memory().unwrap();
-    exo::diesel::connection::SimpleConnection::batch_execute(
+    let mut conn = petros::open_memory().unwrap();
+    petros::diesel::connection::SimpleConnection::batch_execute(
         &mut conn,
         "CREATE TABLE todo (id BLOB PRIMARY KEY NOT NULL, text TEXT NOT NULL,
           done BOOL NOT NULL DEFAULT 0, pos BIGINT NOT NULL,
           created_ms BIGINT NOT NULL, actor TEXT NOT NULL);",
     )
     .unwrap();
-    let mut auto = exo::AutoCtx::seeded(1);
+    let mut auto = petros::AutoCtx::seeded(1);
 
     let mut fill = vec![];
     let mut apply = vec![];
@@ -68,23 +68,24 @@ fn the_cost_of_the_thread() {
 #[test]
 #[ignore = "a measurement, not an assertion: run it with `just latency`"]
 fn fsync_or_wasm() {
-    use exo::diesel::connection::SimpleConnection;
-    use exo::diesel::Connection as _;
+    use petros::diesel::connection::SimpleConnection;
+    use petros::diesel::Connection as _;
 
     println!("\n  one mutation on a file-backed database, by durability setting:");
     for sync in ["FULL", "NORMAL", "OFF"] {
-        let dir = std::env::temp_dir().join(format!("exo-sync-{sync}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("petros-sync-{sync}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
 
-        let mut conn = exo::Connection::establish(&dir.join("p.db").to_string_lossy()).unwrap();
+        let mut conn = petros::Connection::establish(&dir.join("p.db").to_string_lossy()).unwrap();
         conn.batch_execute(&format!(
             "PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; \
              PRAGMA busy_timeout = 5000; PRAGMA synchronous = {sync};"
         ))
         .unwrap();
         let mut client =
-            exo::Client::<todo::TodoApp>::open(conn, "alice", exo::AutoCtx::system()).unwrap();
+            petros::Client::<todo::TodoApp>::open(conn, "alice", petros::AutoCtx::system())
+                .unwrap();
 
         client.mutate(todo::add("warm")).unwrap();
         let mut ts = vec![];
@@ -106,24 +107,28 @@ fn fsync_or_wasm() {
 #[test]
 #[ignore = "a measurement, not an assertion: run it with `just latency`"]
 fn one_tap_at_a_fixed_depth() {
-    use exo::diesel::connection::SimpleConnection;
-    use exo::diesel::Connection as _;
+    use petros::diesel::connection::SimpleConnection;
+    use petros::diesel::Connection as _;
 
     fn one(sync: &str, depth: usize, n: usize) -> f64 {
         let mut ts = vec![];
         for run in 0..n {
-            let dir = std::env::temp_dir()
-                .join(format!("exo-d{depth}-{sync}-{run}-{}", std::process::id()));
+            let dir = std::env::temp_dir().join(format!(
+                "petros-d{depth}-{sync}-{run}-{}",
+                std::process::id()
+            ));
             let _ = std::fs::remove_dir_all(&dir);
             std::fs::create_dir_all(&dir).unwrap();
-            let mut conn = exo::Connection::establish(&dir.join("p.db").to_string_lossy()).unwrap();
+            let mut conn =
+                petros::Connection::establish(&dir.join("p.db").to_string_lossy()).unwrap();
             conn.batch_execute(&format!(
                 "PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000; \
                  PRAGMA synchronous = {sync};"
             ))
             .unwrap();
             let mut c =
-                exo::Client::<todo::TodoApp>::open(conn, "alice", exo::AutoCtx::system()).unwrap();
+                petros::Client::<todo::TodoApp>::open(conn, "alice", petros::AutoCtx::system())
+                    .unwrap();
             for i in 0..depth {
                 c.mutate(todo::add(&format!("filler {i}"))).unwrap();
             }

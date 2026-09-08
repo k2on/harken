@@ -1,16 +1,16 @@
 //! A peer with no module cannot mutate.
 //!
-//! Its own file on purpose. The loaded module is process-wide — `exo` calls
+//! Its own file on purpose. The loaded module is process-wide — `petros` calls
 //! `Mutation::apply` during a rebase and hands it no context, so there is one
 //! domain per process, exactly as there was when `apply` was a linked symbol.
 //! That makes "nothing is loaded yet" a state only a fresh process can observe,
 //! and cargo gives each test file one.
 
-use exo_todo_ffi::TodoClient;
+use petros_todo_ffi::TodoClient;
 
 #[test]
 fn mutating_without_a_module_is_refused_rather_than_ignored() {
-    let dir = std::env::temp_dir().join(format!("exo-nomodule-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("petros-nomodule-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
 

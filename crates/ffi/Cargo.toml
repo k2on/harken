@@ -1,5 +1,5 @@
 [package]
-name = "exo-todo-ffi"
+name = "petros-todo-ffi"
 version = "0.1.0"
 description = "UniFFI bindings for the demo to-do client: one Rust definition, generated into TypeScript for the Expo app."
 edition.workspace = true
@@ -11,7 +11,7 @@ rust-version.workspace = true
 # bindings --library` reads the UniFFI metadata back out of. `staticlib` is what
 # an iOS xcframework links. `lib` keeps `cargo test` and rust-analyzer working.
 crate-type = ["cdylib", "staticlib", "lib"]
-name = "exo_todo_ffi"
+name = "petros_todo_ffi"
 
 [dependencies]
 # No `ws` feature: the socket lives in JavaScript. React Native already has a
@@ -19,10 +19,10 @@ name = "exo_todo_ffi"
 # that was already true once. Keeping it there is what leaves `tungstenite`, a
 # TLS stack and a thread out of the mobile binary — the frames are tens of bytes
 # a few times a second, so what crosses the bridge is not where the time goes.
-exo.workspace = true
+petros.workspace = true
 # The wasm host, shared with the server and the terminal peers so that every
 # one of them runs the same `apply`.
-exo-mutators.workspace = true
+petros-mutators.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 todo = { workspace = true, features = ["storage"] }
@@ -36,4 +36,4 @@ uniffi.workspace = true
 # `just mutators` produces.
 ciborium.workspace = true
 diesel = { workspace = true, features = ["sqlite"] }
-exo-mutators.workspace = true
+petros-mutators.workspace = true
