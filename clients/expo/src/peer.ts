@@ -10,7 +10,8 @@
  * diverge silently, so there is only ever one and it is in Rust.
  */
 
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
+import { AppState } from 'react-native';
 import { Paths } from 'expo-file-system';
 import { usePeer as usePetrosPeer } from '@petros/client/react';
 import { TodoClient, type TodoClientLike, type TodoItem } from 'harken-native';
@@ -65,6 +66,17 @@ export function usePeer(actor: string, server: string): Peer {
     install,
     watch,
   });
+
+  // The OS suspends a backgrounded app and takes the socket with it. To the
+  // engine that is indistinguishable from being offline, so coming back is a
+  // `Hello` and whatever the log gained meanwhile — no special case, just a
+  // nudge to try the socket again rather than waiting out the backoff.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (next) => {
+      if (next === 'active') peer.reconnect();
+    });
+    return () => sub.remove();
+  }, [peer]);
 
   return useMemo(
     () => ({
