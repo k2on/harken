@@ -1,5 +1,9 @@
-//! The petros app whose `apply` is a wasm module — the phone's, and only the
+//! The Petros app whose `apply` is a wasm module — the phone's, and only the
 //! phone's.
+//!
+//! This lives with the client rather than in `petros-wasm-host`, because it is
+//! the one part of running a module that knows what domain is being run: the
+//! payload type, the `App` impl, and the module bytes this build ships with.
 //!
 //! Every other peer links `todo` and calls `apply` directly; see
 //! `docs/decisions.md` for why the indirection is confined to here. What it
@@ -15,7 +19,20 @@ use ciborium::value::Value;
 use petros::{ActorId, App, AutoCtx, Connection, Mutation, MutationError, Transaction};
 use serde::{Deserialize, Serialize};
 
-use crate::MUTATORS;
+use petros_wasm_host::MUTATORS;
+
+/// The module this build was compiled against.
+///
+/// A peer with no Metro attached — the server, the terminal examples — wants
+/// exactly this and nothing else, so it is baked in rather than found at
+/// runtime. `just mutators` is what puts it there.
+pub const BUNDLED: &[u8] =
+    include_bytes!("../../../target/wasm32-unknown-unknown/mutators/todo_wasm.wasm");
+
+/// Install [`BUNDLED`]. What a peer with no Metro attached calls at startup.
+pub fn load_bundled() -> Result<u64, String> {
+    petros_wasm_host::load(BUNDLED)
+}
 
 /// One mutation, as the bytes the log stores.
 ///

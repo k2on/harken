@@ -16,7 +16,7 @@
 
 use std::time::Instant;
 
-const MODULE: &[u8] = petros_wasm_host::BUNDLED;
+const MODULE: &[u8] = petros_todo_ffi::app::BUNDLED;
 
 fn median(mut v: Vec<f64>) -> f64 {
     v.sort_by(|a, b| a.partial_cmp(b).unwrap());

@@ -14,6 +14,10 @@ crate-type = ["cdylib", "staticlib", "lib"]
 name = "petros_todo_ffi"
 
 [dependencies]
+# The payload the log stores is CBOR, and the App impl below is what makes it
+# one — `petros-wasm-host` only runs modules and knows nothing about domains.
+ciborium.workspace = true
+serde.workspace = true
 # No `ws` feature: the socket lives in JavaScript. React Native already has a
 # WebSocket, exactly as a browser does, and `transport/web.rs` exists because
 # that was already true once. Keeping it there is what leaves `tungstenite`, a

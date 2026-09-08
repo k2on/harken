@@ -26,10 +26,11 @@
 
 use std::sync::Mutex;
 
-use petros_wasm_host::app;
+pub mod app;
+
+use app::WasmTodo;
 
 use petros::{decode, encode, AutoCtx, Client, MutationError, ServerMsg};
-use petros_wasm_host::WasmTodo;
 use todo::list;
 
 uniffi::setup_scaffolding!();
@@ -159,7 +160,7 @@ impl TodoClient {
     /// mutate("SetDone", r#"{"id": "67e55084-...", "done": true}"#)
     /// ```
     pub fn mutate(&self, kind: String, args: String) -> Result<(), TodoError> {
-        let payload = petros_wasm_host::app::from_json(&kind, &args)
+        let payload = app::from_json(&kind, &args)
             .map_err(|message| TodoError::Refused { reason: message })?;
         self.with(|c| {
             c.mutate(payload)?;

@@ -4,7 +4,7 @@
 
 use petros_todo_ffi::TodoClient;
 
-const MODULE: &[u8] = petros_wasm_host::BUNDLED;
+const MODULE: &[u8] = petros_todo_ffi::app::BUNDLED;
 
 /// The point of all of it: a mutation made through the public client runs the
 /// module, not a linked `apply` — and swapping the module changes what the very
