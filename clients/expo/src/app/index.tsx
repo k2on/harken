@@ -47,7 +47,7 @@ export default function Connect() {
   const join = () => {
     if (problem) return;
     router.push({
-      pathname: '/todo',
+      pathname: '/library',
       params: { user: user.trim(), server: server.trim() },
     });
   };

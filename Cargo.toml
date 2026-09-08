@@ -4,6 +4,7 @@ members = [
     "crates/harken",
     "crates/harken-wasm",
     "crates/ffi",
+    "crates/server",
 ]
 
 [workspace.package]
@@ -21,6 +22,7 @@ petros-wasm-host = { path = "../petros/crates/petros-wasm-host" }
 petros-schema = { path = "../petros/crates/petros-schema" }
 petros-testkit = { path = "../petros/crates/petros-testkit" }
 petros-wasm-guest = { path = "../petros/crates/petros-wasm-guest" }
+petros-axum = { path = "../petros/crates/petros-axum" }
 # `default-features = false` here so `crates/harken-wasm` can actually turn the
 # storage half off — a member's `default-features = false` is ignored unless the
 # workspace dependency says so too, silently, which put Diesel and SQLite in a

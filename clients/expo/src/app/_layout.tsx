@@ -16,7 +16,7 @@ export default function RootLayout() {
         }}
       >
         <Stack.Screen name="index" options={{ title: 'petros · connect' }} />
-        <Stack.Screen name="todo" options={{ title: 'petros · to-do' }} />
+        <Stack.Screen name="library" options={{ title: 'harken' }} />
       </Stack>
     </>
   );

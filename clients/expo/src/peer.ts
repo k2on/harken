@@ -6,14 +6,14 @@
  * database to open, what its query returns, and what its verbs are called.
  *
  * Nothing below re-implements any of the engine. There is no `apply` here, no
- * CBOR, no notion of what a to-do is; two `apply`s that disagree make replicas
+ * CBOR, no notion of what a song is; two `apply`s that disagree make replicas
  * diverge silently, so there is only ever one and it is in Rust.
  */
 
 import { useMemo } from 'react';
 import { Paths } from 'expo-file-system';
 import { usePeer as usePetrosPeer } from '@petros/client/react';
-import { TodoClient, type TodoClientLike, type TodoItem } from 'harken-native';
+import { HarkenClient, type HarkenClientLike, type Song } from 'harken-native';
 
 import { install, watch } from './mutators';
 // Generated from the module's own schema section by `just mutators`. A call
@@ -35,16 +35,17 @@ type ArgsFor<K extends Verb> = MutationArgs[K] extends Record<string, never>
   : [args: MutationArgs[K]];
 
 export type Peer = {
-  items: TodoItem[];
+  songs: Song[];
   cursor: number;
   pending: number;
   online: boolean;
   note: string;
   mutators: number;
   lastMutationMs: number | null;
-  add: (text: string) => void;
-  setDone: (id: string, done: boolean) => void;
-  remove: (id: string) => void;
+  addSong: (title: string, artist: string) => void;
+  /** The heart. `true` puts the song on the favourites playlist. */
+  setFavorite: (id: string, favorited: boolean) => void;
+  removeSong: (id: string) => void;
   mutate: <K extends Verb>(kind: K, ...args: ArgsFor<K>) => void;
   toggleLink: () => void;
 };
@@ -53,31 +54,32 @@ export type Peer = {
  *  device are two peers, exactly as `--user` is on the desktop. */
 function databasePath(actor: string): string {
   const dir = Paths.document.uri.replace(/^file:\/\//, '').replace(/\/$/, '');
-  return `${dir}/petros-demo-${actor.replace(/[^a-zA-Z0-9._-]/g, '_')}.db`;
+  return `${dir}/harken-${actor.replace(/[^a-zA-Z0-9._-]/g, '_')}.db`;
 }
 
 export function usePeer(actor: string, server: string): Peer {
-  const peer = usePetrosPeer<TodoClientLike, TodoItem[]>({
+  const peer = usePetrosPeer<HarkenClientLike, Song[]>({
     key: actor,
     server,
-    open: () => TodoClient.open(databasePath(actor), actor),
-    query: (client) => client.list(),
+    open: () => HarkenClient.open(databasePath(actor), actor),
+    query: (client) => client.library(),
     install,
     watch,
   });
 
   return useMemo(
     () => ({
-      items: peer.data ?? [],
+      songs: peer.data ?? [],
       cursor: peer.cursor,
       pending: peer.pending,
       online: peer.online,
       note: peer.note,
       mutators: peer.mutators,
       lastMutationMs: peer.lastMutationMs,
-      add: (text: string) => peer.run((c) => void c.add(text)),
-      setDone: (id: string, done: boolean) => peer.run((c) => c.setDone(id, done)),
-      remove: (id: string) => peer.run((c) => c.remove(id)),
+      addSong: (title: string, artist: string) => peer.run((c) => void c.addSong(title, artist)),
+      setFavorite: (id: string, favorited: boolean) =>
+        peer.run((c) => (favorited ? c.favorite(id) : c.unfavorite(id))),
+      removeSong: (id: string) => peer.run((c) => c.removeSong(id)),
       mutate: <K extends Verb>(kind: K, ...args: ArgsFor<K>) =>
         peer.run((c) => c.mutate(kind, JSON.stringify(args[0] ?? {}))),
       toggleLink: peer.toggleLink,

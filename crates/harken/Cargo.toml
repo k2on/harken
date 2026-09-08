@@ -34,13 +34,13 @@ petros-testkit.workspace = true
 ciborium.workspace = true
 serde_json.workspace = true
 diesel = { workspace = true, features = ["sqlite"] }
-crossterm = "0.28"
-ratatui = "0.29"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 # `smol` gives iced a timer to drive the example's transport pump. In a browser
 # it already has one.
-iced = { workspace = true, features = ["smol"] }
+# `canvas` because the heart is a path: Fira Sans has no U+2665, so the
+# character would draw nothing at all.
+iced = { workspace = true, features = ["smol", "canvas"] }
 
 # The iced example in a browser: a panic that reaches the console beats one that
 # reports "unreachable executed".
@@ -50,14 +50,7 @@ console_error_panic_hook = "0.1"
 # falls back to its software renderer, and that cannot have the canvas because
 # WebGL already claimed it — which surfaces as a blank page and a panic about
 # canvas contexts.
-iced = { workspace = true, features = ["webgl"] }
-
-[[example]]
-name = "offline"
-
-[[example]]
-name = "multiplayer"
-required-features = ["ws"]
+iced = { workspace = true, features = ["webgl", "canvas"] }
 
 [[example]]
 name = "iced"

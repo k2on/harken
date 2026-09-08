@@ -1,5 +1,13 @@
-//! Everything that needs a real SQLite: the table, the rows, the Diesel host
+//! Everything that needs a real SQLite: the tables, the rows, the Diesel host
 //! and the `petros::App` the native peers run.
+//!
+//! Reads go through Diesel's DSL, with `check_for_backend` verifying at compile
+//! time that each model still matches its table. Writes do not, and cannot:
+//! `apply` is compiled to wasm as well as linked, and the wasm build has no
+//! SQLite and no Diesel — only a channel to the host's, which carries SQL text.
+//! That asymmetry is the price of a domain the phone can replace without a
+//! rebuild, and `tests/conformance.rs` is what covers the half the compiler
+//! cannot.
 //!
 //! Behind the `storage` feature, because the wasm build wants
 //! [`domain`](crate::domain) and none of this.
@@ -15,35 +23,97 @@ use petros::{ActorId, App, AutoCtx, Connection, Id, Mutation, MutationError, Tra
 use serde::{Deserialize, Serialize};
 
 diesel::table! {
-    todo (id) {
+    song (id) {
         id -> Binary,
-        text -> Text,
-        done -> Bool,
+        title -> Text,
+        artist -> Text,
         pos -> BigInt,
-        created_ms -> BigInt,
+        added_ms -> BigInt,
         actor -> Text,
     }
 }
 
-/// One row of the materialised view. Read-only: rows are produced by the
-/// module's `apply`, never by this crate.
+diesel::table! {
+    favorite (song_id) {
+        song_id -> Binary,
+        pos -> BigInt,
+        favorited_ms -> BigInt,
+        actor -> Text,
+    }
+}
+
+diesel::joinable!(favorite -> song (song_id));
+diesel::allow_tables_to_appear_in_same_query!(song, favorite);
+
+/// One row of the library. Read-only: rows are produced by `apply`, never by
+/// this crate.
 #[derive(Debug, Clone, Queryable, Selectable)]
-#[diesel(table_name = todo, check_for_backend(SqliteBackend))]
-pub struct Item {
+#[diesel(table_name = song, check_for_backend(SqliteBackend))]
+pub struct SongRow {
     pub id: Id,
-    pub text: String,
-    pub done: bool,
+    pub title: String,
+    pub artist: String,
     pub pos: i64,
-    pub created_ms: i64,
+    pub added_ms: i64,
     pub actor: String,
 }
 
-/// Always ordered explicitly.
-pub fn list(conn: &mut Connection) -> petros::Result<Vec<Item>> {
-    Ok(todo::table
-        .select(Item::as_select())
-        .order((todo::pos.asc(), todo::id.asc()))
-        .load(conn)?)
+/// A song, and where it sits in the favourites playlist if it is on it.
+#[derive(Debug, Clone)]
+pub struct Song {
+    pub id: Id,
+    pub title: String,
+    pub artist: String,
+    pub pos: i64,
+    pub added_ms: i64,
+    pub actor: String,
+    /// `Some(n)` if favourited, and `n` is its place in the playlist. Recomputed
+    /// on every replay, which is what makes the rebase visible: favourite
+    /// something offline and it lands after whatever arrived while you were
+    /// away.
+    pub favorite_pos: Option<i64>,
+}
+
+impl Song {
+    pub fn favorited(&self) -> bool {
+        self.favorite_pos.is_some()
+    }
+}
+
+fn song_of((row, favorite_pos): (SongRow, Option<i64>)) -> Song {
+    Song {
+        id: row.id,
+        title: row.title,
+        artist: row.artist,
+        pos: row.pos,
+        added_ms: row.added_ms,
+        actor: row.actor,
+        favorite_pos,
+    }
+}
+
+/// The whole library, in the order songs were added. Always ordered explicitly.
+pub fn library(conn: &mut Connection) -> petros::Result<Vec<Song>> {
+    Ok(song::table
+        .left_join(favorite::table)
+        .select((SongRow::as_select(), favorite::pos.nullable()))
+        .order((song::pos.asc(), song::id.asc()))
+        .load::<(SongRow, Option<i64>)>(conn)?
+        .into_iter()
+        .map(song_of)
+        .collect())
+}
+
+/// The favourites playlist, in playlist order.
+pub fn favorites(conn: &mut Connection) -> petros::Result<Vec<Song>> {
+    Ok(song::table
+        .inner_join(favorite::table)
+        .select((SongRow::as_select(), favorite::pos))
+        .order((favorite::pos.asc(), song::id.asc()))
+        .load::<(SongRow, i64)>(conn)?
+        .into_iter()
+        .map(|(row, pos)| song_of((row, Some(pos))))
+        .collect())
 }
 
 // ---------------------------------------------------------------- the writes
@@ -104,26 +174,35 @@ impl Mutation for Payload {
     }
 }
 
-/// The app: Petros's tables plus this one.
-pub struct TodoApp;
+/// The app: Petros's tables plus these two.
+pub struct HarkenApp;
 
-impl App for TodoApp {
+impl App for HarkenApp {
     type Mutation = Payload;
 
     fn migrate(conn: &mut Connection) -> petros::Result<()> {
-        conn.batch_execute(
-            "CREATE TABLE IF NOT EXISTS todo (
-                 id         BLOB PRIMARY KEY NOT NULL,
-                 text       TEXT NOT NULL,
-                 done       BOOL NOT NULL DEFAULT 0,
-                 pos        BIGINT NOT NULL,
-                 created_ms BIGINT NOT NULL,
-                 actor      TEXT NOT NULL
-             );",
-        )?;
+        conn.batch_execute(SCHEMA)?;
         Ok(())
     }
 }
+
+/// The app's tables. `table!` above describes them; it does not create them, so
+/// this is the other half and the two are mirrored by hand.
+pub const SCHEMA: &str = "\
+    CREATE TABLE IF NOT EXISTS song (
+        id       BLOB PRIMARY KEY NOT NULL,
+        title    TEXT NOT NULL,
+        artist   TEXT NOT NULL,
+        pos      BIGINT NOT NULL,
+        added_ms BIGINT NOT NULL,
+        actor    TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS favorite (
+        song_id      BLOB PRIMARY KEY NOT NULL,
+        pos          BIGINT NOT NULL,
+        favorited_ms BIGINT NOT NULL,
+        actor        TEXT NOT NULL
+    );";
 
 // ------------------------------------------------------------------ authoring
 
@@ -195,21 +274,39 @@ fn json_to_cbor(value: serde_json::Value, is_id: bool) -> Result<Value, String> 
     })
 }
 
-// The three verbs the Rust peers spell out. Conveniences over [`from_value`],
-// not a second encoder. The `expect`s cannot fire: the only fallible step is
-// parsing a uuid, and these format one rather than taking it from a caller.
+// The verbs the Rust peers spell out. Conveniences over [`from_value`], not a
+// second encoder. The `expect`s cannot fire: the only fallible step is parsing
+// a uuid, and these format one rather than taking it from a caller.
 
-pub fn add(text: &str) -> Payload {
-    from_value("Add", serde_json::json!({ "text": text })).expect("a text is always encodable")
+pub fn add_song(title: &str, artist: &str) -> Payload {
+    from_value(
+        "AddSong",
+        serde_json::json!({ "title": title, "artist": artist }),
+    )
+    .expect("text is always encodable")
 }
 
-pub fn set_done(id: &[u8; 16], done: bool) -> Payload {
+pub fn add_album() -> Payload {
+    from_value("AddAlbum", serde_json::json!({})).expect("no arguments to encode")
+}
+
+pub fn favorite(id: &[u8; 16]) -> Payload {
     let id = petros::uuid::Uuid::from_bytes(*id).to_string();
-    from_value("SetDone", serde_json::json!({ "id": id, "done": done }))
+    from_value("Favorite", serde_json::json!({ "id": id })).expect("a formatted uuid always parses")
+}
+
+pub fn unfavorite(id: &[u8; 16]) -> Payload {
+    let id = petros::uuid::Uuid::from_bytes(*id).to_string();
+    from_value("Unfavorite", serde_json::json!({ "id": id }))
         .expect("a formatted uuid always parses")
 }
 
-pub fn remove(id: &[u8; 16]) -> Payload {
+pub fn favorite_all() -> Payload {
+    from_value("FavoriteAll", serde_json::json!({})).expect("no arguments to encode")
+}
+
+pub fn remove_song(id: &[u8; 16]) -> Payload {
     let id = petros::uuid::Uuid::from_bytes(*id).to_string();
-    from_value("Remove", serde_json::json!({ "id": id })).expect("a formatted uuid always parses")
+    from_value("RemoveSong", serde_json::json!({ "id": id }))
+        .expect("a formatted uuid always parses")
 }

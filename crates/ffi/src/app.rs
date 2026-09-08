@@ -96,15 +96,15 @@ impl Mutation for Payload {
 }
 
 /// The app, for a peer whose `apply` arrives as a file.
-pub struct WasmTodo;
+pub struct WasmHarken;
 
-impl App for WasmTodo {
+impl App for WasmHarken {
     type Mutation = Payload;
 
     fn migrate(conn: &mut Connection) -> petros::Result<()> {
         // One schema. Migrations are the one thing that should not arrive over
         // the air, so they stay where every peer can see them.
-        <harken::TodoApp as App>::migrate(conn)
+        <harken::HarkenApp as App>::migrate(conn)
     }
 }
 

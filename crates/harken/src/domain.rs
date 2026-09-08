@@ -1,19 +1,26 @@
-//! The to-do domain: `apply`, `fill_auto`, and nothing that knows where it runs.
+//! The music domain: `apply`, `fill_auto`, and nothing that knows where it runs.
 //!
-//! This is the one definition. It is compiled twice — natively into the server
-//! and the terminal peers, and to wasm for the phone, which loads it as a file
-//! it can replace without a rebuild. Two builds of one source is not two
-//! implementations, and `tests/conformance.rs` holds it to that by driving the
-//! same mutations through both and comparing the rows.
+//! A library of songs, and a favourites playlist that is a real ordered
+//! playlist rather than a flag — so "add this to favourites" reads the end of
+//! the list and puts the song after it, which is an intent and not a fact. That
+//! is what makes the rebase visible: favourite a song while offline, come back
+//! to find someone else favourited two, and yours lands after theirs.
 //!
-//! The verbs are declared and dispatched by one macro, so an argument's name
-//! is written once. It used to be written twice — in the schema and again in
-//! whatever field `apply` reached for — and nothing checked the two agreed.
+//! The verbs are declared and dispatched by one macro, so an argument's name is
+//! written once. Everything `apply` can reach is [`Host`]: three methods, no
+//! clock, no randomness, no network, no filesystem. On wasm the sandbox
+//! enforces that, because the module imports nothing else; natively the trait
+//! is the only argument `apply` gets.
 //!
-//! Everything it can reach is [`Host`]: three methods, no clock, no randomness,
-//! no network, no filesystem. On wasm that is enforced by the sandbox, because
-//! the module imports nothing else. Natively it is enforced by this trait being
-//! the only argument `apply` gets.
+//! This is compiled twice — linked into the server and the iced peer, and to
+//! wasm for the phone, which loads it as a file it can replace without a
+//! rebuild. `tests/conformance.rs` drives the same mutations through both and
+//! compares the rows, because "two builds of one source" is a claim.
+//!
+//! The SQL is written out rather than built with Diesel, and that is not a
+//! preference: the wasm build has no SQLite and no Diesel, only a channel to
+//! the host's. Reads go through the ORM — see [`crate::storage`] — because they
+//! never cross that boundary.
 
 use petros_schema::cbor::{set, Value};
 
@@ -22,97 +29,146 @@ use petros_schema::cbor::{set, Value};
 pub use petros_schema::{lit, Host, Lit};
 
 petros_schema::mutations! {
-    /// Add a to-do at the end of the list.
-    Add { text: Text } auto { id: Id, created_ms: Integer } => |host, actor| {
-        if text.trim().is_empty() {
-            return Err("a to-do needs some text".into());
+    /// Put a song in the library.
+    AddSong { title: Text, artist: Text } auto { id: Id, added_ms: Integer } => |host, actor| {
+        if title.trim().is_empty() {
+            return Err("a song needs a title".into());
         }
         // The same entry arriving twice is a no-op, which is what makes
         // redelivery safe.
         if host.query_exists(&format!(
-            "SELECT 1 FROM todo WHERE id = {}",
+            "SELECT 1 FROM song WHERE id = {}",
             lit(Lit::Blob(&id))
         )) {
             return Ok(());
         }
-        // `pos` is read out of current state: "put it at the end", an intent,
-        // not "put it at 3", a fact. It is what makes the rebase visible when
-        // an entry lands underneath yours.
-        let last = host.query_int("SELECT COALESCE(MAX(pos), 0) FROM todo");
+        let last = host.query_int("SELECT COALESCE(MAX(pos), 0) FROM song");
         host.exec(&format!(
-            "INSERT INTO todo (id, text, done, pos, created_ms, actor) \
-             VALUES ({}, {}, 0, {}, {}, {})",
+            "INSERT INTO song (id, title, artist, pos, added_ms, actor) \
+             VALUES ({}, {}, {}, {}, {}, {})",
             lit(Lit::Blob(&id)),
-            lit(Lit::Text(text.trim())),
+            lit(Lit::Text(title.trim())),
+            lit(Lit::Text(artist.trim())),
             lit(Lit::Int(last + 1)),
-            lit(Lit::Int(created_ms)),
+            lit(Lit::Int(added_ms)),
             lit(Lit::Text(actor)),
         ));
         Ok(())
     }
 
-    /// Five to-dos as one entry.
+    /// A whole album at once: five tracks from one seed.
     ///
     /// The ids are already in the payload — `fill_auto` put them there at the
     /// originating client — so this is as deterministic as any other apply.
-    AddFive {} auto { items: Array, created_ms: Integer } => |host, actor| {
-        // Read the end of the list once, then count up. Re-reading between
+    AddAlbum {} auto { tracks: Array, added_ms: Integer } => |host, actor| {
+        // Read the end of the library once, then count up. Re-reading between
         // inserts would give the same answer and cost five more round trips.
-        let mut pos = host.query_int("SELECT COALESCE(MAX(pos), 0) FROM todo");
-        for item in items {
-            let Some(id) = petros_schema::cbor::field(item, "id")
+        let mut pos = host.query_int("SELECT COALESCE(MAX(pos), 0) FROM song");
+        for track in tracks {
+            let Some(id) = petros_schema::cbor::field(track, "id")
                 .and_then(petros_schema::cbor::as_bytes)
             else {
-                return Err("an item has no id".into());
+                return Err("a track has no id".into());
             };
-            let text = petros_schema::cbor::opt_text(item, "text");
-            if text.trim().is_empty() {
+            let title = petros_schema::cbor::opt_text(track, "title");
+            let artist = petros_schema::cbor::opt_text(track, "artist");
+            if title.trim().is_empty() {
                 continue;
             }
             if host.query_exists(&format!(
-                "SELECT 1 FROM todo WHERE id = {}",
+                "SELECT 1 FROM song WHERE id = {}",
                 lit(Lit::Blob(&id))
             )) {
                 continue;
             }
             pos += 1;
             host.exec(&format!(
-                "INSERT INTO todo (id, text, done, pos, created_ms, actor) \
-                 VALUES ({}, {}, 0, {}, {}, {})",
+                "INSERT INTO song (id, title, artist, pos, added_ms, actor) \
+                 VALUES ({}, {}, {}, {}, {}, {})",
                 lit(Lit::Blob(&id)),
-                lit(Lit::Text(text.trim())),
+                lit(Lit::Text(title.trim())),
+                lit(Lit::Text(artist.trim())),
                 lit(Lit::Int(pos)),
-                lit(Lit::Int(created_ms)),
+                lit(Lit::Int(added_ms)),
                 lit(Lit::Text(actor)),
             ));
         }
         Ok(())
     }
 
-    /// One entry rather than one per row, so it covers rows another peer added
-    /// in the meantime. That is what makes it an intent.
-    MarkAllDone {} => |host, actor| {
-        let _ = actor;
-        host.exec("UPDATE todo SET done = 1 WHERE done = 0");
+    /// Add a song to the favourites playlist, at the end.
+    ///
+    /// Favouriting a song that is gone is a no-op rather than an error: an
+    /// entry earlier in the log may have removed it. So is favouriting one that
+    /// is already there — the playlist is a set with an order, and a song holds
+    /// the position it first got.
+    Favorite { id: Id } auto { favorited_ms: Integer } => |host, actor| {
+        if !host.query_exists(&format!(
+            "SELECT 1 FROM song WHERE id = {}",
+            lit(Lit::Blob(&id))
+        )) {
+            return Ok(());
+        }
+        if host.query_exists(&format!(
+            "SELECT 1 FROM favorite WHERE song_id = {}",
+            lit(Lit::Blob(&id))
+        )) {
+            return Ok(());
+        }
+        // "Put it at the end of the playlist", read from current state. An
+        // entry that lands underneath yours moves you down, which is the rebase
+        // made visible.
+        let last = host.query_int("SELECT COALESCE(MAX(pos), 0) FROM favorite");
+        host.exec(&format!(
+            "INSERT INTO favorite (song_id, pos, favorited_ms, actor) \
+             VALUES ({}, {}, {}, {})",
+            lit(Lit::Blob(&id)),
+            lit(Lit::Int(last + 1)),
+            lit(Lit::Int(favorited_ms)),
+            lit(Lit::Text(actor)),
+        ));
         Ok(())
     }
 
-    /// Updating a row that is gone is a no-op, not an error: an entry earlier
-    /// in the log may have removed it.
-    SetDone { id: Id, done: Bool } => |host, actor| {
+    /// Take a song back out of the playlist. The song itself stays.
+    Unfavorite { id: Id } => |host, actor| {
         let _ = actor;
         host.exec(&format!(
-            "UPDATE todo SET done = {} WHERE id = {}",
-            lit(Lit::Int(done as i64)),
+            "DELETE FROM favorite WHERE song_id = {}",
             lit(Lit::Blob(&id))
         ));
         Ok(())
     }
 
-    Remove { id: Id } => |host, actor| {
+    /// Favourite everything in the library that is not already favourited.
+    ///
+    /// One entry rather than one per song, so it covers songs another peer
+    /// added in the meantime. That is what makes it an intent.
+    FavoriteAll {} auto { favorited_ms: Integer } => |host, actor| {
+        host.exec(&format!(
+            "INSERT INTO favorite (song_id, pos, favorited_ms, actor) \
+             SELECT s.id, \
+                    (SELECT COALESCE(MAX(pos), 0) FROM favorite) \
+                        + ROW_NUMBER() OVER (ORDER BY s.pos, s.id), \
+                    {}, {} \
+               FROM song s \
+              WHERE NOT EXISTS (SELECT 1 FROM favorite f WHERE f.song_id = s.id) \
+              ORDER BY s.pos, s.id",
+            lit(Lit::Int(favorited_ms)),
+            lit(Lit::Text(actor)),
+        ));
+        Ok(())
+    }
+
+    /// Remove a song from the library, and from the playlist with it.
+    RemoveSong { id: Id } => |host, actor| {
         let _ = actor;
         host.exec(&format!(
-            "DELETE FROM todo WHERE id = {}",
+            "DELETE FROM favorite WHERE song_id = {}",
+            lit(Lit::Blob(&id))
+        ));
+        host.exec(&format!(
+            "DELETE FROM song WHERE id = {}",
             lit(Lit::Blob(&id))
         ));
         Ok(())
@@ -130,34 +186,43 @@ pub fn fill_auto(mutation: &mut Value, uuid: Vec<u8>, now_ms: i64) {
         .and_then(petros_schema::cbor::as_text)
         .as_deref()
     {
-        Some("Add") => {
+        Some("AddSong") => {
             set(mutation, "id", Value::Bytes(uuid));
-            set(mutation, "created_ms", Value::Integer(now_ms.into()));
+            set(mutation, "added_ms", Value::Integer(now_ms.into()));
         }
-        // Five rows out of one seed.
+        Some("Favorite") | Some("FavoriteAll") => {
+            set(mutation, "favorited_ms", Value::Integer(now_ms.into()));
+        }
+        // Five songs out of one seed.
         //
-        // The names are just "item 1".."item 5", but the *ids* cannot be: they
-        // have to be unique and `apply` may not invent them, because the only
-        // thing it can reach is [`Host`]. So the one uuid is expanded here, in
-        // the single place non-determinism is allowed, and the log freezes it.
-        Some("AddFive") => {
+        // The titles are just "Track 1".."Track 5", but the *ids* cannot be:
+        // they have to be unique and `apply` may not invent them, because the
+        // only thing it can reach is [`Host`]. So the one uuid is expanded here,
+        // in the single place non-determinism is allowed, and the log freezes it.
+        Some("AddAlbum") => {
             let mut seed = Seed::from(&uuid);
-            let items = (1..=HOW_MANY)
+            let album = ALBUMS[(seed.next() % ALBUMS.len() as u64) as usize];
+            let tracks = (1..=TRACKS)
                 .map(|n| {
                     Value::Map(vec![
                         (Value::Text("id".into()), Value::Bytes(seed.id())),
-                        (Value::Text("text".into()), Value::Text(format!("item {n}"))),
+                        (Value::Text("title".into()), Value::Text(format!("Track {n}"))),
+                        (Value::Text("artist".into()), Value::Text(album.into())),
                     ])
                 })
                 .collect();
-            set(mutation, "items", Value::Array(items));
-            set(mutation, "created_ms", Value::Integer(now_ms.into()));
+            set(mutation, "tracks", Value::Array(tracks));
+            set(mutation, "added_ms", Value::Integer(now_ms.into()));
         }
         _ => {}
     }
 }
 
-const HOW_MANY: usize = 5;
+const TRACKS: usize = 5;
+
+/// Artists to attribute a generated album to. Chosen from the seed, so the
+/// choice is frozen in the log like every other generated value.
+const ALBUMS: [&str; 4] = ["Bicep", "Floating Points", "Jamie xx", "Caribou"];
 
 /// xorshift128+, seeded from the uuid the caller supplied.
 ///
