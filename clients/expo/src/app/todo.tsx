@@ -64,6 +64,21 @@ export default function Todo() {
         </Pressable>
       </View>
 
+      {/* Neither of these is a special case in the engine or in this file.
+          They are variant names the wasm module understands, reached through
+          the one generic entry point — so adding them needed a module rebuild
+          and these two lines, and no native build at all. */}
+      <View style={s.verbs}>
+        <Pressable onPress={() => peer.mutate('AddFive')}>
+          <Text style={s.verb}>add 5</Text>
+        </Pressable>
+        {peer.items.length > 0 ? (
+          <Pressable onPress={() => peer.mutate('MarkAllDone')}>
+            <Text style={s.verb}>mark all done</Text>
+          </Pressable>
+        ) : null}
+      </View>
+
       <FlatList
         data={peer.items}
         keyExtractor={(item) => item.id}
@@ -107,6 +122,7 @@ export default function Todo() {
         </Pressable>
         <Text style={s.statusText} numberOfLines={2}>
           cursor {peer.cursor} · {peer.pending} pending · mutators v{peer.mutators}
+          {peer.lastMutationMs !== null ? ` · ${peer.lastMutationMs.toFixed(1)}ms in rust` : ''}
           {peer.note ? `  ·  ${peer.note}` : ''}
         </Text>
       </View>
@@ -136,6 +152,8 @@ const styles = (t: ReturnType<typeof useTheme>) =>
       paddingVertical: 12,
     },
     addText: { color: '#fff', fontWeight: '600' },
+    verbs: { flexDirection: 'row', gap: 18, paddingHorizontal: 16, paddingBottom: 10 },
+    verb: { color: t.accent, fontSize: 14, fontWeight: '600' },
     row: {
       flexDirection: 'row',
       alignItems: 'center',

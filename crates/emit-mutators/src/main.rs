@@ -12,6 +12,12 @@
 
 use std::io::Write;
 
+// The verb declaration, compiled in rather than parsed. `include!` keeps this
+// crate free of dependencies — which is why it is its own crate — while making
+// `crates/todo-wasm/src/verbs.rs` the single place a verb is named. Change it
+// there and both the module and these types move together.
+include!("../../todo-wasm/src/verbs.rs");
+
 fn main() -> std::io::Result<()> {
     let mut args = std::env::args().skip(1);
     let wasm = args
@@ -35,11 +41,13 @@ fn main() -> std::io::Result<()> {
          export const MUTATORS_WASM_B64 =\n  \"{}\";\n\
          \n\
          /** Changes whenever the module does, so a reload can be noticed. */\n\
-         export const MUTATORS_BUILD = \"{}\";\n",
+         export const MUTATORS_BUILD = \"{}\";\n\
+         {}",
         bytes.len(),
         encoded.len(),
         encoded,
         fingerprint(&bytes),
+        typescript(),
     );
 
     // Write only on change: an identical file still wakes Metro, and a reload
@@ -56,6 +64,49 @@ fn main() -> std::io::Result<()> {
     std::fs::rename(&tmp, &out)?;
     eprintln!("mutators: {} bytes wasm -> {out}", bytes.len());
     Ok(())
+}
+
+/// The verbs, as a discriminated union TypeScript can check call sites against.
+///
+/// `mutate` on the engine takes a plain string, because the engine genuinely
+/// does not know what verbs exist — that is what lets a new one ship without a
+/// native build. This is the other half of that bargain: the names are unknown
+/// at runtime and known at compile time, from the same declaration the module
+/// dispatches on.
+fn typescript() -> String {
+    let mut lines: Vec<String> = vec![
+        String::new(),
+        "/** A log entry's identity: the canonical 8-4-4-4-12 form. Sixteen bytes on".into(),
+        " *  the wire — `from_json` converts any field named `id` or `*_id`. */".into(),
+        "export type Id = string;".into(),
+        String::new(),
+        "/** Every verb the module understands, and what authoring one takes.".into(),
+        " *".into(),
+        " *  Generated from crates/todo-wasm/src/verbs.rs. Auto-filled fields — ids,".into(),
+        " *  timestamps — are absent on purpose: the caller does not choose them,".into(),
+        " *  the module does. */".into(),
+        "export type MutationArgs = {".into(),
+    ];
+    for verb in VERBS {
+        if verb.args.is_empty() {
+            // `Record<string, never>` rather than `{}`, which in TypeScript
+            // means "anything except null" and would check nothing at all.
+            lines.push(format!("  {}: Record<string, never>;", verb.name));
+            continue;
+        }
+        let fields: Vec<String> = verb
+            .args
+            .iter()
+            .map(|a| format!("{}: {}", a.name, a.ty.typescript()))
+            .collect();
+        lines.push(format!("  {}: {{ {} }};", verb.name, fields.join("; ")));
+    }
+    lines.push("};".into());
+    lines.push(String::new());
+    lines.push("/** The name of any verb the module handles. */".into());
+    lines.push("export type Verb = keyof MutationArgs;".into());
+    lines.push(String::new());
+    lines.join("\n")
 }
 
 /// FNV-1a. Enough to say "these are different bytes", which is all it is for.

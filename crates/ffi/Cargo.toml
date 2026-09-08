@@ -23,6 +23,7 @@ exo.workspace = true
 # The wasm host, shared with the server and the terminal peers so that every
 # one of them runs the same `apply`.
 exo-mutators.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 todo.workspace = true
 # Proc-macro mode: no UDL file, no build script. The Rust below *is* the
@@ -33,5 +34,6 @@ uniffi.workspace = true
 [dev-dependencies]
 # The tests apply real mutations, so they need a database and the module that
 # `just mutators` produces.
+ciborium.workspace = true
 diesel = { workspace = true, features = ["sqlite"] }
 exo-mutators.workspace = true

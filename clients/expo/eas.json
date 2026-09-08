@@ -18,25 +18,21 @@
       "developmentClient": true,
       "distribution": "internal",
       "android": {
-        "buildType": "apk",
-        "gradleCommand": ":app:assembleDebug",
-        "config": "rust.yml"
+        "buildType": "apk"
       }
     },
     "preview": {
       "extends": "base",
       "distribution": "internal",
       "android": {
-        "buildType": "apk",
-        "config": "rust.yml"
+        "buildType": "apk"
       }
     },
     "production": {
       "extends": "base",
       "autoIncrement": true,
       "android": {
-        "buildType": "app-bundle",
-        "config": "rust.yml"
+        "buildType": "app-bundle"
       }
     }
   },

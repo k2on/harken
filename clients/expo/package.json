@@ -7,6 +7,7 @@
     "exo-todo": "workspace:*",
     "expo": "~57.0.20",
     "expo-constants": "~57.0.17",
+    "expo-dev-client": "^57.0.18",
     "expo-device": "~57.0.1",
     "expo-file-system": "^57.0.6",
     "expo-font": "~57.0.3",
@@ -31,19 +32,20 @@
   },
   "devDependencies": {
     "@types/react": "~19.2.2",
-    "eas-cli": "^12.0.0",
     "typescript": "~6.0.3"
   },
   "scripts": {
     "start": "expo start",
-    "android": "expo start --android",
-    "ios": "expo start --ios",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
     "web": "expo start --web",
     "lint": "expo lint",
     "ubrn:android": "cd modules/exo-todo && ubrn build android --config ubrn.config.yaml --and-generate",
     "ubrn:ios": "cd modules/exo-todo && ubrn build ios --config ubrn.config.yaml --and-generate",
     "build:android": "eas build --platform android --profile development",
-    "update": "eas update --branch preview"
+    "update": "eas update --branch preview",
+    "eas-build-pre-install": "bash ./scripts/eas-rust.sh pre",
+    "eas-build-post-install": "bash ./scripts/eas-rust.sh post"
   },
   "private": true,
   "workspaces": [

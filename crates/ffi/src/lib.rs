@@ -28,7 +28,7 @@ use std::sync::Mutex;
 
 use exo_mutators::app;
 
-use exo::{decode, encode, AutoCtx, Client, Id, MutationError, ServerMsg};
+use exo::{decode, encode, AutoCtx, Client, MutationError, ServerMsg};
 use exo_mutators::WasmTodo;
 use todo::list;
 
@@ -96,14 +96,6 @@ impl From<exo::Error> for TodoError {
     }
 }
 
-fn parse_id(id: &str) -> Result<Id, TodoError> {
-    exo::uuid::Uuid::parse_str(id)
-        .map(Id::from)
-        .map_err(|e| TodoError::Engine {
-            message: format!("not an id: {e}"),
-        })
-}
-
 /// A peer of an Exo server.
 ///
 /// `Client` owns a SQLite connection, which is `Send` but not `Sync`, and
@@ -146,6 +138,33 @@ impl TodoClient {
 
     // ------------------------------------------------------------ mutations
 
+    /// Author any mutation the loaded module understands.
+    ///
+    /// The one entry point that does not grow when the domain does. `kind` is a
+    /// variant name and `args` is a JSON object of its fields; the module
+    /// decides what both mean, fills in whatever is auto-generated, and applies
+    /// it. Adding a verb is therefore a module rebuild and a call site — neither
+    /// of which needs a native build, which is the whole reason the domain is a
+    /// wasm module rather than a linked symbol.
+    ///
+    /// The typed methods below are conveniences over exactly this. They exist
+    /// because a call site reads better with names, not because the engine
+    /// needs them.
+    ///
+    /// ```text
+    /// mutate("MarkAllDone", "{}")
+    /// mutate("Add", r#"{"text": "buy milk"}"#)
+    /// mutate("SetDone", r#"{"id": "67e55084-...", "done": true}"#)
+    /// ```
+    pub fn mutate(&self, kind: String, args: String) -> Result<(), TodoError> {
+        let payload = exo_mutators::app::from_json(&kind, &args)
+            .map_err(|message| TodoError::Refused { reason: message })?;
+        self.with(|c| {
+            c.mutate(payload)?;
+            Ok(())
+        })
+    }
+
     /// Add a to-do.
     ///
     /// Refused if the text is blank — checked here, against the view the caller
@@ -156,26 +175,21 @@ impl TodoClient {
     /// by `fill_auto` and belongs to the log, not to this call; read it from the
     /// next [`list`](Self::list), which is where every other caller gets it.
     pub fn add(&self, text: String) -> Result<(), TodoError> {
-        self.with(|c| {
-            c.mutate(app::add(&text))?;
-            Ok(())
-        })
+        self.mutate(
+            "Add".into(),
+            serde_json::json!({ "text": text }).to_string(),
+        )
     }
 
     pub fn set_done(&self, id: String, done: bool) -> Result<(), TodoError> {
-        let id = parse_id(&id)?;
-        self.with(|c| {
-            c.mutate(app::set_done(id.as_uuid().as_bytes(), done))?;
-            Ok(())
-        })
+        self.mutate(
+            "SetDone".into(),
+            serde_json::json!({ "id": id, "done": done }).to_string(),
+        )
     }
 
     pub fn remove(&self, id: String) -> Result<(), TodoError> {
-        let id = parse_id(&id)?;
-        self.with(|c| {
-            c.mutate(app::remove(id.as_uuid().as_bytes()))?;
-            Ok(())
-        })
+        self.mutate("Remove".into(), serde_json::json!({ "id": id }).to_string())
     }
 
     // -------------------------------------------------------------- queries

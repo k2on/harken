@@ -18,14 +18,12 @@ fn the_client_runs_the_module() {
 
     let client = TodoClient::open(db, "alice".into()).expect("open");
 
-    // Nothing works before a module is installed, and it says so.
-    assert!(client.add("too early".into()).is_err());
-
-    let generation = client
+    // The generation is process-wide and other tests in this binary move it
+    // too, so what matters is that a swap advances it, not what it reads.
+    let installed = client
         .load_mutators(MODULE.to_vec())
         .expect("install the module");
-    assert_eq!(generation, 1);
-    assert_eq!(client.mutators_generation(), 1);
+    assert_eq!(client.mutators_generation(), installed);
 
     client
         .add("buy milk".into())
@@ -50,10 +48,72 @@ fn the_client_runs_the_module() {
     );
 
     // A hot swap mid-session: same client, same database, new module.
-    assert_eq!(client.load_mutators(MODULE.to_vec()).unwrap(), 2);
+    let swapped = client.load_mutators(MODULE.to_vec()).unwrap();
+    assert!(
+        swapped > installed,
+        "the generation moves: {installed} -> {swapped}"
+    );
     client.add("after the swap".into()).expect("still working");
     assert_eq!(client.list().unwrap().len(), 3);
     assert_eq!(client.list().unwrap()[2].pos, 3, "state survived the swap");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The claim the generic entry point exists to make: a verb the module gained
+/// can be authored without any Rust function naming it, and therefore without a
+/// new uniffi export or a native build.
+#[test]
+fn a_verb_the_ffi_never_heard_of() {
+    let dir = std::env::temp_dir().join(format!("exo-generic-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let client = TodoClient::open(
+        dir.join("peer.db").to_string_lossy().into_owned(),
+        "alice".into(),
+    )
+    .expect("open");
+    client.load_mutators(MODULE.to_vec()).expect("install");
+
+    client
+        .mutate("Add".into(), r#"{"text":"buy milk"}"#.into())
+        .unwrap();
+    client
+        .mutate("Add".into(), r#"{"text":"buy oats"}"#.into())
+        .unwrap();
+    let items = client.list().unwrap();
+    assert_eq!(items.len(), 2);
+    assert!(items.iter().all(|i| !i.done));
+
+    // Nothing in `crates/ffi` mentions MarkAllDone. It reached `apply` because
+    // the module knows the name, which is the point.
+    client.mutate("MarkAllDone".into(), "{}".into()).unwrap();
+    assert!(client.list().unwrap().iter().all(|i| i.done));
+
+    // One entry, not one per row: the intent was "I am finished".
+    assert_eq!(client.cursor(), 0, "still unconfirmed; these are pending");
+    assert_eq!(client.pending_len(), 3);
+
+    // An id argument is a string here and sixteen bytes on the wire.
+    let id = client.list().unwrap()[0].id.clone();
+    client
+        .mutate("SetDone".into(), format!(r#"{{"id":"{id}","done":false}}"#))
+        .unwrap();
+    assert!(!client.list().unwrap()[0].done);
+
+    // A verb no module has ever defined is refused, not silently dropped.
+    let unknown = client.mutate("Frobnicate".into(), "{}".into()).unwrap_err();
+    assert!(format!("{unknown}").contains("Frobnicate"), "{unknown}");
+
+    // So are arguments that are not an object, and ids that are not ids.
+    assert!(client.mutate("Add".into(), "[1,2,3]".into()).is_err());
+    assert!(client
+        .mutate(
+            "SetDone".into(),
+            r#"{"id":"not-a-uuid","done":true}"#.into()
+        )
+        .is_err());
 
     let _ = std::fs::remove_dir_all(&dir);
 }

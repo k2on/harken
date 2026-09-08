@@ -20,9 +20,32 @@ import { Paths } from 'expo-file-system';
 import { TodoClient, type TodoClientLike, type TodoItem } from 'exo-todo';
 
 import { MUTATORS_BUILD, installMutators, watchMutators } from './mutators';
+// Generated from crates/todo-wasm/src/verbs.rs, rewritten by `just mutators`
+// every time the module is. A call site naming a verb the module does not have,
+// or passing the wrong arguments to one it does, is a `tsc` error — which is
+// where the engine's deliberately generic `mutate(kind, args)` gives up its
+// opinion and this picks it back up.
+import type { MutationArgs, Verb } from './mutators.gen';
+
 
 /** How often the transport is pumped. Small enough to feel live. */
 const TICK_MS = 50;
+
+/** A millisecond clock, wherever this happens to be running. */
+const now = (): number =>
+  typeof globalThis.performance?.now === 'function' ? globalThis.performance.now() : Date.now();
+
+/**
+ * A verb with no arguments takes none at the call site; one with arguments
+ * requires them.
+ *
+ * The test is against `Record<string, never>` itself rather than its `keyof`,
+ * which is `string` — an index signature has every key, so asking whether it
+ * has none always answers no.
+ */
+type ArgsFor<K extends Verb> = MutationArgs[K] extends Record<string, never>
+  ? []
+  : [args: MutationArgs[K]];
 
 export type PeerState = {
   items: TodoItem[];
@@ -33,12 +56,28 @@ export type PeerState = {
   note: string;
   /** Which mutator module is running. Moves on every hot swap. */
   mutators: number;
+  /**
+   * How long the last mutation took inside Rust, in milliseconds: the engine,
+   * the wasm module and the SQL, but not this render. Development only — it is
+   * the number to look at before believing the phone is the slow part.
+   */
+  lastMutationMs: number | null;
 };
 
 export type Peer = PeerState & {
   add: (text: string) => void;
   setDone: (id: string, done: boolean) => void;
   remove: (id: string) => void;
+  /**
+   * Author any mutation the loaded module understands, by name.
+   *
+   * The call that does not need a new native build when the domain grows a
+   * verb: the module decides what `kind` means, so adding one is a
+   * `just mutators` away rather than an `eas build` away — and the arguments
+   * are still checked, because they are generated from the same declaration
+   * the module dispatches on.
+   */
+  mutate: <K extends Verb>(kind: K, ...args: ArgsFor<K>) => void;
   toggleLink: () => void;
 };
 
@@ -62,6 +101,7 @@ export function usePeer(actor: string, server: string): Peer {
   const openRef = useRef(false);
   const noteRef = useRef('');
   const dirtyRef = useRef(true);
+  const lastMsRef = useRef<number | null>(null);
 
   const [state, setState] = useState<PeerState>({
     items: [],
@@ -70,6 +110,7 @@ export function usePeer(actor: string, server: string): Peer {
     online: false,
     note: '',
     mutators: 0,
+    lastMutationMs: null,
   });
 
   const snapshot = useCallback((client: TodoClientLike) => {
@@ -80,6 +121,7 @@ export function usePeer(actor: string, server: string): Peer {
       online: socketRef.current !== null,
       note: noteRef.current,
       mutators: Number(client.mutatorsGeneration()),
+      lastMutationMs: lastMsRef.current,
     });
   }, []);
 
@@ -227,17 +269,29 @@ export function usePeer(actor: string, server: string): Peer {
     return () => clearInterval(id);
   }, [snapshot]);
 
-  const run = useCallback((f: (client: TodoClientLike) => void) => {
-    const client = clientRef.current;
-    if (!client) return;
-    try {
-      f(client);
-    } catch (e) {
-      // A mutation the app itself refuses never reaches the pending queue.
-      noteRef.current = messageOf(e);
-    }
-    dirtyRef.current = true;
-  }, []);
+  const run = useCallback(
+    (f: (client: TodoClientLike) => void) => {
+      const client = clientRef.current;
+      if (!client) return;
+      const started = now();
+      try {
+        f(client);
+      } catch (e) {
+        // A mutation the app itself refuses never reaches the pending queue.
+        noteRef.current = messageOf(e);
+      }
+      lastMsRef.current = now() - started;
+      // Render what just happened, rather than waiting for the pump.
+      //
+      // This used to only set the dirty flag and let the 50ms tick pick it up,
+      // which put 0-50ms between a tap and the screen moving — on its own more
+      // than the whole engine costs for a typical mutation. The tick is for
+      // things that arrive on their own; a tap is not one of them.
+      dirtyRef.current = false;
+      snapshot(client);
+    },
+    [snapshot],
+  );
 
   return useMemo(
     () => ({
@@ -245,6 +299,8 @@ export function usePeer(actor: string, server: string): Peer {
       add: (text: string) => run((c) => void c.add(text)),
       setDone: (id: string, done: boolean) => run((c) => c.setDone(id, done)),
       remove: (id: string) => run((c) => c.remove(id)),
+      mutate: <K extends Verb>(kind: K, ...args: ArgsFor<K>) =>
+        run((c) => c.mutate(kind, JSON.stringify(args[0] ?? {}))),
       toggleLink: () => {
         if (socketRef.current) disconnect('gone offline — edits pile up locally');
         else connect();
