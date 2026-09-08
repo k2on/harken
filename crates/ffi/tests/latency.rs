@@ -1,5 +1,9 @@
 //! Where the time goes in one tap.
 //!
+//! These measure the *native* path, which is what the server and the terminal
+//! peers run: `apply` is a function call, not a module. `the_cost_of_the_thread`
+//! measures the wasm path the phone takes, so the two can be compared.
+//!
 //! Measurements rather than assertions, so they are `#[ignore]`d: the suite has
 //! to stay under thirty seconds and the depth sweep alone takes a minute.
 //!
@@ -39,7 +43,7 @@ fn the_cost_of_the_thread() {
     let mut fill = vec![];
     let mut apply = vec![];
     for i in 0..100 {
-        let raw = exo_mutators::add(&format!("item {i}"));
+        let raw = todo::add(&format!("item {i}"));
         let mut bytes = Vec::new();
         ciborium::into_writer(&raw.0, &mut bytes).unwrap();
 
@@ -66,9 +70,6 @@ fn the_cost_of_the_thread() {
 fn fsync_or_wasm() {
     use exo::diesel::connection::SimpleConnection;
     use exo::diesel::Connection as _;
-    use exo_mutators::WasmTodo;
-
-    exo_mutators::load_bundled().unwrap();
 
     println!("\n  one mutation on a file-backed database, by durability setting:");
     for sync in ["FULL", "NORMAL", "OFF"] {
@@ -83,15 +84,13 @@ fn fsync_or_wasm() {
         ))
         .unwrap();
         let mut client =
-            exo::Client::<WasmTodo>::open(conn, "alice", exo::AutoCtx::system()).unwrap();
+            exo::Client::<todo::TodoApp>::open(conn, "alice", exo::AutoCtx::system()).unwrap();
 
-        client.mutate(exo_mutators::add("warm")).unwrap();
+        client.mutate(todo::add("warm")).unwrap();
         let mut ts = vec![];
         for i in 0..25 {
             let t = Instant::now();
-            client
-                .mutate(exo_mutators::add(&format!("tap {i}")))
-                .unwrap();
+            client.mutate(todo::add(&format!("tap {i}"))).unwrap();
             ts.push(t.elapsed().as_secs_f64() * 1000.0);
         }
         println!("    synchronous = {:<7} {:>7.2} ms", sync, median(ts));
@@ -109,9 +108,6 @@ fn fsync_or_wasm() {
 fn one_tap_at_a_fixed_depth() {
     use exo::diesel::connection::SimpleConnection;
     use exo::diesel::Connection as _;
-    use exo_mutators::WasmTodo;
-
-    exo_mutators::load_bundled().unwrap();
 
     fn one(sync: &str, depth: usize, n: usize) -> f64 {
         let mut ts = vec![];
@@ -127,12 +123,12 @@ fn one_tap_at_a_fixed_depth() {
             ))
             .unwrap();
             let mut c =
-                exo::Client::<WasmTodo>::open(conn, "alice", exo::AutoCtx::system()).unwrap();
+                exo::Client::<todo::TodoApp>::open(conn, "alice", exo::AutoCtx::system()).unwrap();
             for i in 0..depth {
-                c.mutate(exo_mutators::add(&format!("filler {i}"))).unwrap();
+                c.mutate(todo::add(&format!("filler {i}"))).unwrap();
             }
             let t = Instant::now();
-            c.mutate(exo_mutators::add("the tap being timed")).unwrap();
+            c.mutate(todo::add("the tap being timed")).unwrap();
             ts.push(t.elapsed().as_secs_f64() * 1000.0);
             drop(c);
             let _ = std::fs::remove_dir_all(&dir);
