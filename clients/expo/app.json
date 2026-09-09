@@ -18,7 +18,7 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "dev.harken.harkennative"
+      "package": "dev.harken.app"
     },
     "web": {
       "output": "static",
