@@ -1,11 +1,11 @@
 {
   "expo": {
-    "name": "petros \u00b7 to-do",
-    "slug": "petros-expo",
+    "name": "harken",
+    "slug": "exo-expo",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "petrosexpo",
+    "scheme": "harken",
     "userInterfaceStyle": "automatic",
     "ios": {
       "icon": "./assets/expo.icon"
