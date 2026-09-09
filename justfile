@@ -19,19 +19,13 @@ lint:
 fmt:
     cargo fmt --all
 
-# The offline demo: a client with no server in existence.
-offline:
-    cargo run -p harken --example offline
-
-# The multiplayer demo. `just serve` in one terminal, `just peer <name>` in others.
+# The sync server: an ordinary axum program with one Petros handler mounted.
+# Pass 0.0.0.0:8787 to reach it from a phone on the same network.
 serve addr="127.0.0.1:8787":
-    cargo run -p harken --features ws --example multiplayer -- --serve --server {{addr}}
+    cargo run -p harken-server -- {{addr}}
 
-peer user addr="127.0.0.1:8787":
-    cargo run -p harken --features ws --example multiplayer -- --user {{user}} --server {{addr}}
-
-# The iced peer on the desktop. Same server as `just peer`.
-iced user="bob" addr="127.0.0.1:8787":
+# A desktop peer. Run it twice with different names to watch them sync.
+iced user="alice" addr="127.0.0.1:8787":
     cargo run -p harken --features ws --example iced -- --user {{user}} --server {{addr}}
 
 # The iced client in a browser.

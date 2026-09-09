@@ -15,7 +15,7 @@ export default function RootLayout() {
           contentStyle: { backgroundColor: theme.bg },
         }}
       >
-        <Stack.Screen name="index" options={{ title: 'petros · connect' }} />
+        <Stack.Screen name="index" options={{ title: 'harken · connect' }} />
         <Stack.Screen name="library" options={{ title: 'harken' }} />
       </Stack>
     </>

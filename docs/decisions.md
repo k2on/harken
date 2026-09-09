@@ -111,3 +111,30 @@ place a version or a target is named — then builds the module, the engine and
 the turbo module before Expo's own prebuild and gradle steps. This should run
 rarely by design: changing a mutation does not need a build, only changing the
 engine does.
+
+## The heart is a path, because the font has no heart in it
+
+The obvious way to put a heart on a button is the character. It does not work:
+Fira Sans, which iced embeds, has no U+2665, U+2661 or U+2764 in its cmap — all
+three checked by reading the font's tables rather than by looking at a window.
+The glyph silently draws nothing, so widgets lay out, input works, and the
+button is blank. That is the same failure this log already records for a browser
+build with no font at all, and it is just as hard to recognise the second time.
+
+So `examples/heart.rs` draws it: two cubics down each side, filled when the song
+is on the playlist and stroked when it is not. No icon font, no asset, and it
+reads at a glance without needing colour to explain it.
+
+The Expo screen writes `♥` and is fine, because React Native draws with the
+system font. The two clients differ here for a reason, not by neglect.
+
+## The server is a program, not a mode of an example
+
+`just serve` used to run the multiplayer TUI with `--serve`, which meant the
+server only existed inside a demo. It is `crates/server` now: an ordinary axum
+program with `get(petros_axum::sync::<HarkenApp>)` mounted on it and a
+`/healthz` beside it reading the same state.
+
+That is what a server built on Petros should look like, and it is the honest
+demonstration of the engine being sans-io — the whole thing is forty lines, and
+none of them are about sync.
