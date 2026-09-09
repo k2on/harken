@@ -133,7 +133,7 @@ fn one_tap_at_a_fixed_depth() {
 
     println!("\n  one tap, by pending depth and durability (ms):");
     println!("      pending      FULL (today)    NORMAL");
-    for depth in [0usize, 1, 5, 10, 25, 50] {
+    for depth in [0usize, 25, 50, 100, 200, 400] {
         println!(
             "      {:>7}      {:>9.1}     {:>9.1}",
             depth,
