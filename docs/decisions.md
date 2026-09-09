@@ -296,3 +296,40 @@ rather than a return to SQL.
 
 The module grew 140,766 → 151,865 bytes, about eight percent, which is the
 builder and the row types arriving in a build that used to send strings.
+
+## The client maintains the library, and what that actually bought
+
+`refresh()` ran `library()` after every tap and on every socket pump. It holds
+a `petros::ivm::View` now, hydrated once at boot and told what each mutation
+changed. On the path the client actually takes — take the changes, update the
+view, produce the list a screen renders:
+
+```
+  one tap, then the list a screen renders:
+      songs       re-read    maintained    ratio
+         10      0.085 ms      0.020 ms     4.2x
+        100      0.217 ms      0.039 ms     5.6x
+       1000      1.402 ms      0.224 ms     6.3x
+```
+
+Six times, not the eighty-seven the engine's own microbenchmark shows for the
+same query. The difference is the honest part: **the query is maintained, the
+list is not.** `songs_of` decodes every row of the view into a `Song` on every
+call, which is O(n) whatever the query costs, and at a thousand songs it is now
+almost all of the 0.224ms.
+
+That is fine here and is deliberately not being fixed. A quarter of a
+millisecond is nothing next to what iced then does with the list, and the
+alternative — the view handing back deltas so the client splices its own
+`Vec<Song>` — is a real API with a real cost in complexity.
+
+Where it *will* matter is the phone, and for a different reason: there the list
+crosses the UniFFI bridge on every change, and maintaining the query saves the
+SQL while the bridge cost stays. So the phone wants the same delta-level API for
+a stronger reason than the desktop does, and it should be designed once, after
+the bridge is measured rather than before.
+
+The engine side of it is ready: a module's writes report what they changed now,
+collected across the whole apply rather than lost when each host request's store
+was dropped. So a phone can maintain a view whenever the rest of it is worth
+building.

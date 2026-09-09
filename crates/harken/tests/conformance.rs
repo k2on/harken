@@ -170,7 +170,8 @@ fn refusals_match_too() {
             .expect("host ran");
 
         assert_eq!(
-            native, wasm,
+            native,
+            wasm.map(|_| ()),
             "{kind} is refused differently by the two builds"
         );
         assert!(native.is_err(), "{kind} should be refused");

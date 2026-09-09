@@ -203,3 +203,76 @@ fn a_bulk_mutation_row_by_row() {
         println!("    {:>6}  {:>7.2} ms  {:>7.2} ms", n, times[0], times[1]);
     }
 }
+
+/// What the maintained view actually bought, on the path a client takes.
+///
+/// The microbenchmarks in `petros-ivm` time an operator. This times what the
+/// desktop client does after a tap: take the changes, bring the view up to
+/// date, and produce the list a screen renders — against the same thing done by
+/// re-running the query, which is what it did before.
+#[test]
+#[ignore = "a measurement, not an assertion: run it with `just latency`"]
+fn maintained_against_re_read_on_the_client_path() {
+    use petros::Changes;
+
+    println!("\n  one tap, then the list a screen renders:");
+    println!(
+        "    {:>7}  {:>12}  {:>12}  {:>7}",
+        "songs", "re-read", "maintained", "ratio"
+    );
+
+    for n in [10usize, 100, 1_000] {
+        let mut client = petros::Client::<harken::HarkenApp>::open(
+            petros::open_memory().unwrap(),
+            "alice",
+            petros::AutoCtx::seeded(1),
+        )
+        .unwrap();
+        for i in 0..n {
+            client
+                .mutate(harken::add_song(format!("song {i}"), "Bicep".into()))
+                .unwrap();
+        }
+
+        let mut view = harken::library_view();
+        {
+            let mut store = client.store();
+            view.hydrate(&mut store);
+        }
+        let _ = client.take_changes();
+
+        let (mut fresh, mut kept) = (vec![], vec![]);
+        for i in 0..30 {
+            client
+                .mutate(harken::add_song(format!("tap {i}"), "Bicep".into()))
+                .unwrap();
+
+            let changes = client.take_changes();
+            let t = Instant::now();
+            match changes {
+                Changes::Applied(changes) => {
+                    let mut store = client.store();
+                    view.apply(&mut store, &changes);
+                }
+                Changes::Rebuilt => {
+                    let mut store = client.store();
+                    view.hydrate(&mut store);
+                }
+            }
+            let _ = harken::songs_of(&view);
+            kept.push(t.elapsed().as_secs_f64() * 1000.0);
+
+            let t = Instant::now();
+            let _ = harken::library(&mut client.store()).unwrap();
+            fresh.push(t.elapsed().as_secs_f64() * 1000.0);
+        }
+        let (f, k) = (median(fresh), median(kept));
+        println!(
+            "    {:>7}  {:>9.3} ms  {:>9.3} ms  {:>6.1}x",
+            n,
+            f,
+            k,
+            f / k
+        );
+    }
+}
