@@ -65,7 +65,7 @@ pub fn add_song(
         pos: last + 1,
         added_ms,
         actor: actor.to_string(),
-    });
+    })?;
     Ok(())
 }
 
@@ -89,14 +89,14 @@ pub fn favorite(db: &mut Db, favorited_ms: Now, actor: Actor, id: Id) -> Result 
         pos: last + 1,
         favorited_ms,
         actor: actor.to_string(),
-    });
+    })?;
     Ok(())
 }
 
 /// Take a song back out of the playlist. The song itself stays.
 #[mutation]
 pub fn unfavorite(db: &mut Db, id: Id) -> Result {
-    db.delete::<Favorite>(&Favorite::key_of(&id));
+    db.delete::<Favorite>(&Favorite::key_of(&id))?;
     Ok(())
 }
 
@@ -131,7 +131,7 @@ pub fn favorite_all(db: &mut Db, favorited_ms: Now, actor: Actor) -> Result {
             pos,
             favorited_ms,
             actor: actor.to_string(),
-        });
+        })?;
     }
     Ok(())
 }
@@ -139,8 +139,8 @@ pub fn favorite_all(db: &mut Db, favorited_ms: Now, actor: Actor) -> Result {
 /// Remove a song from the library, and from the playlist with it.
 #[mutation]
 pub fn remove_song(db: &mut Db, id: Id) -> Result {
-    db.delete::<Favorite>(&Favorite::key_of(&id));
-    db.delete::<SongRow>(&SongRow::key_of(&id));
+    db.delete::<Favorite>(&Favorite::key_of(&id))?;
+    db.delete::<SongRow>(&SongRow::key_of(&id))?;
     Ok(())
 }
 
@@ -177,14 +177,38 @@ pub fn library(db: &mut Db) -> Result<Vec<Song>> {
     // A song *with* its favourite, which is a tree rather than a join: a song
     // that is not favourited is still a row, carrying nothing. That is the LEFT
     // JOIN, and it is the relationship's shape rather than a keyword.
-    let rows = db.select_with(
-        SongRow::all()
-            .order_by(SongRow::pos.asc())
-            .order_by(SongRow::id.asc()),
-        SongRow::favorite,
-        Favorite::all(),
-    );
-    Ok(rows.iter().map(view).collect())
+    let rows = db.select_with(library_query(), SongRow::favorite, Favorite::all());
+    Ok(rows.iter().map(song_of).collect())
+}
+
+/// The query `library` answers, written once so that running it and maintaining
+/// it cannot drift apart.
+#[cfg(feature = "storage")]
+fn library_query() -> petros_schema::Query<SongRow> {
+    SongRow::all()
+        .order_by(SongRow::pos.asc())
+        .order_by(SongRow::id.asc())
+}
+
+/// `library`, maintained rather than re-run.
+///
+/// A client holds one of these and hands it what each mutation changed, instead
+/// of reading the whole list back on every frame. Same query, same rows, same
+/// order — [`library_query`] is the single definition of all three.
+#[cfg(feature = "storage")]
+pub type LibraryView = petros::ivm::View<SongRow>;
+
+/// Build one. Hydrate it once against a store, then feed it
+/// `Client::take_changes()`.
+#[cfg(feature = "storage")]
+pub fn library_view() -> LibraryView {
+    petros::ivm::View::related(library_query(), SongRow::favorite, Favorite::all())
+}
+
+/// Read a maintained view the way `library` reads a fetched one.
+#[cfg(feature = "storage")]
+pub fn songs_of(view: &LibraryView) -> Vec<Song> {
+    view.with::<Favorite>().iter().map(song_of).collect()
 }
 
 /// The favourites playlist, in playlist order.
@@ -219,7 +243,7 @@ pub fn favorites(db: &mut Db) -> Result<Vec<Song>> {
 
 /// A song row and its place in the playlist, as a client reads it.
 #[cfg(feature = "storage")]
-fn view(row: &With<SongRow, Favorite>) -> Song {
+fn song_of(row: &With<SongRow, Favorite>) -> Song {
     Song {
         id: id_of(&row.row.id),
         title: row.row.title.clone(),

@@ -23,11 +23,11 @@ mod heart;
 
 use std::time::Duration;
 
-use harken::{self as mutators, library, HarkenApp, Song};
+use harken::{self as mutators, HarkenApp, Song};
 use heart::Heart;
 use iced::widget::{button, canvas, column, container, row, scrollable, text, text_input};
 use iced::{Element, Length, Subscription, Task};
-use petros::{AutoCtx, Client, Id};
+use petros::{AutoCtx, Changes, Client, Id};
 
 #[cfg(target_arch = "wasm32")]
 use petros::transport::web::Link;
@@ -105,13 +105,16 @@ struct App {
     link: Option<Link<harken::Payload>>,
     server: String,
     user: String,
-    /// The materialised view and the pending count, refreshed after anything
-    /// that could change them.
+    /// The library, maintained rather than re-read.
     ///
-    /// iced's `view` takes `&self` and a read needs `&mut` — SQLite advances a
-    /// statement to produce rows — so the query cannot happen during rendering.
-    /// Keeping them here is the right shape for iced anyway, and it is the seam
-    /// reactive queries would fill.
+    /// It is hydrated once and then told what each mutation changed, so a tap
+    /// costs the rows that moved instead of the whole list. `Changes::Rebuilt`
+    /// is the exception and is not a special case so much as an honest one: a
+    /// rebase rolls the optimistic view back, and no sequence of changes
+    /// describes that.
+    library: harken::LibraryView,
+    /// What `view` draws. iced's `view` takes `&self` and decoding needs
+    /// nothing mutable, but doing it once per change beats once per frame.
     songs: Vec<Song>,
     pending: usize,
     title: String,
@@ -133,6 +136,7 @@ impl App {
             link: None,
             server,
             user,
+            library: harken::library_view(),
             songs: Vec::new(),
             pending: 0,
             title: String::new(),
@@ -140,7 +144,14 @@ impl App {
             note: String::new(),
         };
         app.connect();
-        app.refresh();
+        // The one full read of the list. Everything after this is maintained.
+        {
+            let mut store = app.client.store();
+            app.library.hydrate(&mut store);
+        }
+        app.songs = harken::songs_of(&app.library);
+        let _ = app.client.take_changes();
+        app.pending = app.client.pending_len();
         app
     }
 
@@ -158,8 +169,26 @@ impl App {
         }
     }
 
+    /// Bring the view up to date with whatever just happened.
+    ///
+    /// The whole list is never read here. `Changes::Applied` is the rows that
+    /// moved — usually one — and `Changes::Rebuilt` is the rebase, which costs
+    /// one query and happens only when the server speaks while something of
+    /// ours is still pending.
     fn refresh(&mut self) {
-        self.songs = library(&mut self.client.store()).unwrap_or_default();
+        match self.client.take_changes() {
+            Changes::Applied(changes) if changes.is_empty() => {}
+            Changes::Applied(changes) => {
+                let mut store = self.client.store();
+                self.library.apply(&mut store, &changes);
+                self.songs = harken::songs_of(&self.library);
+            }
+            Changes::Rebuilt => {
+                let mut store = self.client.store();
+                self.library.hydrate(&mut store);
+                self.songs = harken::songs_of(&self.library);
+            }
+        }
         self.pending = self.client.pending_len();
     }
 
