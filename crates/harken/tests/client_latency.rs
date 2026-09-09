@@ -37,9 +37,9 @@ fn the_cost_of_the_thread() {
     let mut fill = vec![];
     let mut apply = vec![];
     for i in 0..100 {
-        let raw = harken::add_song(&format!("item {i}"), "Bicep");
+        let raw = harken::add_song(format!("item {i}"), "Bicep".into());
         let mut bytes = Vec::new();
-        ciborium::into_writer(&raw.0, &mut bytes).unwrap();
+        ciborium::into_writer(&raw, &mut bytes).unwrap();
 
         let t = Instant::now();
         let filled = m.fill_auto(&bytes, &mut auto).unwrap();
@@ -76,12 +76,14 @@ fn fsync_or_wasm() {
             petros::Client::<harken::HarkenApp>::open(conn, "alice", petros::AutoCtx::system())
                 .unwrap();
 
-        client.mutate(harken::add_song("warm", "Bicep")).unwrap();
+        client
+            .mutate(harken::add_song("warm".into(), "Bicep".into()))
+            .unwrap();
         let mut ts = vec![];
         for i in 0..25 {
             let t = Instant::now();
             client
-                .mutate(harken::add_song(&format!("tap {i}"), "Bicep"))
+                .mutate(harken::add_song(format!("tap {i}"), "Bicep".into()))
                 .unwrap();
             ts.push(t.elapsed().as_secs_f64() * 1000.0);
         }
@@ -113,12 +115,15 @@ fn one_tap_at_a_fixed_depth() {
                 petros::Client::<harken::HarkenApp>::open(conn, "alice", petros::AutoCtx::system())
                     .unwrap();
             for i in 0..depth {
-                c.mutate(harken::add_song(&format!("filler {i}"), "Bicep"))
+                c.mutate(harken::add_song(format!("filler {i}"), "Bicep".into()))
                     .unwrap();
             }
             let t = Instant::now();
-            c.mutate(harken::add_song("the tap being timed", "Bicep"))
-                .unwrap();
+            c.mutate(harken::add_song(
+                "the tap being timed".into(),
+                "Bicep".into(),
+            ))
+            .unwrap();
             ts.push(t.elapsed().as_secs_f64() * 1000.0);
             drop(c);
             let _ = std::fs::remove_dir_all(&dir);

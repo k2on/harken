@@ -12,15 +12,24 @@ fn the_domain_converges_when_peers_go_dark_and_come_back() {
     let mut sim = Sim::<HarkenApp>::new(19, 3);
     for round in 0..3 {
         for i in 0..sim.clients() {
-            sim.mutate(i, harken::add_song(&format!("c{i}-{round}"), "someone"));
+            sim.mutate(
+                i,
+                harken::add_song(format!("c{i}-{round}"), "someone".into()),
+            );
             sim.step();
         }
     }
 
     sim.partition(2);
     for round in 0..4 {
-        sim.mutate(2, harken::add_song(&format!("dark-{round}"), "someone"));
-        sim.mutate(0, harken::add_song(&format!("lit-{round}"), "someone"));
+        sim.mutate(
+            2,
+            harken::add_song(format!("dark-{round}"), "someone".into()),
+        );
+        sim.mutate(
+            0,
+            harken::add_song(format!("lit-{round}"), "someone".into()),
+        );
         sim.step();
     }
     // And the interesting one: both sides favourite while apart, so the
@@ -40,11 +49,13 @@ fn the_domain_converges_when_peers_go_dark_and_come_back() {
     }
     assert_eq!(first, sim.server_hash(), "the server disagrees");
     assert_eq!(
-        harken::library(sim.conn(0)).unwrap().len(),
+        harken::library(&mut petros::backend::SqliteStore(sim.conn(0)))
+            .unwrap()
+            .len(),
         17,
         "9 shared + 4 dark + 4 lit, none lost and none duplicated"
     );
-    let playlist = harken::favorites(sim.conn(0)).unwrap();
+    let playlist = harken::favorites(&mut petros::backend::SqliteStore(sim.conn(0))).unwrap();
     assert_eq!(
         playlist.len(),
         17,

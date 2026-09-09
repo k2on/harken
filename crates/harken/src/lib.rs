@@ -1,41 +1,36 @@
-//! The music library: the tables, the rows, and the mutations that produce
-//! them.
+//! The music library, in two files.
 //!
-//! [`domain`] holds `apply` and `fill_auto` and knows nothing about where it
-//! runs. [`storage`] gives it a store backed by a real SQLite connection, which
-//! is what the server and the iced client use — they are ordinary Rust programs
-//! and a mutation is an ordinary function call.
+//! [`schema`] is the model: what a row is, and what the tables are.
+//! [`functions`] is every mutation and every query, each written once as an
+//! ordinary Rust function. Everything else on this page is generated from them.
 //!
-//! The phone is the exception. It loads the same domain compiled to wasm
-//! so a new mutation reaches it over Metro without a
-//! native build. Two builds of one source, held to that by
-//! `tests/conformance.rs`, which runs the same mutations through both and
-//! compares the rows.
+//! The server and the iced client link these and call them directly. The phone
+//! is the exception: it loads the same functions compiled to wasm, so a new
+//! mutation reaches it over Metro without a native build. Two builds of one
+//! source, held to that by `tests/conformance.rs`.
 //!
-//! The `storage` feature is what the wasm build turns off: it has no SQLite of
-//! its own, only a channel to the host's, so it wants the domain and none of
-//! this.
+//! The `storage` feature is what the wasm build turns off. It has no SQLite of
+//! its own, only a channel to the host's, so it wants the mutations and none of
+//! the rest — not the read model, not the engine, not the rows.
 
-pub mod domain;
-
+pub mod functions;
+/// The model. Only where there is a database: the sandbox applies mutations and
+/// never reads a row back.
 #[cfg(feature = "storage")]
-mod storage;
+pub mod schema;
+
+pub use functions::*;
 #[cfg(feature = "storage")]
-pub use storage::*;
+pub use schema::*;
 
-// The phone's client: the same domain, reached over UniFFI, with `apply`
-// arriving as a module rather than linked. Behind a feature because nothing
-// else wants uniffi in its graph — and off by default, so the desktop client
-// and the server never build it.
-// At the crate root because that is where it defines `UniFfiTag`, which every
-// `#[derive(uniffi::…)]` in this crate resolves against.
-#[cfg(feature = "foreign")]
-uniffi::setup_scaffolding!();
-
-#[cfg(feature = "foreign")]
-pub mod foreign_client;
-#[cfg(feature = "foreign")]
-pub mod wasm_app;
+// The payload, its `Mutation` impl and the `App`. Behind `storage` because they
+// name the engine, and the wasm build has no engine — only a channel to one.
+#[cfg(feature = "storage")]
+petros::app!(HarkenApp {
+    schema: crate::schema::SCHEMA,
+    apply: crate::functions::apply,
+    fill_auto: crate::functions::fill_auto,
+});
 
 // The wasm ABI: `apply` and `fill_auto` behind the entry points the interpreter
 // calls, and a store made of imported functions.
@@ -48,4 +43,16 @@ pub mod wasm_app;
 // `//` and not `///` — a doc comment cannot attach to a macro invocation, and
 // the warning for that only appears on the one target this is compiled for.
 #[cfg(target_arch = "wasm32")]
-petros_wasm_guest::export!(domain, domain::SCHEMA_TEXT);
+petros_wasm_guest::export!(functions);
+
+// At the crate root because that is where it defines `UniFfiTag`, which every
+// `#[derive(uniffi::…)]` in this crate resolves against.
+#[cfg(feature = "foreign")]
+uniffi::setup_scaffolding!();
+
+// The client a foreign caller sees: the same functions, reached over UniFFI,
+// with `apply` arriving as a module rather than linked.
+#[cfg(feature = "foreign")]
+pub mod foreign_client;
+#[cfg(feature = "foreign")]
+pub mod wasm_app;

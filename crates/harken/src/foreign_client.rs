@@ -53,6 +53,16 @@ pub enum HarkenError {
     Engine { message: String },
 }
 
+/// A query's refusal. Queries return a `String` for the same reason mutations
+/// do — see `petros_schema::prelude::Result` — and a caller cannot act on the
+/// difference between a bad query and a bad database, so both arrive as
+/// `Engine`.
+impl From<String> for HarkenError {
+    fn from(message: String) -> Self {
+        HarkenError::Engine { message }
+    }
+}
+
 impl From<petros::Error> for HarkenError {
     fn from(e: petros::Error) -> Self {
         match e {
@@ -130,7 +140,7 @@ impl HarkenClient {
         let payload = crate::from_json(&kind, &args)
             .map_err(|message| HarkenError::Refused { reason: message })?;
         self.with(|c| {
-            c.mutate(payload.into())?;
+            c.mutate(crate::wasm_app::Payload::from(payload))?;
             Ok(())
         })
     }
@@ -180,12 +190,22 @@ impl HarkenClient {
     /// The whole library: confirmed replayed, then this peer's pending
     /// mutations on top. Always ordered explicitly.
     pub fn library(&self) -> Result<Vec<Song>, HarkenError> {
-        self.with(|c| Ok(library(c.conn())?.into_iter().map(Song::from).collect()))
+        self.with(|c| {
+            Ok(library(&mut c.store())?
+                .into_iter()
+                .map(Song::from)
+                .collect())
+        })
     }
 
     /// Just the favourites, in playlist order.
     pub fn favorites(&self) -> Result<Vec<Song>, HarkenError> {
-        self.with(|c| Ok(favorites(c.conn())?.into_iter().map(Song::from).collect()))
+        self.with(|c| {
+            Ok(favorites(&mut c.store())?
+                .into_iter()
+                .map(Song::from)
+                .collect())
+        })
     }
 
     /// How much of the server's log has been applied.

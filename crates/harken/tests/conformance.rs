@@ -65,7 +65,7 @@ fn native_apply(
     payload: &harken::Payload,
     actor: &str,
 ) -> Result<(), String> {
-    harken::domain::apply(&mut petros::backend::SqliteStore(conn), &payload.0, actor)
+    harken::apply(&mut petros::backend::SqliteStore(conn), &payload.0, actor)
 }
 
 fn encode(p: &harken::Payload) -> Vec<u8> {
@@ -122,7 +122,6 @@ fn every_verb_produces_the_same_rows_natively_and_in_wasm() {
         ),
         // Refused by both, and refused identically.
         ("AddSong", json!({ "title": "   ", "artist": "nobody" })),
-        ("AddAlbum", json!({})),
         ("FavoriteAll", json!({})),
         ("AddSong", json!({ "title": "Aura", "artist": "Bicep" })),
         // A song nobody has: a no-op, not an error.
@@ -143,15 +142,14 @@ fn every_verb_produces_the_same_rows_natively_and_in_wasm() {
     // And the rows are the ones the script describes, so a shared bug that
     // wrote nothing at all could not pass.
     let titles: Vec<&str> = native.iter().map(|r| r.title.as_str()).collect();
-    assert_eq!(
-        titles,
-        vec!["Glue", "Opal", "Track 1", "Track 2", "Track 3", "Track 4", "Track 5", "Aura"]
-    );
+    assert_eq!(titles, vec!["Glue", "Opal", "Aura"]);
     assert_eq!(native[1].artist, "Bicep", "trimmed on the way in");
     // `FavoriteAll` swept the seven that existed then, in library order, and
     // the song added afterwards is not on the playlist.
+    // `FavoriteAll` swept the two that existed then, in library order, and the
+    // song added afterwards is not on the playlist.
     let places: Vec<i64> = native.iter().map(|r| r.fav).collect();
-    assert_eq!(places, vec![1, 2, 3, 4, 5, 6, 7, 0]);
+    assert_eq!(places, vec![1, 2, 0]);
 }
 
 #[test]
@@ -195,7 +193,7 @@ fn refusals_match_too() {
 fn fill_auto_agrees_between_the_two_builds() {
     let module = Mutators::load(MODULE).expect("load");
 
-    for kind in ["AddSong", "AddAlbum", "FavoriteAll", "Favorite"] {
+    for kind in ["AddSong", "FavoriteAll", "Favorite"] {
         let args = match kind {
             "Favorite" => serde_json::json!({ "id": "67e55084-765d-446c-9191-4ff9861f6d8e" }),
             "AddSong" => serde_json::json!({ "title": "Glue", "artist": "Bicep" }),
@@ -212,7 +210,7 @@ fn fill_auto_agrees_between_the_two_builds() {
         let (uuid, now) = seeded();
 
         let mut native = harken::from_value(kind, args.clone()).expect("author").0;
-        harken::domain::fill_auto(&mut native, uuid.clone(), now);
+        harken::fill_auto(&mut native, uuid.clone(), now);
 
         let authored = harken::from_value(kind, args).expect("author");
         let from_wasm = module

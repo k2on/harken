@@ -63,11 +63,28 @@ be checked out beside this one.
 
 ## Never write domain logic in TypeScript
 
-`apply` is in `crates/harken/src/domain.rs`. The server and the iced peer link
-it; the phone runs the same source compiled to wasm and interpreted by
-`petros-wasm-host`, because that is the only peer where a rebuild costs four
-minutes instead of a third of a second. `tests/conformance.rs` runs every verb
-through both builds and compares rows and refusals, so the two cannot drift.
+Every mutation and every query is in `crates/harken/src/functions.rs`, written
+once, as an ordinary Rust function:
+
+```rust
+/// Put a song in the library.
+#[mutation]
+pub fn add_song(db: &mut Db, id: NewId, added_ms: Now, actor: Actor,
+                title: String, artist: String) -> Result { … }
+```
+
+Which parameters the engine supplies is decided by *type*: `&mut Db` is the
+store, `NewId` and `Now` are the only non-determinism a mutation gets — chosen
+once at the originating client and frozen in the log — and `Actor` is who
+authored the entry. Everything after them is a caller's argument, and appears in
+the authoring function, the schema the module carries, and the generated
+TypeScript. `peer!` at the bottom of the file wires dispatch.
+
+The server and the iced peer link these; the phone runs the same source compiled
+to wasm and interpreted by `petros-wasm-host`, because that is the only peer
+where a rebuild costs four minutes instead of a third of a second.
+`tests/conformance.rs` runs every verb through both builds and compares rows and
+refusals, so the two cannot drift.
 
 The SQL in it is real SQL and it is checked: `petros_sql::exec!` and
 `petros_sql::query!` prepare each statement against `schema.sql` at build time,

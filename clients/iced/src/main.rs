@@ -91,7 +91,6 @@ enum Message {
     TypedTitle(String),
     TypedArtist(String),
     AddSong,
-    AddAlbum,
     /// The heart: on the playlist, or off it.
     ToggleFavorite(Id, bool),
     FavoriteAll,
@@ -160,7 +159,7 @@ impl App {
     }
 
     fn refresh(&mut self) {
-        self.songs = library(self.client.conn()).unwrap_or_default();
+        self.songs = library(&mut self.client.store()).unwrap_or_default();
         self.pending = self.client.pending_len();
     }
 
@@ -216,23 +215,22 @@ impl App {
                 let title = std::mem::take(&mut self.title);
                 let artist = std::mem::take(&mut self.artist);
                 self.client
-                    .mutate(mutators::add_song(&title, &artist))
+                    .mutate(mutators::add_song(title, artist))
                     .map(|_| ())
             }
-            Message::AddAlbum => self.client.mutate(mutators::add_album()).map(|_| ()),
             Message::ToggleFavorite(id, favorited) => {
                 let bytes = *id.as_uuid().as_bytes();
                 let m = if favorited {
-                    mutators::unfavorite(&bytes)
+                    mutators::unfavorite(bytes.to_vec())
                 } else {
-                    mutators::favorite(&bytes)
+                    mutators::favorite(bytes.to_vec())
                 };
                 self.client.mutate(m).map(|_| ())
             }
             Message::FavoriteAll => self.client.mutate(mutators::favorite_all()).map(|_| ()),
             Message::RemoveSong(id) => self
                 .client
-                .mutate(mutators::remove_song(id.as_uuid().as_bytes()))
+                .mutate(mutators::remove_song(id.as_uuid().as_bytes().to_vec()))
                 .map(|_| ()),
             Message::ToggleLink => {
                 match self.link {
@@ -313,7 +311,6 @@ impl App {
         .spacing(12);
 
         let actions = row![
-            button("add an album").on_press(Message::AddAlbum),
             button("favourite everything").on_press(Message::FavoriteAll),
             button(if self.link.is_some() {
                 "go offline"

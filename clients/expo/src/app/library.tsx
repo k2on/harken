@@ -80,14 +80,11 @@ export default function Library() {
         </Pressable>
       </View>
 
-      {/* Neither of these is a special case in the engine or in this file.
-          They are variant names the wasm module understands, reached through
-          the one generic entry point — so adding them needed a module rebuild
-          and these two lines, and no native build at all. */}
+      {/* Not a special case in the engine or in this file. It is a verb name
+          the wasm module understands, reached through the one generic entry
+          point — so adding it needed a module rebuild and this line, and no
+          native build at all. */}
       <View style={s.verbs}>
-        <Pressable onPress={() => peer.mutate('AddAlbum')}>
-          <Text style={s.verb}>add an album</Text>
-        </Pressable>
         {peer.songs.length > favourites ? (
           <Pressable onPress={() => peer.mutate('FavoriteAll')}>
             <Text style={s.verb}>heart everything</Text>
