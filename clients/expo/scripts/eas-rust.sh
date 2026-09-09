@@ -58,13 +58,11 @@ case "$stage" in
     echo "--- ndk: ${ANDROID_NDK_HOME:-<none>}"
 
     echo "--- building the mutator module"
-    (
-      cd "$root"
-      cargo build -p harken-wasm --target wasm32-unknown-unknown --profile mutators
-      # Writes src/mutators.gen.ts, which is gitignored and therefore not in the
-      # upload — the bundler needs it to exist before it runs, which is now.
-      cargo run -q -p petros-codegen
-    )
+    # The same script `just mutators` runs. It writes src/mutators.gen.ts, which
+    # is gitignored and therefore not in the upload — the bundler needs it to
+    # exist before it runs, which is now. There is no sibling petros checkout
+    # here, so the script installs the generator from the published branch.
+    "$root/scripts/mutators.sh"
 
     echo "--- cross-compiling the engine and generating the turbo module"
     cd "$app/modules/harken-native"

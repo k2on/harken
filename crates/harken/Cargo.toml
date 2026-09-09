@@ -14,11 +14,20 @@ default = ["storage"]
 # `petros-schema/author` belongs here and not on the dependency line: features
 # are unified per target, so asking for it there would put serde_json and uuid
 # in the wasm module even though `default-features = false` turns this whole
-# feature off. Checked with `cargo tree -p harken-wasm`.
+# feature off. Checked with:
+#   cargo tree -p harken --no-default-features -e normal --target wasm32-unknown-unknown
+# `-e normal` because dev-dependencies pull in the engine and never ship.
 storage = ["dep:petros", "dep:serde", "dep:serde_json", "petros-schema/author"]
 # A transport, for a client that runs. The domain itself has no opinion about
 # sockets and neither does the engine.
 ws = ["storage", "petros/ws"]
+
+[lib]
+# `cdylib` for the module the phone loads. Listed unconditionally because Cargo
+# has no per-target crate-type, but it costs nothing native: as a dependency
+# other crates take the rlib, and the extra link is only done when this package
+# is built directly.
+crate-type = ["rlib", "cdylib"]
 
 [dependencies]
 ciborium.workspace = true
@@ -30,6 +39,11 @@ serde_json = { workspace = true, optional = true }
 
 # The demo peers. They live with the domain rather than with the engine: they
 # are programs that use an app, and `petros` has no idea what a to-do is.
+# Only the wasm build has an ABI to export, and only it should pay for the
+# guest.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+petros-wasm-guest.workspace = true
+
 [dev-dependencies]
 # The app tests its own domain the way the engine tests itself: two builds of
 # one `apply` compared row by row, and a simulated fleet it has to converge on.

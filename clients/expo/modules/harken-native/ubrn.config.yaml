@@ -7,7 +7,7 @@
 ---
 rust:
   directory: ../../../..
-  manifestPath: crates/ffi/Cargo.toml
+  manifestPath: clients/expo/rust/Cargo.toml
 
 bindings:
   cpp: cpp/generated

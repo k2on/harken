@@ -4,7 +4,7 @@ default: fmt lint test
 
 # Run the whole suite. Must stay under 30 seconds.
 #
-# `mutators` first because `crates/ffi/tests/wasm_mutators.rs` runs the real
+# `mutators` first because the conformance test runs the real
 # module — `include_bytes!` of an artifact that does not exist yet is a build
 # error, not a skipped test.
 test: mutators
@@ -90,7 +90,7 @@ web: web-build
 
 # ---------------------------------------------------------------- the Expo peer
 #
-# The domain is defined once, in `crates/harken`. `crates/ffi` wraps it for
+# The domain is defined once, in `crates/harken`. `clients/expo/rust` wraps it for
 # foreign callers with uniffi, and everything TypeScript sees is generated from
 # that — so there is no second `apply` to keep in step. See docs/decisions.md.
 
@@ -108,23 +108,17 @@ ffi-lib := if os() == "macos" { "libharken_ffi.dylib" } else { "libharken_ffi.so
 
 # Build the mutator module and hand it to Metro.
 mutators:
-    cargo build -p harken-wasm --target wasm32-unknown-unknown --profile mutators
-    # The generator lives in the engine repo. Running it from there rather than
-    # vendoring it keeps one implementation, and it is a stable dependency so
-    # the build is cached after the first time.
-    cargo run -q --manifest-path ../petros/Cargo.toml -p petros-codegen -- \
-        "$PWD/target/wasm32-unknown-unknown/mutators/harken_wasm.wasm" \
-        "$PWD/clients/expo/src/mutators.gen.ts"
+    ./scripts/mutators.sh
 
 # Where the time goes in one mutation. Ignored by `just test` because it is a
 # measurement and it is slow; run it when a number is in question.
 latency:
     cargo test -p harken-ffi --release --test latency -- --ignored --nocapture --test-threads=1
 
-# The loop. Leave this running beside `bun start`, then edit crates/harken-wasm.
+# The loop. Leave this running beside `bun start`, then edit the domain.
 mutators-watch:
-    @echo "watching crates/harken-wasm — save a file and check the phone"
-    watchexec --project-origin . --watch crates/harken-wasm --exts rs \
+    @echo "watching crates/harken — save a file and check the phone"
+    watchexec --project-origin . --watch crates/harken --exts rs \
         --on-busy-update=restart -- just mutators
 
 # Install the JS side. Run once, and again after changing a dependency.
@@ -141,7 +135,7 @@ expo-install:
 # the workspace root; `generate turbo-module` reads the library's package.json
 # so it runs there. Hence the two directories.
 
-# Regenerate the client's TypeScript and C++ from `crates/ffi`.
+# Regenerate the client's TypeScript and C++ from `clients/expo/rust`.
 ffi-bindings: expo-install
     cargo build -p harken-ffi
     {{ubrn}} generate jsi bindings target/debug/{{ffi-lib}} --library --no-format \

@@ -2,8 +2,7 @@
 resolver = "2"
 members = [
     "crates/harken",
-    "crates/harken-wasm",
-    "crates/ffi",
+    "clients/expo/rust",
     "crates/server",
     "clients/iced",
 ]
@@ -36,10 +35,6 @@ petros-sql = { git = "https://github.com/k2on/petros", branch = "main" }
 petros-testkit = { git = "https://github.com/k2on/petros", branch = "main" }
 petros-wasm-guest = { git = "https://github.com/k2on/petros", branch = "main" }
 petros-axum = { git = "https://github.com/k2on/petros", branch = "main" }
-# `default-features = false` here so `crates/harken-wasm` can actually turn the
-# storage half off — a member's `default-features = false` is ignored unless the
-# workspace dependency says so too, silently, which put SQLite in a wasm build
-# that has none.
 harken = { path = "crates/harken", default-features = false }
 # `fira-sans` embeds a default font. Without it iced asks the system for
 # one, which works on a desktop and gets you nothing at all in a browser:

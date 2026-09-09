@@ -18,7 +18,7 @@ src/theme.ts          eight colours
 
 Everything else — what a song is, what favouriting means, how `pos` is computed, what
 the wire format is, when a mutation is refused, how the rebase works — lives in
-`crates/harken` and reaches here through `crates/ffi` as generated bindings. A
+`crates/harken` and reaches here through `rust/` as generated bindings. A
 second `apply` in a second language is two definitions of the same thing, and
 the first time they disagree the replicas diverge silently. So there is one.
 

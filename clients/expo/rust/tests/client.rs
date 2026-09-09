@@ -102,7 +102,7 @@ fn a_verb_the_ffi_never_heard_of() {
     assert_eq!(items.len(), 2);
     assert!(items.iter().all(|i| !i.favorited));
 
-    // Nothing in `crates/ffi` mentions FavoriteAll. It reached `apply` because
+    // Nothing in this crate mentions FavoriteAll. It reached `apply` because
     // the module knows the name, which is the point.
     client.mutate("FavoriteAll".into(), "{}".into()).unwrap();
     assert!(client.library().unwrap().iter().all(|i| i.favorited));

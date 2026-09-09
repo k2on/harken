@@ -7,6 +7,10 @@ that working copy by a gitignored `.cargo/config.toml`.
 Two clients, `clients/iced` and `clients/expo`, and one server. All three run
 the same `apply`: the first two link it, the phone loads it as a module.
 
+Four packages and no adapters. There is one domain crate, one server, and a
+crate per client — the phone's is `clients/expo/rust`, because a UniFFI library
+is the native half of that client and not a thing of its own.
+
 The domain is songs and a favourites playlist. Favourites is a real ordered
 playlist rather than a flag, so "add to favourites" reads `MAX(pos) + 1` — which
 is what makes the rebase visible: heart something while offline and it lands
@@ -24,14 +28,16 @@ crates/harken/           the domain — the ONLY apply
   tests/conformance.rs   the native and wasm builds of `apply`, compared
   tests/converge.rs      the domain against a simulated fleet
   tests/read_model.rs    library() and favorites() against rows apply wrote
-crates/harken-wasm/      the same domain as wasm — one `export!`
-crates/ffi/              the client over UniFFI, for the Expo app
+  src/lib.rs             …and, under `cfg(wasm32)`, the module's ABI
 crates/server/           axum, with one Petros handler mounted on it
 clients/iced/            the desktop and browser client
   src/heart.rs           the heart, drawn as a path (see below)
   web/                   the browser shell `just web` serves
-clients/expo/            the phone client; src/ is UI and a socket, nothing else
+clients/expo/            the phone client
+  src/                   its TypeScript half — UI and a socket, nothing else
+  rust/                  its native half — the client over UniFFI
   modules/harken-native/ the turbo module — generated, gitignored, not authored
+scripts/mutators.sh      builds the module and its TypeScript types
 docs/decisions.md        what is true because this ships to a phone
 ```
 
@@ -42,13 +48,13 @@ macro — are in `../petros/docs/decisions.md`. Read that first.
 
 ```
 just              # fmt, lint, test
-just mutators     # rebuild the domain module and hand it to Metro (~0.4s)
+just mutators     # rebuild the domain module and hand it to Metro (~0.35s)
 just mutators-watch # …on every save. Leave it running beside `bun start`.
 just serve        # the sync server…
 just iced alice   # …a desktop peer…
 just iced bob     # …and another, to watch them sync
 just web          # …a browser peer, at localhost:8080
-just ffi-bindings # regenerate the Expo client's TS from crates/ffi, typecheck
+just ffi-bindings # regenerate the Expo client's TS from clients/expo/rust
 just expo-android # …and a phone. Needs `nix develop .#android`.
 ```
 
@@ -79,6 +85,12 @@ declares `App::SCHEMA` and never names a database library.
 Changing a mutation does **not** need a native build: `just mutators` rebuilds
 the module and rewrites the base64 `.ts` Metro pushes. Changing the *engine*
 does, and that is what EAS is for.
+
+`scripts/mutators.sh` is the one thing that builds it, and `just mutators`, the
+EAS hook and CI all call it — only one of them has `just`. The single difference
+between them is where `petros-codegen` comes from: the checkout beside this one
+when there is one, so an engine edit needs no commit, and the published branch
+otherwise, because a build container has no sibling directory.
 
 ## The heart is a path on the desktop and a character on the phone
 

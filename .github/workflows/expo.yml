@@ -79,8 +79,7 @@ jobs:
       - name: Build the Rust and the turbo module
         run: |
           nix develop .#android --command bash -c '
-            cargo build -p harken-wasm --target wasm32-unknown-unknown --profile mutators
-            cargo run -q -p petros-codegen
+            ./scripts/mutators.sh
             cd clients/expo && bun install
             cd modules/harken-native
             ../../node_modules/.bin/ubrn build android \

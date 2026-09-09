@@ -27,7 +27,7 @@ use petros_wasm_host::MUTATORS;
 /// exactly this and nothing else, so it is baked in rather than found at
 /// runtime. `just mutators` is what puts it there.
 pub const BUNDLED: &[u8] =
-    include_bytes!("../../../target/wasm32-unknown-unknown/mutators/harken_wasm.wasm");
+    include_bytes!("../../../../target/wasm32-unknown-unknown/mutators/harken.wasm");
 
 /// Install [`BUNDLED`]. What a peer with no Metro attached calls at startup.
 pub fn load_bundled() -> Result<u64, String> {

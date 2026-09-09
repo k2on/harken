@@ -7,7 +7,7 @@
 //! and a mutation is an ordinary function call.
 //!
 //! The phone is the exception. It loads the same domain compiled to wasm
-//! (`crates/harken-wasm`) so a new mutation reaches it over Metro without a
+//! so a new mutation reaches it over Metro without a
 //! native build. Two builds of one source, held to that by
 //! `tests/conformance.rs`, which runs the same mutations through both and
 //! compares the rows.
@@ -22,3 +22,16 @@ pub mod domain;
 mod storage;
 #[cfg(feature = "storage")]
 pub use storage::*;
+
+// The wasm ABI: `apply` and `fill_auto` behind the entry points the interpreter
+// calls, and a store made of imported functions.
+//
+// Only on wasm, and it is the whole of what a separate `harken-wasm` crate used
+// to be. A separate crate bought nothing: what keeps SQLite and the engine out
+// of the module is `--no-default-features`, a flag on the build rather than a
+// property of a package.
+//
+// `//` and not `///` — a doc comment cannot attach to a macro invocation, and
+// the warning for that only appears on the one target this is compiled for.
+#[cfg(target_arch = "wasm32")]
+petros_wasm_guest::export!(domain, domain::SCHEMA_TEXT);

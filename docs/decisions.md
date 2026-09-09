@@ -19,7 +19,7 @@ removed — the replicas diverge silently and neither side is obviously at fault
 Every invariant at the top of `CLAUDE.md` is a property of one implementation,
 not of two that intend to match.
 
-So `crates/ffi` exports the client over UniFFI and
+So `clients/expo/rust` exports the client over UniFFI and
 `uniffi-bindgen-react-native` generates the TypeScript. The generated files are
 gitignored rather than committed, so nobody can hand-edit them and wonder why
 the next build reverts it, and `just ffi-bindings` regenerates and then runs
@@ -32,7 +32,7 @@ One place to change, and it is the place that already had to be right.
 
 ## The socket stayed in JavaScript
 
-`crates/ffi` exposes the sans-io client and nothing else: `take_outgoing()`
+`clients/expo/rust` exposes the sans-io client and nothing else: `take_outgoing()`
 hands back encoded frames, `recv()` takes them, and the caller owns the
 transport. React Native then does what a browser does in `transport/web.rs`,
 for the same reason it did there — the platform already has a WebSocket.
@@ -184,12 +184,52 @@ replayed forever.
 ## A feature on a dependency line reaches the wasm build
 
 Asking for `petros-schema/author` beside `cbor` put serde_json and uuid in the
-module, even though `crates/harken-wasm` sets `default-features = false` on the
-domain crate. Features unify per target; turning a crate's own feature off does
-not withdraw one it asked of a dependency unconditionally.
+module, even though the wasm build passes `--no-default-features`. Features
+unify per target; turning a crate's own feature off does not withdraw one it
+asked of a dependency unconditionally.
 
 This is the same trap this log already records for `default-features` itself,
 and it fails the same quiet way: the module builds, it runs, and it is bigger.
 Size is the loop here, because Metro pushes the module on every save. The
-feature belongs in `storage` — the one the wasm build actually turns off — and
-`cargo tree -p harken-wasm --target wasm32-unknown-unknown` is how to check.
+feature belongs in `storage` — the one the wasm build actually turns off. To
+check:
+
+```
+cargo tree -p harken --no-default-features -e normal \
+    --target wasm32-unknown-unknown
+```
+
+`-e normal` matters: dev-dependencies pull in the engine, Diesel and serde_json,
+and none of them ship in the module. Without it the count is seven and looks
+like a regression.
+
+## Four packages, and the two adapters are gone
+
+`crates/harken-wasm` was fourteen lines: one `export!`. It existed because the
+module must be a `cdylib` built with `--no-default-features`, and that felt like
+it needed its own package. It did not. `crate-type = ["rlib", "cdylib"]` on the
+domain crate and the `export!` under `cfg(target_arch = "wasm32")` do the same
+thing, and the flag that keeps SQLite and the engine out of the module is a flag
+on the build rather than a property of a package. Removing it made the native
+rebuild *faster* — 8.2s to 3.9s — because it is one less crate to build, and the
+loop is unchanged at ~0.35s.
+
+`crates/ffi` was not an adapter and did not disappear; it moved. A UniFFI
+library is the native half of the Expo client, the way `clients/iced/src` is the
+whole of the desktop one, so it lives at `clients/expo/rust`. What is left under
+`crates/` is the domain and the server, which is what the repository actually
+contains.
+
+## One script, three callers
+
+`just mutators` worked on a laptop and nowhere else: it ran `petros-codegen` out
+of a sibling checkout, and the EAS hook and CI each had their own copy of the
+build command — both of which named `harken-wasm` and a workspace member that no
+longer existed. Neither had been run since the split, so neither had failed yet.
+
+`scripts/mutators.sh` is the one implementation. It takes the sibling checkout
+when there is one and installs the generator from the published branch when
+there is not, which is the only thing that actually differs between a laptop and
+a build container. Exercised both ways: the no-sibling path was run against a
+copy of the tree with the local `.cargo` patch removed, so it resolved the engine
+from git exactly as EAS will.
