@@ -31,7 +31,7 @@ fn the_cost_of_the_thread() {
 
     let m = Mutators::load(MODULE).unwrap();
     let mut conn = petros::open_memory().unwrap();
-    petros::diesel::connection::SimpleConnection::batch_execute(&mut conn, harken::SCHEMA).unwrap();
+    petros::batch(&mut conn, harken::SCHEMA).unwrap();
     let mut auto = petros::AutoCtx::seeded(1);
 
     let mut fill = vec![];
@@ -62,21 +62,16 @@ fn the_cost_of_the_thread() {
 #[test]
 #[ignore = "a measurement, not an assertion: run it with `just latency`"]
 fn fsync_or_wasm() {
-    use petros::diesel::connection::SimpleConnection;
-    use petros::diesel::Connection as _;
-
     println!("\n  one mutation on a file-backed database, by durability setting:");
     for sync in ["FULL", "NORMAL", "OFF"] {
         let dir = std::env::temp_dir().join(format!("petros-sync-{sync}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
 
-        let mut conn = petros::Connection::establish(&dir.join("p.db").to_string_lossy()).unwrap();
-        conn.batch_execute(&format!(
-            "PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; \
-             PRAGMA busy_timeout = 5000; PRAGMA synchronous = {sync};"
-        ))
-        .unwrap();
+        // `open_path` already sets WAL, foreign keys and the busy timeout; the
+        // durability setting is the one this test varies.
+        let mut conn = petros::open_path(dir.join("p.db")).unwrap();
+        petros::batch(&mut conn, &format!("PRAGMA synchronous = {sync};")).unwrap();
         let mut client =
             petros::Client::<harken::HarkenApp>::open(conn, "alice", petros::AutoCtx::system())
                 .unwrap();
@@ -103,9 +98,6 @@ fn fsync_or_wasm() {
 #[test]
 #[ignore = "a measurement, not an assertion: run it with `just latency`"]
 fn one_tap_at_a_fixed_depth() {
-    use petros::diesel::connection::SimpleConnection;
-    use petros::diesel::Connection as _;
-
     fn one(sync: &str, depth: usize, n: usize) -> f64 {
         let mut ts = vec![];
         for run in 0..n {
@@ -115,13 +107,8 @@ fn one_tap_at_a_fixed_depth() {
             ));
             let _ = std::fs::remove_dir_all(&dir);
             std::fs::create_dir_all(&dir).unwrap();
-            let mut conn =
-                petros::Connection::establish(&dir.join("p.db").to_string_lossy()).unwrap();
-            conn.batch_execute(&format!(
-                "PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000; \
-                 PRAGMA synchronous = {sync};"
-            ))
-            .unwrap();
+            let mut conn = petros::open_path(dir.join("p.db")).unwrap();
+            petros::batch(&mut conn, &format!("PRAGMA synchronous = {sync};")).unwrap();
             let mut c =
                 petros::Client::<harken::HarkenApp>::open(conn, "alice", petros::AutoCtx::system())
                     .unwrap();

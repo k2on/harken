@@ -108,11 +108,11 @@ impl From<petros::Error> for HarkenError {
 
 /// A peer of an Petros server.
 ///
-/// `Client` owns a SQLite connection, which is `Send` but not `Sync`, and
-/// Diesel needs `&mut` even to read — so every method here takes the lock. That
-/// is not a concession to the FFI: the Rust examples serialise access the same
-/// way, because the optimistic savepoint means there is only ever one coherent
-/// view to read.
+/// `Client` owns a SQLite connection, which is `Send` but not `Sync`, and a
+/// read needs `&mut` like a write does — so every method here takes the lock.
+/// That is not a concession to the FFI: the iced client serialises access the
+/// same way, because the optimistic savepoint means there is only ever one
+/// coherent view to read.
 #[derive(uniffi::Object)]
 pub struct HarkenClient {
     inner: Mutex<Client<WasmHarken>>,

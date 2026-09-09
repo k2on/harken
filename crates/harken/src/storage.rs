@@ -1,59 +1,24 @@
-//! Everything that needs a real SQLite: the tables, the rows, the Diesel host
-//! and the `petros::App` the native peers run.
+//! Everything that needs a real SQLite: the read model and the `petros::App`
+//! the linked peers run.
 //!
-//! The read model goes through Diesel's DSL, with `check_for_backend` verifying
-//! at compile time that each model still matches its table. Writes go through
-//! checked SQL instead — `apply` is compiled to wasm as well as linked, and the
-//! wasm build has no SQLite and no Diesel, only a channel to the host's. What
-//! covers that half is `petros-sql`, which prepares every statement against
-//! `schema.sql` at build time.
+//! Reads and writes go through the same thing, and that is the point. Every
+//! statement in this crate — the queries here and the mutations in
+//! [`domain`](crate::domain) — is prepared against `schema.sql` at build time by
+//! `petros-sql`, with SQLite as the judge. Rename a column there and both halves
+//! stop compiling.
+//!
+//! There is no ORM. There was one, for reads only, which meant the schema was
+//! described twice — once as `table!` and once as DDL — and checked two
+//! different ways, one of which could not reach the write path at all because
+//! `apply` compiles to wasm and has no database in it.
 //!
 //! Behind the `storage` feature, because the wasm build wants
 //! [`domain`](crate::domain) and none of this.
 
 use ciborium::value::Value;
-use diesel::connection::SimpleConnection;
-use diesel::prelude::*;
-use diesel::sqlite::Sqlite as SqliteBackend;
 use petros::backend::SqliteStore;
 use petros::{ActorId, App, AutoCtx, Connection, Id, Mutation, MutationError, Transaction};
 use serde::{Deserialize, Serialize};
-
-diesel::table! {
-    song (id) {
-        id -> Binary,
-        title -> Text,
-        artist -> Text,
-        pos -> BigInt,
-        added_ms -> BigInt,
-        actor -> Text,
-    }
-}
-
-diesel::table! {
-    favorite (song_id) {
-        song_id -> Binary,
-        pos -> BigInt,
-        favorited_ms -> BigInt,
-        actor -> Text,
-    }
-}
-
-diesel::joinable!(favorite -> song (song_id));
-diesel::allow_tables_to_appear_in_same_query!(song, favorite);
-
-/// One row of the library. Read-only: rows are produced by `apply`, never by
-/// this crate.
-#[derive(Debug, Clone, Queryable, Selectable)]
-#[diesel(table_name = song, check_for_backend(SqliteBackend))]
-pub struct SongRow {
-    pub id: Id,
-    pub title: String,
-    pub artist: String,
-    pub pos: i64,
-    pub added_ms: i64,
-    pub actor: String,
-}
 
 /// A song, and where it sits in the favourites playlist if it is on it.
 #[derive(Debug, Clone)]
@@ -77,39 +42,64 @@ impl Song {
     }
 }
 
-fn song_of((row, favorite_pos): (SongRow, Option<i64>)) -> Song {
-    Song {
-        id: row.id,
-        title: row.title,
-        artist: row.artist,
-        pos: row.pos,
-        added_ms: row.added_ms,
-        actor: row.actor,
-        favorite_pos,
-    }
+/// Sixteen bytes out of a BLOB column. A row whose id is not sixteen bytes did
+/// not come from `apply`, and there is nothing useful to do with it.
+fn id_of(bytes: &[u8]) -> Id {
+    Id(petros::uuid::Uuid::from_slice(bytes).unwrap_or(petros::uuid::Uuid::nil()))
 }
 
-/// The whole library, in the order songs were added. Always ordered explicitly.
+/// The whole library, in the order songs were added.
+///
+/// `ORDER BY` is explicit here as everywhere: SQLite's natural order is not a
+/// contract, and two peers showing the same rows in different orders is a bug
+/// that only appears on someone else's machine.
 pub fn library(conn: &mut Connection) -> petros::Result<Vec<Song>> {
-    Ok(song::table
-        .left_join(favorite::table)
-        .select((SongRow::as_select(), favorite::pos.nullable()))
-        .order((song::pos.asc(), song::id.asc()))
-        .load::<(SongRow, Option<i64>)>(conn)?
+    let mut store = SqliteStore(conn);
+    // `f.pos` is aliased because `s.pos` is already called `pos`, and it is
+    // nullable because the join is a left join — neither of which SQLite can
+    // tell us, so both are said here.
+    let rows = petros_sql::query!(
+        store,
+        "SELECT s.id, s.title, s.artist, s.pos, s.added_ms, s.actor,
+                f.pos AS \"favorite_pos?: Int\"
+           FROM song s LEFT JOIN favorite f ON f.song_id = s.id
+          ORDER BY s.pos, s.id"
+    );
+    Ok(rows
         .into_iter()
-        .map(song_of)
+        .map(|r| Song {
+            id: id_of(&r.id),
+            title: r.title,
+            artist: r.artist,
+            pos: r.pos,
+            added_ms: r.added_ms,
+            actor: r.actor,
+            favorite_pos: r.favorite_pos,
+        })
         .collect())
 }
 
 /// The favourites playlist, in playlist order.
 pub fn favorites(conn: &mut Connection) -> petros::Result<Vec<Song>> {
-    Ok(song::table
-        .inner_join(favorite::table)
-        .select((SongRow::as_select(), favorite::pos))
-        .order((favorite::pos.asc(), song::id.asc()))
-        .load::<(SongRow, i64)>(conn)?
+    let mut store = SqliteStore(conn);
+    let rows = petros_sql::query!(
+        store,
+        "SELECT s.id, s.title, s.artist, s.pos, s.added_ms, s.actor,
+                f.pos AS \"favorite_pos: Int\"
+           FROM song s JOIN favorite f ON f.song_id = s.id
+          ORDER BY f.pos, s.id"
+    );
+    Ok(rows
         .into_iter()
-        .map(|(row, pos)| song_of((row, Some(pos))))
+        .map(|r| Song {
+            id: id_of(&r.id),
+            title: r.title,
+            artist: r.artist,
+            pos: r.pos,
+            added_ms: r.added_ms,
+            actor: r.actor,
+            favorite_pos: Some(r.favorite_pos),
+        })
         .collect())
 }
 
@@ -141,17 +131,14 @@ pub struct HarkenApp;
 
 impl App for HarkenApp {
     type Mutation = Payload;
-
-    fn migrate(conn: &mut Connection) -> petros::Result<()> {
-        conn.batch_execute(SCHEMA)?;
-        Ok(())
-    }
+    const SCHEMA: &'static str = SCHEMA;
 }
 
 /// The one description of this app's tables.
 ///
-/// `migrate` runs it, and `petros-sql` prepares every statement in the domain
-/// against it at build time. There is no second copy to drift from.
+/// Petros runs it on every open, and `petros-sql` prepares every statement in
+/// this crate against it at build time. There is no second copy to drift from,
+/// which is what an ORM's `table!` would have been.
 pub const SCHEMA: &str = include_str!("../schema.sql");
 
 // ------------------------------------------------------------------ authoring

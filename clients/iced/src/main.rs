@@ -109,9 +109,10 @@ struct App {
     /// The materialised view and the pending count, refreshed after anything
     /// that could change them.
     ///
-    /// iced's `view` takes `&self` and Diesel needs `&mut` even to read, so the
-    /// query cannot happen during rendering. Keeping them here is the right
-    /// shape for iced anyway — and it is the seam reactive queries would fill.
+    /// iced's `view` takes `&self` and a read needs `&mut` — SQLite advances a
+    /// statement to produce rows — so the query cannot happen during rendering.
+    /// Keeping them here is the right shape for iced anyway, and it is the seam
+    /// reactive queries would fill.
     songs: Vec<Song>,
     pending: usize,
     title: String,

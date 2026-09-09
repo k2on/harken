@@ -8,10 +8,7 @@
 //!
 //! Every verb, through both, against real SQLite, comparing the rows.
 
-use diesel::connection::SimpleConnection;
-use diesel::deserialize::QueryableByName;
-use diesel::sql_types::{BigInt, Text};
-use diesel::{sql_query, RunQueryDsl};
+use petros::backend::SqliteStore;
 use petros::{AutoCtx, Connection};
 use petros_wasm_host::Mutators;
 
@@ -21,39 +18,45 @@ use petros_wasm_host::Mutators;
 const MODULE: &[u8] =
     include_bytes!("../../../target/wasm32-unknown-unknown/mutators/harken_wasm.wasm");
 
-#[derive(QueryableByName, Debug, PartialEq)]
+/// One row of both tables at once, so a difference in either shows up here.
+#[derive(Debug, PartialEq)]
 struct Row {
-    #[diesel(sql_type = Text)]
     id: String,
-    #[diesel(sql_type = Text)]
     title: String,
-    #[diesel(sql_type = Text)]
     artist: String,
-    #[diesel(sql_type = BigInt)]
     pos: i64,
-    #[diesel(sql_type = BigInt)]
+    /// The playlist position, or 0 for a song that is not on it.
     fav: i64,
-    #[diesel(sql_type = Text)]
     actor: String,
 }
 
 fn database() -> Connection {
     let mut conn = petros::open_memory().expect("open");
-    conn.batch_execute(harken::SCHEMA).expect("migrate");
+    petros::batch(&mut conn, harken::SCHEMA).expect("migrate");
     conn
 }
 
 fn rows(conn: &mut Connection) -> Vec<Row> {
-    // Both tables in one shape, so a difference in either shows up here.
-    // `fav` is the playlist position, or 0 for a song that is not on it.
-    sql_query(
-        "SELECT hex(s.id) AS id, s.title, s.artist, s.pos, s.actor, \
-                COALESCE(f.pos, 0) AS fav \
-           FROM song s LEFT JOIN favorite f ON f.song_id = s.id \
-          ORDER BY s.pos, s.id",
+    let mut store = SqliteStore(conn);
+    // `hex()` and `COALESCE()` are expressions, so SQLite has no declared type
+    // for either and both are named here.
+    petros_sql::query!(
+        store,
+        "SELECT hex(s.id) AS \"id: Text\", s.title, s.artist, s.pos, s.actor,
+                COALESCE(f.pos, 0) AS \"fav: Int\"
+           FROM song s LEFT JOIN favorite f ON f.song_id = s.id
+          ORDER BY s.pos, s.id"
     )
-    .load(conn)
-    .expect("read back")
+    .into_iter()
+    .map(|r| Row {
+        id: r.id,
+        title: r.title,
+        artist: r.artist,
+        pos: r.pos,
+        fav: r.fav,
+        actor: r.actor,
+    })
+    .collect()
 }
 
 /// The native side, exactly as `harken::Payload`'s `Mutation::apply` runs it:

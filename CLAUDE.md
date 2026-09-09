@@ -20,9 +20,10 @@ crates/harken/           the domain — the ONLY apply
                          and petros-sql checks every statement against it
   domain.rs              `mutations!` — verbs, arguments and bodies in one
                          declaration; plus fill_auto
-  storage.rs             the read model, through Diesel
+  storage.rs             the read model — checked SQL, same as the writes
   tests/conformance.rs   the native and wasm builds of `apply`, compared
   tests/converge.rs      the domain against a simulated fleet
+  tests/read_model.rs    library() and favorites() against rows apply wrote
 crates/harken-wasm/      the same domain as wasm — one `export!`
 crates/ffi/              the client over UniFFI, for the Expo app
 crates/server/           axum, with one Petros handler mounted on it
@@ -64,9 +65,16 @@ through both builds and compares rows and refusals, so the two cannot drift.
 
 The SQL in it is real SQL and it is checked: `petros_sql::exec!` and
 `petros_sql::query!` prepare each statement against `schema.sql` at build time,
-with SQLite as the judge. Rename a column there and the call sites using it stop
-compiling. That is why `FavoriteAll` can be one `INSERT ... SELECT` with a window
-function while still running inside a sandbox that has no SQLite in it.
+with SQLite as the judge. Rename a column there and every call site using it
+stops compiling — the reads in `storage.rs` as well as the writes in
+`domain.rs`. That is why `FavoriteAll` can be one `INSERT ... SELECT` with a
+window function while still running inside a sandbox that has no SQLite in it.
+
+**There is no ORM here, and no `diesel` anywhere in this repository.** There was
+one for reads only, which meant the schema was described twice — as `table!` and
+as DDL — and checked two different ways, neither of which could reach `apply`.
+Petros still uses Diesel internally; that is the engine's business. An app
+declares `App::SCHEMA` and never names a database library.
 
 Changing a mutation does **not** need a native build: `just mutators` rebuilds
 the module and rewrites the base64 `.ts` Metro pushes. Changing the *engine*
@@ -75,7 +83,7 @@ does, and that is what EAS is for.
 ## The heart is a path on the desktop and a character on the phone
 
 Fira Sans, which iced embeds, has no U+2665, U+2661 or U+2764 in its cmap — a
-text heart lays out fine and draws nothing at all. So `examples/heart.rs` draws
+text heart lays out fine and draws nothing at all. So `clients/iced/src/heart.rs` draws
 it with two cubics down each side, filled when the song is on the playlist and
 stroked when it is not. React Native uses the system font, which has the glyph,
 so the Expo screen just writes `♥`.

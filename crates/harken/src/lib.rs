@@ -1,10 +1,10 @@
-//! The demo to-do list: the table, the rows, and the mutations that produce
+//! The music library: the tables, the rows, and the mutations that produce
 //! them.
 //!
 //! [`domain`] holds `apply` and `fill_auto` and knows nothing about where it
-//! runs. This module gives it a [`Host`](domain::Host) backed by Diesel, which
-//! is what the server, the terminal peers and the iced window use — they are
-//! ordinary Rust programs and a mutation is an ordinary function call.
+//! runs. [`storage`] gives it a store backed by a real SQLite connection, which
+//! is what the server and the iced client use — they are ordinary Rust programs
+//! and a mutation is an ordinary function call.
 //!
 //! The phone is the exception. It loads the same domain compiled to wasm
 //! (`crates/harken-wasm`) so a new mutation reaches it over Metro without a

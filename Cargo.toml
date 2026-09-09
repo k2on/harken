@@ -11,9 +11,10 @@ members = [
 [workspace.package]
 edition = "2021"
 license = "MIT"
-# The oldest toolchain that builds the dependency tree: diesel_derives
-# (via darling) and ratatui (via instability) both require 1.88. Verified by
-# building and testing the workspace on exactly this version.
+# The oldest toolchain that builds the dependency tree. Nothing here needs it
+# directly; it comes in under `petros`, whose SQLite layer pulls diesel_derives
+# and so darling. Verified by building and testing the workspace on exactly
+# this version.
 rust-version = "1.88"
 
 [workspace.dependencies]
@@ -37,20 +38,13 @@ petros-wasm-guest = { git = "https://github.com/k2on/petros", branch = "typed-wr
 petros-axum = { git = "https://github.com/k2on/petros", branch = "typed-writes" }
 # `default-features = false` here so `crates/harken-wasm` can actually turn the
 # storage half off — a member's `default-features = false` is ignored unless the
-# workspace dependency says so too, silently, which put Diesel and SQLite in a
-# wasm build that has neither.
+# workspace dependency says so too, silently, which put SQLite in a wasm build
+# that has none.
 harken = { path = "crates/harken", default-features = false }
 # `fira-sans` embeds a default font. Without it iced asks the system for
 # one, which works on a desktop and gets you nothing at all in a browser:
 # wasm has no font access, so every glyph silently fails to draw.
 iced = { version = "0.14", features = ["fira-sans"] }
-rand = "0.8"
-diesel = { version = "2.3", features = ["sqlite", "returning_clauses_for_sqlite_3_35"] }
-# `bundled` is applied per target, not here: the browser build must NOT
-# bundle, because SQLite's C cannot compile for wasm32-unknown-unknown.
-libsqlite3-sys = "0.30"
-sqlite-wasm-rs = "0.5"
-web-time = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "1"
@@ -58,7 +52,6 @@ thiserror = "1"
 # generator and the runtime must agree on the metadata format or the bindings
 # it emits will not match the library it read them from.
 uniffi = "=0.31"
-uuid = { version = "1", features = ["serde"] }
 
 [profile.test]
 opt-level = 1

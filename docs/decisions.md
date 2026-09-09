@@ -138,3 +138,28 @@ program with `get(petros_axum::sync::<HarkenApp>)` mounted on it and a
 That is what a server built on Petros should look like, and it is the honest
 demonstration of the engine being sans-io — the whole thing is forty lines, and
 none of them are about sync.
+
+## The ORM went, because it described the schema a second time
+
+Reads went through Diesel's DSL and writes through checked SQL, which meant the
+tables were described twice: once as `diesel::table!`, once as the DDL in
+`schema.sql`. Nothing held those two together — `check_for_backend` verifies a
+model against `table!`, not against the database — and the half it could check
+was the half that mattered least, because `apply` compiles to wasm and has no
+Diesel in it to check.
+
+So the read model is `petros_sql::query!` now, like everything else. One
+description of the tables, one thing checking it, and it reaches both halves:
+renaming `artist` in `schema.sql` produces four compile errors, two from the
+mutations and two from the read model. Under the old arrangement it produced two
+and a query that still compiled.
+
+What was actually given up is small. `query!` returns a struct per row with a
+field per column, typed from what SQLite declares, so the mapping layer the ORM
+provided is generated rather than written. What is not given up is the type
+checking, which is the thing people mean when they defend an ORM.
+
+Petros still uses Diesel for its own three tables, and `petros::Connection` is
+still `diesel::SqliteConnection`. That is the engine's business. An app declares
+`App::SCHEMA` and `petros::batch` runs statements that take no parameters, so
+nothing above the engine has to name a database library at all.

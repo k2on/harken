@@ -39,5 +39,4 @@ uniffi.workspace = true
 # The tests apply real mutations, so they need a database and the module that
 # `just mutators` produces.
 ciborium.workspace = true
-diesel = { workspace = true, features = ["sqlite"] }
 petros-wasm-host.workspace = true
