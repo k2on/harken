@@ -1,4 +1,4 @@
-//! The to-do client, exported for foreign callers through UniFFI.
+//! The Harken client, exported for foreign callers through UniFFI.
 //!
 //! This is a wrapper and nothing else. Every mutation and every query below
 //! forwards into [`todo`], which is where they are defined once — so the Expo
@@ -28,39 +28,46 @@ use std::sync::Mutex;
 
 pub mod app;
 
-use app::WasmTodo;
+use app::WasmHarken;
 
-use harken::list;
+use harken::{favorites, library};
 use petros::{decode, encode, AutoCtx, Client, MutationError, ServerMsg};
 
 uniffi::setup_scaffolding!();
 
-/// One row of the materialised view.
+/// One song, and whether it is on the favourites playlist.
 #[derive(Debug, Clone, uniffi::Record)]
-pub struct TodoItem {
+pub struct Song {
     /// The canonical 8-4-4-4-12 form. Sixteen bytes on the wire and in SQLite;
     /// a string here because that is what a foreign caller can hold, compare
     /// and use as a list key.
     pub id: String,
-    pub text: String,
-    pub done: bool,
+    pub title: String,
+    pub artist: String,
     /// Recomputed on every replay from `MAX(pos) + 1`, which is what makes the
-    /// rebase visible: an item added while offline moves down as confirmed
+    /// rebase visible: a song added while offline moves down as confirmed
     /// entries land underneath it.
     pub pos: i64,
-    pub created_ms: i64,
+    pub added_ms: i64,
     pub actor: String,
+    pub favorited: bool,
+    /// Its place in the favourites playlist, or -1 when it is not on it.
+    /// Positions start at 1, so the sentinel is unambiguous and the record
+    /// stays flat across the boundary.
+    pub favorite_pos: i64,
 }
 
-impl From<harken::Item> for TodoItem {
-    fn from(item: harken::Item) -> Self {
-        TodoItem {
-            id: item.id.to_string(),
-            text: item.text,
-            done: item.done,
-            pos: item.pos,
-            created_ms: item.created_ms,
-            actor: item.actor,
+impl From<harken::Song> for Song {
+    fn from(song: harken::Song) -> Self {
+        Song {
+            favorited: song.favorited(),
+            favorite_pos: song.favorite_pos.unwrap_or(-1),
+            id: song.id.to_string(),
+            title: song.title,
+            artist: song.artist,
+            pos: song.pos,
+            added_ms: song.added_ms,
+            actor: song.actor,
         }
     }
 }
@@ -68,14 +75,14 @@ impl From<harken::Item> for TodoItem {
 /// A mutation the server refused. Not a failure: a deterministic verdict every
 /// replica would have reached identically.
 #[derive(Debug, Clone, uniffi::Record)]
-pub struct TodoRejection {
+pub struct HarkenRejection {
     pub id: String,
     pub reason: String,
 }
 
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 #[uniffi(flat_error)]
-pub enum TodoError {
+pub enum HarkenError {
     /// The app itself said no — an empty to-do, say. The caller should show
     /// this to a person; retrying it unchanged will fail the same way.
     #[error("{reason}")]
@@ -86,13 +93,13 @@ pub enum TodoError {
     Engine { message: String },
 }
 
-impl From<petros::Error> for TodoError {
+impl From<petros::Error> for HarkenError {
     fn from(e: petros::Error) -> Self {
         match e {
             petros::Error::Mutation(MutationError::Rejected(reason)) => {
-                TodoError::Refused { reason }
+                HarkenError::Refused { reason }
             }
-            other => TodoError::Engine {
+            other => HarkenError::Engine {
                 message: other.to_string(),
             },
         }
@@ -101,22 +108,22 @@ impl From<petros::Error> for TodoError {
 
 /// A peer of an Petros server.
 ///
-/// `Client` owns a SQLite connection, which is `Send` but not `Sync`, and
-/// Diesel needs `&mut` even to read — so every method here takes the lock. That
-/// is not a concession to the FFI: the Rust examples serialise access the same
-/// way, because the optimistic savepoint means there is only ever one coherent
-/// view to read.
+/// `Client` owns a SQLite connection, which is `Send` but not `Sync`, and a
+/// read needs `&mut` like a write does — so every method here takes the lock.
+/// That is not a concession to the FFI: the iced client serialises access the
+/// same way, because the optimistic savepoint means there is only ever one
+/// coherent view to read.
 #[derive(uniffi::Object)]
-pub struct TodoClient {
-    inner: Mutex<Client<WasmTodo>>,
+pub struct HarkenClient {
+    inner: Mutex<Client<WasmHarken>>,
 }
 
-impl TodoClient {
+impl HarkenClient {
     fn with<T>(
         &self,
-        f: impl FnOnce(&mut Client<WasmTodo>) -> Result<T, TodoError>,
-    ) -> Result<T, TodoError> {
-        let mut guard = self.inner.lock().map_err(|_| TodoError::Engine {
+        f: impl FnOnce(&mut Client<WasmHarken>) -> Result<T, HarkenError>,
+    ) -> Result<T, HarkenError> {
+        let mut guard = self.inner.lock().map_err(|_| HarkenError::Engine {
             message: "the client lock was poisoned by an earlier panic".into(),
         })?;
         f(&mut guard)
@@ -124,17 +131,17 @@ impl TodoClient {
 }
 
 #[uniffi::export]
-impl TodoClient {
+impl HarkenClient {
     /// Open the peer's database, running Petros's migrations and the app's.
     ///
     /// `db_path` is a file the caller owns — on React Native, somewhere under
     /// the app's documents directory. `actor` is who this peer is; it is opaque
     /// to Petros and ends up on every row this peer authors.
     #[uniffi::constructor]
-    pub fn open(db_path: String, actor: String) -> Result<Self, TodoError> {
+    pub fn open(db_path: String, actor: String) -> Result<Self, HarkenError> {
         let conn = petros::open_path(&db_path)?;
-        let client = Client::<WasmTodo>::open(conn, actor, AutoCtx::system())?;
-        Ok(TodoClient {
+        let client = Client::<WasmHarken>::open(conn, actor, AutoCtx::system())?;
+        Ok(HarkenClient {
             inner: Mutex::new(client),
         })
     }
@@ -159,48 +166,66 @@ impl TodoClient {
     /// mutate("Add", r#"{"text": "buy milk"}"#)
     /// mutate("SetDone", r#"{"id": "67e55084-...", "done": true}"#)
     /// ```
-    pub fn mutate(&self, kind: String, args: String) -> Result<(), TodoError> {
+    pub fn mutate(&self, kind: String, args: String) -> Result<(), HarkenError> {
         let payload = app::from_json(&kind, &args)
-            .map_err(|message| TodoError::Refused { reason: message })?;
+            .map_err(|message| HarkenError::Refused { reason: message })?;
         self.with(|c| {
             c.mutate(payload)?;
             Ok(())
         })
     }
 
-    /// Add a to-do.
+    /// Put a song in the library.
     ///
-    /// Refused if the text is blank — checked here, against the view the caller
-    /// is actually looking at, so an intent that is invalid never reaches the
-    /// pending queue or the wire.
+    /// Refused if the title is blank — checked here, against the view the
+    /// caller is actually looking at, so an intent that is invalid never
+    /// reaches the pending queue or the wire.
     ///
     /// Returns nothing on purpose. The row's id is generated inside the module
-    /// by `fill_auto` and belongs to the log, not to this call; read it from the
-    /// next [`list`](Self::list), which is where every other caller gets it.
-    pub fn add(&self, text: String) -> Result<(), TodoError> {
+    /// by `fill_auto` and belongs to the log, not to this call; read it from
+    /// the next [`library`](Self::library), which is where every other caller
+    /// gets it.
+    pub fn add_song(&self, title: String, artist: String) -> Result<(), HarkenError> {
         self.mutate(
-            "Add".into(),
-            serde_json::json!({ "text": text }).to_string(),
+            "AddSong".into(),
+            serde_json::json!({ "title": title, "artist": artist }).to_string(),
         )
     }
 
-    pub fn set_done(&self, id: String, done: bool) -> Result<(), TodoError> {
+    /// The heart, on.
+    pub fn favorite(&self, id: String) -> Result<(), HarkenError> {
         self.mutate(
-            "SetDone".into(),
-            serde_json::json!({ "id": id, "done": done }).to_string(),
+            "Favorite".into(),
+            serde_json::json!({ "id": id }).to_string(),
         )
     }
 
-    pub fn remove(&self, id: String) -> Result<(), TodoError> {
-        self.mutate("Remove".into(), serde_json::json!({ "id": id }).to_string())
+    /// The heart, off. The song stays in the library.
+    pub fn unfavorite(&self, id: String) -> Result<(), HarkenError> {
+        self.mutate(
+            "Unfavorite".into(),
+            serde_json::json!({ "id": id }).to_string(),
+        )
+    }
+
+    pub fn remove_song(&self, id: String) -> Result<(), HarkenError> {
+        self.mutate(
+            "RemoveSong".into(),
+            serde_json::json!({ "id": id }).to_string(),
+        )
     }
 
     // -------------------------------------------------------------- queries
 
-    /// The materialised view: confirmed replayed, then this peer's pending
+    /// The whole library: confirmed replayed, then this peer's pending
     /// mutations on top. Always ordered explicitly.
-    pub fn list(&self) -> Result<Vec<TodoItem>, TodoError> {
-        self.with(|c| Ok(list(c.conn())?.into_iter().map(TodoItem::from).collect()))
+    pub fn library(&self) -> Result<Vec<Song>, HarkenError> {
+        self.with(|c| Ok(library(c.conn())?.into_iter().map(Song::from).collect()))
+    }
+
+    /// Just the favourites, in playlist order.
+    pub fn favorites(&self) -> Result<Vec<Song>, HarkenError> {
+        self.with(|c| Ok(favorites(c.conn())?.into_iter().map(Song::from).collect()))
     }
 
     /// How much of the server's log has been applied.
@@ -227,8 +252,8 @@ impl TodoClient {
     /// A module that does not export the ABI is rejected here rather than at
     /// the first mutation, so a bad push fails loudly and the old one keeps
     /// running.
-    pub fn load_mutators(&self, wasm: Vec<u8>) -> Result<u64, TodoError> {
-        petros_wasm_host::load(&wasm).map_err(|message| TodoError::Engine { message })
+    pub fn load_mutators(&self, wasm: Vec<u8>) -> Result<u64, HarkenError> {
+        petros_wasm_host::load(&wasm).map_err(|message| HarkenError::Engine { message })
     }
 
     /// Which module is running, or zero if none has been installed yet.
@@ -240,7 +265,7 @@ impl TodoClient {
 
     /// Announce a fresh connection: ask for everything since our cursor and
     /// re-offer everything still pending. Safe to repeat.
-    pub fn connected(&self) -> Result<(), TodoError> {
+    pub fn connected(&self) -> Result<(), HarkenError> {
         self.with(|c| Ok(c.connected()?))
     }
 
@@ -249,30 +274,30 @@ impl TodoClient {
     /// A caller with no connection should drain and discard rather than let the
     /// queue grow: reconnecting re-offers everything still pending, and the
     /// server dedupes what it has already seen.
-    pub fn take_outgoing(&self) -> Result<Vec<Vec<u8>>, TodoError> {
+    pub fn take_outgoing(&self) -> Result<Vec<Vec<u8>>, HarkenError> {
         self.with(|c| {
             c.take_outgoing()
                 .iter()
-                .map(|msg| encode(msg).map_err(TodoError::from))
+                .map(|msg| encode(msg).map_err(HarkenError::from))
                 .collect()
         })
     }
 
     /// Hand one frame from the server to the engine.
-    pub fn recv(&self, frame: Vec<u8>) -> Result<(), TodoError> {
+    pub fn recv(&self, frame: Vec<u8>) -> Result<(), HarkenError> {
         let msg: ServerMsg<app::Payload> = decode(&frame)?;
         self.with(|c| Ok(c.recv(msg)?))
     }
 
     /// Drain mutations the server refused.
-    pub fn take_rejections(&self) -> Vec<TodoRejection> {
+    pub fn take_rejections(&self) -> Vec<HarkenRejection> {
         let Ok(mut client) = self.inner.lock() else {
             return Vec::new();
         };
         client
             .take_rejections()
             .into_iter()
-            .map(|r| TodoRejection {
+            .map(|r| HarkenRejection {
                 id: r.id.to_string(),
                 reason: r.reason,
             })

@@ -31,19 +31,13 @@ fn the_cost_of_the_thread() {
 
     let m = Mutators::load(MODULE).unwrap();
     let mut conn = petros::open_memory().unwrap();
-    petros::diesel::connection::SimpleConnection::batch_execute(
-        &mut conn,
-        "CREATE TABLE todo (id BLOB PRIMARY KEY NOT NULL, text TEXT NOT NULL,
-          done BOOL NOT NULL DEFAULT 0, pos BIGINT NOT NULL,
-          created_ms BIGINT NOT NULL, actor TEXT NOT NULL);",
-    )
-    .unwrap();
+    petros::batch(&mut conn, harken::SCHEMA).unwrap();
     let mut auto = petros::AutoCtx::seeded(1);
 
     let mut fill = vec![];
     let mut apply = vec![];
     for i in 0..100 {
-        let raw = harken::add(&format!("item {i}"));
+        let raw = harken::add_song(&format!("item {i}"), "Bicep");
         let mut bytes = Vec::new();
         ciborium::into_writer(&raw.0, &mut bytes).unwrap();
 
@@ -68,30 +62,27 @@ fn the_cost_of_the_thread() {
 #[test]
 #[ignore = "a measurement, not an assertion: run it with `just latency`"]
 fn fsync_or_wasm() {
-    use petros::diesel::connection::SimpleConnection;
-    use petros::diesel::Connection as _;
-
     println!("\n  one mutation on a file-backed database, by durability setting:");
     for sync in ["FULL", "NORMAL", "OFF"] {
         let dir = std::env::temp_dir().join(format!("petros-sync-{sync}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
 
-        let mut conn = petros::Connection::establish(&dir.join("p.db").to_string_lossy()).unwrap();
-        conn.batch_execute(&format!(
-            "PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; \
-             PRAGMA busy_timeout = 5000; PRAGMA synchronous = {sync};"
-        ))
-        .unwrap();
+        // `open_path` already sets WAL, foreign keys and the busy timeout; the
+        // durability setting is the one this test varies.
+        let mut conn = petros::open_path(dir.join("p.db")).unwrap();
+        petros::batch(&mut conn, &format!("PRAGMA synchronous = {sync};")).unwrap();
         let mut client =
-            petros::Client::<harken::TodoApp>::open(conn, "alice", petros::AutoCtx::system())
+            petros::Client::<harken::HarkenApp>::open(conn, "alice", petros::AutoCtx::system())
                 .unwrap();
 
-        client.mutate(harken::add("warm")).unwrap();
+        client.mutate(harken::add_song("warm", "Bicep")).unwrap();
         let mut ts = vec![];
         for i in 0..25 {
             let t = Instant::now();
-            client.mutate(harken::add(&format!("tap {i}"))).unwrap();
+            client
+                .mutate(harken::add_song(&format!("tap {i}"), "Bicep"))
+                .unwrap();
             ts.push(t.elapsed().as_secs_f64() * 1000.0);
         }
         println!("    synchronous = {:<7} {:>7.2} ms", sync, median(ts));
@@ -107,9 +98,6 @@ fn fsync_or_wasm() {
 #[test]
 #[ignore = "a measurement, not an assertion: run it with `just latency`"]
 fn one_tap_at_a_fixed_depth() {
-    use petros::diesel::connection::SimpleConnection;
-    use petros::diesel::Connection as _;
-
     fn one(sync: &str, depth: usize, n: usize) -> f64 {
         let mut ts = vec![];
         for run in 0..n {
@@ -119,21 +107,18 @@ fn one_tap_at_a_fixed_depth() {
             ));
             let _ = std::fs::remove_dir_all(&dir);
             std::fs::create_dir_all(&dir).unwrap();
-            let mut conn =
-                petros::Connection::establish(&dir.join("p.db").to_string_lossy()).unwrap();
-            conn.batch_execute(&format!(
-                "PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000; \
-                 PRAGMA synchronous = {sync};"
-            ))
-            .unwrap();
+            let mut conn = petros::open_path(dir.join("p.db")).unwrap();
+            petros::batch(&mut conn, &format!("PRAGMA synchronous = {sync};")).unwrap();
             let mut c =
-                petros::Client::<harken::TodoApp>::open(conn, "alice", petros::AutoCtx::system())
+                petros::Client::<harken::HarkenApp>::open(conn, "alice", petros::AutoCtx::system())
                     .unwrap();
             for i in 0..depth {
-                c.mutate(harken::add(&format!("filler {i}"))).unwrap();
+                c.mutate(harken::add_song(&format!("filler {i}"), "Bicep"))
+                    .unwrap();
             }
             let t = Instant::now();
-            c.mutate(harken::add("the tap being timed")).unwrap();
+            c.mutate(harken::add_song("the tap being timed", "Bicep"))
+                .unwrap();
             ts.push(t.elapsed().as_secs_f64() * 1000.0);
             drop(c);
             let _ = std::fs::remove_dir_all(&dir);

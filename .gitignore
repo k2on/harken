@@ -1,5 +1,8 @@
 /target
 result
 result-*
-crates/harken/examples/web/pkg
+clients/iced/web/pkg
 .direnv
+
+# Local override: builds against ../petros instead of the git dependency.
+.cargo/

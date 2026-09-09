@@ -111,3 +111,85 @@ place a version or a target is named — then builds the module, the engine and
 the turbo module before Expo's own prebuild and gradle steps. This should run
 rarely by design: changing a mutation does not need a build, only changing the
 engine does.
+
+## The heart is a path, because the font has no heart in it
+
+The obvious way to put a heart on a button is the character. It does not work:
+Fira Sans, which iced embeds, has no U+2665, U+2661 or U+2764 in its cmap — all
+three checked by reading the font's tables rather than by looking at a window.
+The glyph silently draws nothing, so widgets lay out, input works, and the
+button is blank. That is the same failure this log already records for a browser
+build with no font at all, and it is just as hard to recognise the second time.
+
+So `examples/heart.rs` draws it: two cubics down each side, filled when the song
+is on the playlist and stroked when it is not. No icon font, no asset, and it
+reads at a glance without needing colour to explain it.
+
+The Expo screen writes `♥` and is fine, because React Native draws with the
+system font. The two clients differ here for a reason, not by neglect.
+
+## The server is a program, not a mode of an example
+
+`just serve` used to run the multiplayer TUI with `--serve`, which meant the
+server only existed inside a demo. It is `crates/server` now: an ordinary axum
+program with `get(petros_axum::sync::<HarkenApp>)` mounted on it and a
+`/healthz` beside it reading the same state.
+
+That is what a server built on Petros should look like, and it is the honest
+demonstration of the engine being sans-io — the whole thing is forty lines, and
+none of them are about sync.
+
+## The ORM went, because it described the schema a second time
+
+Reads went through Diesel's DSL and writes through checked SQL, which meant the
+tables were described twice: once as `diesel::table!`, once as the DDL in
+`schema.sql`. Nothing held those two together — `check_for_backend` verifies a
+model against `table!`, not against the database — and the half it could check
+was the half that mattered least, because `apply` compiles to wasm and has no
+Diesel in it to check.
+
+So the read model is `petros_sql::query!` now, like everything else. One
+description of the tables, one thing checking it, and it reaches both halves:
+renaming `artist` in `schema.sql` produces four compile errors, two from the
+mutations and two from the read model. Under the old arrangement it produced two
+and a query that still compiled.
+
+What was actually given up is small. `query!` returns a struct per row with a
+field per column, typed from what SQLite declares, so the mapping layer the ORM
+provided is generated rather than written. What is not given up is the type
+checking, which is the thing people mean when they defend an ORM.
+
+Petros still uses Diesel for its own three tables, and `petros::Connection` is
+still `diesel::SqliteConnection`. That is the engine's business. An app declares
+`App::SCHEMA` and `petros::batch` runs statements that take no parameters, so
+nothing above the engine has to name a database library at all.
+
+## The seed and the JSON encoder were never ours
+
+Both were copied into this app from the engine's example and were identical to
+it byte for byte. Neither was domain code.
+
+`Seed` expands one uuid into as many ids as a verb needs, which is a rule of
+`fill_auto`'s contract: it is the only place non-determinism is allowed, and
+everything after it must be a pure function of what it wrote. `from_json` is the
+other end of `mutations!` — the macro declares the verbs, petros-codegen emits
+the TypeScript that calls them, and that TypeScript sends JSON. The id
+convention was documented by the generator and implemented here, separately, in
+every app that existed.
+
+Both are `petros-schema` now, with tests the app never had: the expansion is
+pinned against a fixture, because what it produces goes into the log and is
+replayed forever.
+
+## A feature on a dependency line reaches the wasm build
+
+Asking for `petros-schema/author` beside `cbor` put serde_json and uuid in the
+module, even though `crates/harken-wasm` sets `default-features = false` on the
+domain crate. Features unify per target; turning a crate's own feature off does
+not withdraw one it asked of a dependency unconditionally.
+
+This is the same trap this log already records for `default-features` itself,
+and it fails the same quiet way: the module builds, it runs, and it is bigger.
+Size is the loop here, because Metro pushes the module on every save. The
+feature belongs in `storage` — the one the wasm build actually turns off — and
+`cargo tree -p harken-wasm --target wasm32-unknown-unknown` is how to check.

@@ -16,7 +16,7 @@
 //! makes it replaceable while the process runs.
 
 use ciborium::value::Value;
-use petros::{ActorId, App, AutoCtx, Connection, Mutation, MutationError, Transaction};
+use petros::{ActorId, App, AutoCtx, Mutation, MutationError, Transaction};
 use serde::{Deserialize, Serialize};
 
 use petros_wasm_host::MUTATORS;
@@ -96,16 +96,15 @@ impl Mutation for Payload {
 }
 
 /// The app, for a peer whose `apply` arrives as a file.
-pub struct WasmTodo;
+pub struct WasmHarken;
 
-impl App for WasmTodo {
+impl App for WasmHarken {
     type Mutation = Payload;
 
-    fn migrate(conn: &mut Connection) -> petros::Result<()> {
-        // One schema. Migrations are the one thing that should not arrive over
-        // the air, so they stay where every peer can see them.
-        <harken::TodoApp as App>::migrate(conn)
-    }
+    // One schema, and the linked crate's. Migrations are the one thing that
+    // should not arrive over the air, so they stay where every peer can see
+    // them — this peer replaces `apply`, not the shape of the database.
+    const SCHEMA: &'static str = <harken::HarkenApp as App>::SCHEMA;
 }
 
 /// Author a mutation by name, through the same encoder every peer uses.

@@ -1,0 +1,14 @@
+[package]
+name = "harken-server"
+version = "0.1.0"
+description = "The Harken sync server: an axum service with a Petros endpoint mounted on it."
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+axum = "0.8"
+harken = { workspace = true, features = ["storage"] }
+petros.workspace = true
+petros-axum.workspace = true
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal"] }

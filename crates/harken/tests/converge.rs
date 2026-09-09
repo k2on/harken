@@ -4,25 +4,30 @@
 //! point it at its own mutations. This is that: no sockets, no threads, no
 //! sleeps, and a seed that reproduces the run exactly.
 
-use harken::TodoApp;
+use harken::HarkenApp;
 use petros_testkit::Sim;
 
 #[test]
 fn the_domain_converges_when_peers_go_dark_and_come_back() {
-    let mut sim = Sim::<TodoApp>::new(19, 3);
+    let mut sim = Sim::<HarkenApp>::new(19, 3);
     for round in 0..3 {
         for i in 0..sim.clients() {
-            sim.mutate(i, harken::add(&format!("c{i}-{round}")));
+            sim.mutate(i, harken::add_song(&format!("c{i}-{round}"), "someone"));
             sim.step();
         }
     }
 
     sim.partition(2);
     for round in 0..4 {
-        sim.mutate(2, harken::add(&format!("dark-{round}")));
-        sim.mutate(0, harken::add(&format!("lit-{round}")));
+        sim.mutate(2, harken::add_song(&format!("dark-{round}"), "someone"));
+        sim.mutate(0, harken::add_song(&format!("lit-{round}"), "someone"));
         sim.step();
     }
+    // And the interesting one: both sides favourite while apart, so the
+    // playlist positions have to be recomputed rather than merged.
+    sim.mutate(0, harken::favorite_all());
+    sim.mutate(2, harken::favorite_all());
+    sim.step();
 
     // `settle` reconnects every client itself. The work authored while dark is
     // recovered only because a reconnecting client re-offers what it still has
@@ -35,8 +40,23 @@ fn the_domain_converges_when_peers_go_dark_and_come_back() {
     }
     assert_eq!(first, sim.server_hash(), "the server disagrees");
     assert_eq!(
-        harken::list(sim.conn(0)).unwrap().len(),
+        harken::library(sim.conn(0)).unwrap().len(),
         17,
         "9 shared + 4 dark + 4 lit, none lost and none duplicated"
+    );
+    let playlist = harken::favorites(sim.conn(0)).unwrap();
+    assert_eq!(
+        playlist.len(),
+        17,
+        "both FavoriteAll intents, merged by replay"
+    );
+    let places: Vec<i64> = playlist.iter().filter_map(|s| s.favorite_pos).collect();
+    let mut sorted = places.clone();
+    sorted.sort_unstable();
+    sorted.dedup();
+    assert_eq!(
+        places.len(),
+        sorted.len(),
+        "every song holds a distinct place in the playlist"
     );
 }

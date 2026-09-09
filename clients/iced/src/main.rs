@@ -1,23 +1,31 @@
-//! The same to-do list as the terminal examples, in iced, talking to the same
-//! server — on the desktop and in a browser.
+//! The Harken library, in iced — on the desktop and in a browser.
+//!
+//! One of two clients, and the other is `clients/expo`. They run the same
+//! `apply`: this one links it, the phone loads it as a module. Neither of them
+//! contains a line of domain logic.
 //!
 //!   terminal 1:  just serve
-//!   terminal 2:  just peer alice     # the TUI
-//!   terminal 3:  just iced bob       # this, on the desktop
+//!   terminal 2:  just iced alice     # this, on the desktop
+//!   terminal 3:  just iced bob       # …and again, as someone else
 //!   browser:     just web            # this, at http://localhost:8080
+//!   a phone:     the Expo app, same server
 //!
-//! All of them are peers of one server, so an item added in the browser appears
-//! in the TUI and the other way round. Press the offline button in any of them,
-//! mutate on both sides, come back online, and watch the rebase.
+//! All of them are peers of one server, so a song favourited in the browser
+//! hearts itself on the phone. Press the offline button in any of them, mutate
+//! on both sides, come back online, and watch the rebase: your favourite lands
+//! after whatever arrived while you were away, because "add to favourites"
+//! reads the end of the playlist rather than naming a position.
 //!
-//! The engine does not know which of the three it is running in. What differs
-//! is two lines: where the database lives, and which transport carries the
-//! bytes.
+//! The engine does not know which of these it is running in. What differs is
+//! two lines: where the database lives, and which transport carries the bytes.
+
+mod heart;
 
 use std::time::Duration;
 
-use harken::{self as mutators, list, Item, TodoApp};
-use iced::widget::{button, checkbox, column, container, row, scrollable, text, text_input};
+use harken::{self as mutators, library, HarkenApp, Song};
+use heart::Heart;
+use iced::widget::{button, canvas, column, container, row, scrollable, text, text_input};
 use iced::{Element, Length, Subscription, Task};
 use petros::{AutoCtx, Client, Id};
 
@@ -80,36 +88,42 @@ fn open(_user: &str) -> petros::Result<petros::Connection> {
 
 #[derive(Debug, Clone)]
 enum Message {
-    Typed(String),
-    Add,
-    Toggle(Id, bool),
-    Remove(Id),
+    TypedTitle(String),
+    TypedArtist(String),
+    AddSong,
+    AddAlbum,
+    /// The heart: on the playlist, or off it.
+    ToggleFavorite(Id, bool),
+    FavoriteAll,
+    RemoveSong(Id),
     ToggleLink,
     /// Pump the transport. Nothing else drives a sans-io client.
     Tick,
 }
 
 struct App {
-    client: Client<TodoApp>,
+    client: Client<HarkenApp>,
     link: Option<Link<harken::Payload>>,
     server: String,
     user: String,
     /// The materialised view and the pending count, refreshed after anything
     /// that could change them.
     ///
-    /// iced's `view` takes `&self` and Diesel needs `&mut` even to read, so the
-    /// query cannot happen during rendering. Keeping them here is the right
-    /// shape for iced anyway — and it is the seam reactive queries would fill.
-    items: Vec<Item>,
+    /// iced's `view` takes `&self` and a read needs `&mut` — SQLite advances a
+    /// statement to produce rows — so the query cannot happen during rendering.
+    /// Keeping them here is the right shape for iced anyway, and it is the seam
+    /// reactive queries would fill.
+    songs: Vec<Song>,
     pending: usize,
-    input: String,
+    title: String,
+    artist: String,
     note: String,
 }
 
 impl App {
     fn boot() -> Self {
         let (user, server) = config();
-        let client = Client::<TodoApp>::open(
+        let client = Client::<HarkenApp>::open(
             open(&user).expect("open the database"),
             user.clone(),
             AutoCtx::system(),
@@ -120,9 +134,10 @@ impl App {
             link: None,
             server,
             user,
-            items: Vec::new(),
+            songs: Vec::new(),
             pending: 0,
-            input: String::new(),
+            title: String::new(),
+            artist: String::new(),
             note: String::new(),
         };
         app.connect();
@@ -145,7 +160,7 @@ impl App {
     }
 
     fn refresh(&mut self) {
-        self.items = list(self.client.conn()).unwrap_or_default();
+        self.songs = library(self.client.conn()).unwrap_or_default();
         self.pending = self.client.pending_len();
     }
 
@@ -184,26 +199,40 @@ impl App {
 
     fn update(&mut self, message: Message) -> Task<Message> {
         // Typing, ticking and pulling the plug all leave the list alone.
-        let edited = matches!(
+        let edited = !matches!(
             message,
-            Message::Add | Message::Toggle(..) | Message::Remove(_)
+            Message::TypedTitle(_) | Message::TypedArtist(_) | Message::ToggleLink | Message::Tick
         );
         let outcome = match message {
-            Message::Typed(text) => {
-                self.input = text;
+            Message::TypedTitle(text) => {
+                self.title = text;
                 Ok(())
             }
-            Message::Add => {
-                let text = std::mem::take(&mut self.input);
-                self.client.mutate(mutators::add(&text)).map(|_| ())
+            Message::TypedArtist(text) => {
+                self.artist = text;
+                Ok(())
             }
-            Message::Toggle(id, done) => self
+            Message::AddSong => {
+                let title = std::mem::take(&mut self.title);
+                let artist = std::mem::take(&mut self.artist);
+                self.client
+                    .mutate(mutators::add_song(&title, &artist))
+                    .map(|_| ())
+            }
+            Message::AddAlbum => self.client.mutate(mutators::add_album()).map(|_| ()),
+            Message::ToggleFavorite(id, favorited) => {
+                let bytes = *id.as_uuid().as_bytes();
+                let m = if favorited {
+                    mutators::unfavorite(&bytes)
+                } else {
+                    mutators::favorite(&bytes)
+                };
+                self.client.mutate(m).map(|_| ())
+            }
+            Message::FavoriteAll => self.client.mutate(mutators::favorite_all()).map(|_| ()),
+            Message::RemoveSong(id) => self
                 .client
-                .mutate(mutators::set_done(id.as_uuid().as_bytes(), done))
-                .map(|_| ()),
-            Message::Remove(id) => self
-                .client
-                .mutate(mutators::remove(id.as_uuid().as_bytes()))
+                .mutate(mutators::remove_song(id.as_uuid().as_bytes()))
                 .map(|_| ()),
             Message::ToggleLink => {
                 match self.link {
@@ -231,13 +260,39 @@ impl App {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        let rows = self.items.iter().fold(column![].spacing(6), |col, item| {
+        let rows = self.songs.iter().fold(column![].spacing(6), |col, song| {
+            let favorited = song.favorited();
             col.push(
                 row![
-                    checkbox(item.done).on_toggle(move |done| Message::Toggle(item.id, done)),
-                    text(item.text.clone()).width(Length::Fill),
-                    text(item.actor.clone()).size(12),
-                    button("remove").on_press(Message::Remove(item.id)),
+                    // The heart is a button wrapping a canvas rather than a
+                    // label: the font has no heart in it, so a character would
+                    // draw nothing. See `heart.rs`.
+                    button(
+                        canvas(Heart { filled: favorited })
+                            .width(Heart::SIZE)
+                            .height(Heart::SIZE)
+                    )
+                    .style(button::text)
+                    .padding(4)
+                    .on_press(Message::ToggleFavorite(song.id, favorited)),
+                    column![
+                        text(song.title.clone()),
+                        text(song.artist.clone()).size(12).style(text::secondary),
+                    ]
+                    .spacing(2)
+                    .width(Length::Fill),
+                    // Where it sits in the playlist, which is the number that
+                    // moves when someone else favourites something first.
+                    text(match song.favorite_pos {
+                        Some(pos) => format!("#{pos}"),
+                        None => String::new(),
+                    })
+                    .size(12)
+                    .style(text::secondary),
+                    text(song.actor.clone()).size(12).style(text::secondary),
+                    button("remove")
+                        .style(button::text)
+                        .on_press(Message::RemoveSong(song.id)),
                 ]
                 .spacing(12)
                 .align_y(iced::Alignment::Center),
@@ -245,11 +300,21 @@ impl App {
         });
 
         let entry = row![
-            text_input("a new to-do…", &self.input)
-                .on_input(Message::Typed)
-                .on_submit(Message::Add)
+            text_input("title…", &self.title)
+                .on_input(Message::TypedTitle)
+                .on_submit(Message::AddSong)
                 .width(Length::Fill),
-            button("add").on_press(Message::Add),
+            text_input("artist…", &self.artist)
+                .on_input(Message::TypedArtist)
+                .on_submit(Message::AddSong)
+                .width(Length::Fill),
+            button("add").on_press(Message::AddSong),
+        ]
+        .spacing(12);
+
+        let actions = row![
+            button("add an album").on_press(Message::AddAlbum),
+            button("favourite everything").on_press(Message::FavoriteAll),
             button(if self.link.is_some() {
                 "go offline"
             } else {
@@ -262,14 +327,16 @@ impl App {
         // The engine showing through: `cursor` is how much of the server's log
         // has been applied, `pending` is what this peer has done that no server
         // has confirmed yet.
+        let favorites = self.songs.iter().filter(|s| s.favorited()).count();
         let status = text(format!(
-            "{} · {} · cursor {} · {} pending{}",
+            "{} · {} · {} songs, {favorites} favourited · cursor {} · {} pending{}",
             self.user,
             if self.link.is_some() {
                 "online"
             } else {
                 "offline"
             },
+            self.songs.len(),
             self.client.cursor(),
             self.pending,
             if self.note.is_empty() {
@@ -282,8 +349,9 @@ impl App {
 
         container(
             column![
-                text("petros · to-do").size(26),
+                text("harken").size(26),
                 entry,
+                actions,
                 scrollable(rows).height(Length::Fill),
                 status,
             ]
@@ -305,7 +373,7 @@ pub fn main() -> iced::Result {
 
     iced::application(App::boot, App::update, App::view)
         .subscription(App::subscription)
-        .title("petros · to-do")
+        .title("harken")
         .window_size((860.0, 600.0))
         .run()
 }

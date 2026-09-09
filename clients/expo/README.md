@@ -1,8 +1,8 @@
-# petros · expo
+# harken · expo
 
 A peer of the same Petros server the terminal and desktop examples join, on a
 phone. The first screen asks who you are and which server to talk to; the second
-is the to-do list.
+is the music library.
 
 ## There is no domain logic in this directory
 
@@ -16,7 +16,7 @@ src/peer.ts           a WebSocket and a 50ms pump
 src/theme.ts          eight colours
 ```
 
-Everything else — what a to-do is, what `add` means, how `pos` is computed, what
+Everything else — what a song is, what favouriting means, how `pos` is computed, what
 the wire format is, when a mutation is refused, how the rebase works — lives in
 `crates/harken` and reaches here through `crates/ffi` as generated bindings. A
 second `apply` in a second language is two definitions of the same thing, and
