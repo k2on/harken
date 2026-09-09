@@ -21,14 +21,15 @@
 //! back out of the compiled library:
 //!
 //! ```text
-//! just ffi-bindings
+//! just bindings
 //! ```
 
 use std::sync::Mutex;
 
 pub use crate::wasm_app::WasmHarken;
 
-use crate::{favorites, library, FfiSong};
+use crate::foreign::Song;
+use crate::{favorites, library};
 use petros::{decode, encode, AutoCtx, Client, MutationError, ServerMsg};
 
 /// A mutation the server refused. Not a failure: a deterministic verdict every
@@ -69,8 +70,8 @@ impl From<petros::Error> for HarkenError {
 ///
 /// `Client` owns a SQLite connection, which is `Send` but not `Sync`, and a
 /// read needs `&mut` like a write does — so every method here takes the lock.
-/// That is not a concession to the FFI: the iced client serialises access the
-/// same way, because the optimistic savepoint means there is only ever one
+/// That is not a concession to the boundary: the iced client serialises access
+/// the same way, because the optimistic savepoint means there is only ever one
 /// coherent view to read.
 #[derive(uniffi::Object)]
 pub struct HarkenClient {
@@ -178,18 +179,13 @@ impl HarkenClient {
 
     /// The whole library: confirmed replayed, then this peer's pending
     /// mutations on top. Always ordered explicitly.
-    pub fn library(&self) -> Result<Vec<FfiSong>, HarkenError> {
-        self.with(|c| Ok(library(c.conn())?.into_iter().map(FfiSong::from).collect()))
+    pub fn library(&self) -> Result<Vec<Song>, HarkenError> {
+        self.with(|c| Ok(library(c.conn())?.into_iter().map(Song::from).collect()))
     }
 
     /// Just the favourites, in playlist order.
-    pub fn favorites(&self) -> Result<Vec<FfiSong>, HarkenError> {
-        self.with(|c| {
-            Ok(favorites(c.conn())?
-                .into_iter()
-                .map(FfiSong::from)
-                .collect())
-        })
+    pub fn favorites(&self) -> Result<Vec<Song>, HarkenError> {
+        self.with(|c| Ok(favorites(c.conn())?.into_iter().map(Song::from).collect()))
     }
 
     /// How much of the server's log has been applied.

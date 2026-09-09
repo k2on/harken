@@ -29,8 +29,8 @@ crates/harken/           the domain — the ONLY apply
   tests/converge.rs      the domain against a simulated fleet
   tests/read_model.rs    library() and favorites() against rows apply wrote
   src/lib.rs             …and, under `cfg(wasm32)`, the module's ABI
-  src/ffi.rs             the phone's client over UniFFI  (feature `ffi`)
-  src/wasm_app.rs        the App whose `apply` is a module (feature `ffi`)
+  src/foreign_client.rs  the client a foreign caller sees (feature `foreign`)
+  src/wasm_app.rs        the App whose `apply` is a module (feature `foreign`)
 crates/server/           axum, with one Petros handler mounted on it
 clients/iced/            the desktop and browser client
   src/heart.rs           the heart, drawn as a path (see below)
@@ -54,7 +54,7 @@ just serve        # the sync server…
 just iced alice   # …a desktop peer…
 just iced bob     # …and another, to watch them sync
 just web          # …a browser peer, at localhost:8080
-just ffi-bindings # regenerate the Expo client's TS from crates/harken
+just bindings     # regenerate the Expo client's TS from crates/harken
 just expo-android # …and a phone. Needs `nix develop .#android`.
 ```
 
@@ -92,18 +92,19 @@ between them is where `petros-codegen` comes from: the checkout beside this one
 when there is one, so an engine edit needs no commit, and the published branch
 otherwise, because a build container has no sibling directory.
 
-## The FFI is a feature, not a package
+## The bindings are a feature, not a package
 
-`src/ffi.rs` exports the phone's client, and `ubrn.config.yaml` builds this crate
-with `cargoExtras: [--features, ffi]`. Off by default, so `cargo tree -e normal`
-finds no uniffi and no wasmi in the desktop client, the server, or the module.
+`src/foreign_client.rs` exports the client a foreign caller sees, and
+`ubrn.config.yaml` builds this crate with `cargoExtras: [--features, foreign]`.
+Off by default, so `cargo tree -e normal` finds no uniffi and no wasmi in the
+desktop client, the server, or the wasm module.
 
-There are still two structs — `Song` for Rust and `FfiSong` for the boundary,
+There are two `Song` structs — the row, and `foreign::Song` for the boundary —
 because `Song.id` is a `petros::Id` and UniFFI cannot be taught a foreign type
-without `impl FfiConverter for Id`, which the orphan rule refuses. But there is
-one declaration: `petros_schema::ffi_row!` in `storage.rs` emits both and the
-`From` between them. Add a field and the record gains it; the doc comments reach
-the generated TypeScript too.
+without `impl FfiConverter for Id`, which the orphan rule refuses. There is one
+declaration: `petros_schema::row!` in `storage.rs` emits both, the `From`
+between them, and the `#[cfg]` on the far half. `domain.rs` and `storage.rs`
+never mention bindings; the doc comments reach the generated TypeScript.
 
 ## The heart is a path on the desktop and a character on the phone
 

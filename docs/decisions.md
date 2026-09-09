@@ -228,12 +228,18 @@ Two structs survive. `FfiSong` is a near-copy of `Song` because `Song.id` is a
 rule refuses; `uniffi::custom_type!` expands to exactly that impl and does not
 compile, and `#[uniffi::remote]` re-declares a shape rather than mapping one.
 
-Two *declarations* did not have to survive, and do not. `petros_schema::ffi_row!`
+Two *declarations* did not have to survive, and do not. `petros_schema::row!`
 takes one and emits both, plus the `From` between them: fields cross unchanged
 unless told otherwise, a field that differs states the far type and how to get
 there, and a field that exists only on the far side states how to compute it.
 The doc comments reach the generated TypeScript, which is the part that makes it
 worth doing rather than merely tidy.
+
+The macro also owns the far name and the `#[cfg]`, so the declaration is domain
+and nothing else — `grep -i ffi` over `domain.rs` and `storage.rs` finds
+nothing. The record is `foreign::Song` in a generated module rather than a
+suffixed name, because macro_rules cannot build an identifier and a module needs
+no `paste` dependency; it also means the generated TypeScript says `Song`.
 
 ## One script, three callers
 

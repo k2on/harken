@@ -2,7 +2,7 @@
 //! the module, the module writes the row, and swapping the module mid-session
 //! changes what the next mutation does without disturbing the database.
 
-use harken::ffi::HarkenClient;
+use harken::foreign_client::HarkenClient;
 
 const MODULE: &[u8] = harken::wasm_app::BUNDLED;
 
@@ -74,7 +74,7 @@ fn the_client_runs_the_module() {
 /// can be authored without any Rust function naming it, and therefore without a
 /// new uniffi export or a native build.
 #[test]
-fn a_verb_the_ffi_never_heard_of() {
+fn a_verb_the_client_never_heard_of() {
     let dir = std::env::temp_dir().join(format!("petros-generic-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();

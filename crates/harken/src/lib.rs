@@ -29,12 +29,12 @@ pub use storage::*;
 // and the server never build it.
 // At the crate root because that is where it defines `UniFfiTag`, which every
 // `#[derive(uniffi::…)]` in this crate resolves against.
-#[cfg(feature = "ffi")]
+#[cfg(feature = "foreign")]
 uniffi::setup_scaffolding!();
 
-#[cfg(feature = "ffi")]
-pub mod ffi;
-#[cfg(feature = "ffi")]
+#[cfg(feature = "foreign")]
+pub mod foreign_client;
+#[cfg(feature = "foreign")]
 pub mod wasm_app;
 
 // The wasm ABI: `apply` and `fill_auto` behind the entry points the interpreter

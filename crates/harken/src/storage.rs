@@ -20,9 +20,9 @@ use petros::backend::SqliteStore;
 use petros::{ActorId, App, AutoCtx, Connection, Id, Mutation, MutationError, Transaction};
 use serde::{Deserialize, Serialize};
 
-petros_schema::ffi_row! {
+petros_schema::row! {
     /// A song, and where it sits in the favourites playlist if it is on it.
-    Song => #[cfg(feature = "ffi")] FfiSong {
+    Song => {
         /// Sixteen bytes in SQLite and in the log. The canonical 8-4-4-4-12
         /// string on the far side, because that is what a foreign caller can
         /// hold, compare and use as a list key.
@@ -46,7 +46,7 @@ petros_schema::ffi_row! {
         /// meaning stays on this side of the boundary rather than in the
         /// TypeScript reading it.
         favorited: bool = |row| row.favorite_pos.is_some(),
-    }
+    };
 }
 
 impl Song {

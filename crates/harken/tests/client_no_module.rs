@@ -6,7 +6,7 @@
 //! That makes "nothing is loaded yet" a state only a fresh process can observe,
 //! and cargo gives each test file one.
 
-use harken::ffi::HarkenClient;
+use harken::foreign_client::HarkenClient;
 
 #[test]
 fn mutating_without_a_module_is_refused_rather_than_ignored() {

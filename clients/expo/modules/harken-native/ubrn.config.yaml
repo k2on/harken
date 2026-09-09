@@ -5,7 +5,7 @@
 # package. That is the whole point: the mutations and the queries have one
 # definition, and everything a foreign caller sees is generated from it.
 #
-# `cargoExtras: --features ffi` is what makes that possible. The binding layer
+# `cargoExtras: --features foreign` is what makes that possible. The binding layer
 # is a feature of the domain crate rather than a crate of its own, and it is off
 # by default so the desktop client and the server do not build uniffi and a wasm
 # interpreter to reach the same `apply`.
@@ -28,7 +28,7 @@ android:
   apiLevel: 24
   cargoExtras:
     - --features
-    - ffi
+    - foreign
 
 ios:
   directory: ios
@@ -37,4 +37,4 @@ ios:
     - aarch64-apple-ios-sim
   cargoExtras:
     - --features
-    - ffi
+    - foreign

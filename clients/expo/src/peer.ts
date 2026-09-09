@@ -14,10 +14,7 @@ import { useEffect, useMemo } from 'react';
 import { AppState } from 'react-native';
 import { Paths } from 'expo-file-system';
 import { usePeer as usePetrosPeer } from '@petros/client/react';
-// `FfiSong` aliased to `Song`: the Rust name says what it is — the record that
-// crosses the boundary, a near-copy of `harken::Song` that the orphan rule makes
-// unavoidable — and this side only ever needs the one name.
-import { HarkenClient, type HarkenClientLike, type FfiSong as Song } from 'harken-native';
+import { HarkenClient, type HarkenClientLike, type Song } from 'harken-native';
 
 import { install, watch } from './mutators';
 // Generated from the module's own schema section by `just mutators`. A call

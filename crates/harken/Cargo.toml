@@ -21,13 +21,16 @@ storage = ["dep:petros", "dep:serde", "dep:serde_json", "petros-schema/author"]
 # A transport, for a client that runs. The domain itself has no opinion about
 # sockets and neither does the engine.
 ws = ["storage", "petros/ws"]
-# The phone's client, over UniFFI. Off by default: it is one client's binding
-# layer, and the desktop client and the server should not build uniffi or a
-# wasm interpreter to get at the same domain.
+# The client a foreign caller sees, over UniFFI. Off by default: it is one
+# client's binding layer, and the desktop client and the server should not build
+# uniffi or a wasm interpreter to reach the same domain.
 #
-# Proc-macro mode, so there is no UDL file — the Rust in `src/ffi.rs` *is* the
+# The name is not free: `petros_schema::row!` generates its `foreign` module
+# behind `#[cfg(feature = "foreign")]`, evaluated in this crate.
+#
+# Proc-macro mode, so there is no UDL file — `src/foreign_client.rs` *is* the
 # interface definition, which is the point: no second place to keep in step.
-ffi = ["storage", "dep:petros-wasm-host", "dep:thiserror", "dep:uniffi"]
+foreign = ["storage", "dep:petros-wasm-host", "dep:thiserror", "dep:uniffi"]
 
 [lib]
 # `cdylib` for the module the phone loads. Listed unconditionally because Cargo
@@ -55,8 +58,8 @@ uniffi = { workspace = true, optional = true }
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 petros-wasm-guest.workspace = true
 
-# The FFI tests need the feature they test; cargo has no way to say that on a
-# test target, so `just test` passes --all-features and this is why.
+# The client tests need the feature they test; cargo has no way to say that on
+# a test target, so `just test` passes --all-features and this is why.
 [dev-dependencies]
 # The app tests its own domain the way the engine tests itself: two builds of
 # one `apply` compared row by row, and a simulated fleet it has to converge on.
