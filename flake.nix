@@ -144,6 +144,8 @@
               # triples, and drops the result where gradle looks for it.
               cargo-ndk
               jdk17
+              # `eas build --local` shells out to these.
+              jq
             ];
 
             shellHook = ''

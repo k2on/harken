@@ -31,6 +31,12 @@ app="$PWD"
 
 case "$stage" in
   pre)
+    # A runner inside the devshell already has all of this from the flake, and
+    # a local build there would otherwise spend three minutes reinstalling it.
+    if command -v cargo >/dev/null && command -v cargo-ndk >/dev/null; then
+      echo "--- rust already present: $(rustc --version)"
+      exit 0
+    fi
     echo "--- installing Rust for $(uname -m)"
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
       | sh -s -- -y --default-toolchain none --profile minimal --no-modify-path
