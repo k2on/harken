@@ -33,14 +33,20 @@ ciborium = "0.2"
 # picks up edits without a commit. It is gitignored, which is what makes a fresh
 # clone — and EAS — get the pinned engine instead.
 #
-# Moving the pin means moving all seven, which `just engine <rev>` does.
-petros = { git = "https://github.com/k2on/petros", rev = "118374a0f36e70cbecd31234e612c9789d1fe690" }
-petros-wasm-host = { git = "https://github.com/k2on/petros", rev = "118374a0f36e70cbecd31234e612c9789d1fe690" }
-petros-schema = { git = "https://github.com/k2on/petros", rev = "118374a0f36e70cbecd31234e612c9789d1fe690" }
-petros-sql = { git = "https://github.com/k2on/petros", rev = "118374a0f36e70cbecd31234e612c9789d1fe690" }
-petros-testkit = { git = "https://github.com/k2on/petros", rev = "118374a0f36e70cbecd31234e612c9789d1fe690" }
-petros-wasm-guest = { git = "https://github.com/k2on/petros", rev = "118374a0f36e70cbecd31234e612c9789d1fe690" }
-petros-axum = { git = "https://github.com/k2on/petros", rev = "118374a0f36e70cbecd31234e612c9789d1fe690" }
+# Moving the pin means moving all seven, which `just engine <rev>` does. Verify
+# it the way a build container will, with the patch out of the way:
+#
+#     mv .cargo/config.toml /tmp/ && cargo test --workspace --all-features
+#
+# A branch whose engine changes is broken for everyone but the person who has
+# both checkouts, and the local patch hides that perfectly.
+petros = { git = "https://github.com/k2on/petros", rev = "e423866e578174f480642b39fa506138ca31c1a7" }
+petros-wasm-host = { git = "https://github.com/k2on/petros", rev = "e423866e578174f480642b39fa506138ca31c1a7" }
+petros-schema = { git = "https://github.com/k2on/petros", rev = "e423866e578174f480642b39fa506138ca31c1a7" }
+petros-sql = { git = "https://github.com/k2on/petros", rev = "e423866e578174f480642b39fa506138ca31c1a7" }
+petros-testkit = { git = "https://github.com/k2on/petros", rev = "e423866e578174f480642b39fa506138ca31c1a7" }
+petros-wasm-guest = { git = "https://github.com/k2on/petros", rev = "e423866e578174f480642b39fa506138ca31c1a7" }
+petros-axum = { git = "https://github.com/k2on/petros", rev = "e423866e578174f480642b39fa506138ca31c1a7" }
 harken = { path = "crates/harken", default-features = false }
 # `fira-sans` embeds a default font. Without it iced asks the system for
 # one, which works on a desktop and gets you nothing at all in a browser:
