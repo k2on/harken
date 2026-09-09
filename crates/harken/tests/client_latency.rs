@@ -240,6 +240,7 @@ fn maintained_against_re_read_on_the_client_path() {
             view.hydrate(&mut store);
         }
         let _ = client.take_changes();
+        let mut rendered = harken::songs_of(&view);
 
         let (mut fresh, mut kept) = (vec![], vec![]);
         for i in 0..30 {
@@ -251,15 +252,20 @@ fn maintained_against_re_read_on_the_client_path() {
             let t = Instant::now();
             match changes {
                 Changes::Applied(changes) => {
-                    let mut store = client.store();
-                    view.apply(&mut store, &changes);
+                    let patches = {
+                        let mut store = client.store();
+                        view.apply(&mut store, &changes)
+                    };
+                    harken::patch(&mut rendered, &patches);
                 }
                 Changes::Rebuilt => {
-                    let mut store = client.store();
-                    view.hydrate(&mut store);
+                    {
+                        let mut store = client.store();
+                        view.hydrate(&mut store);
+                    }
+                    rendered = harken::songs_of(&view);
                 }
             }
-            let _ = harken::songs_of(&view);
             kept.push(t.elapsed().as_secs_f64() * 1000.0);
 
             let t = Instant::now();

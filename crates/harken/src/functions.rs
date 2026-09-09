@@ -206,9 +206,38 @@ pub fn library_view() -> LibraryView {
 }
 
 /// Read a maintained view the way `library` reads a fetched one.
+///
+/// Every row, decoded. For the steady state prefer [`patch`], which touches
+/// only the rows that moved — this one is for a fresh hydrate.
 #[cfg(feature = "storage")]
 pub fn songs_of(view: &LibraryView) -> Vec<Song> {
     view.with::<Favorite>().iter().map(song_of).collect()
+}
+
+/// Bring a list a screen holds up to date with what a view just did.
+///
+/// Maintaining the query and then decoding every row again is still O(n), and
+/// past a few hundred songs that decode is most of what is left. These are the
+/// entries that moved, in the order they moved, so the rest are not touched.
+#[cfg(feature = "storage")]
+pub fn patch(songs: &mut Vec<Song>, patches: &[petros::ivm::Patch]) {
+    for change in patches {
+        match change {
+            petros::ivm::Patch::Insert { at, node } => {
+                if let Some(song) = node.decode::<SongRow, Favorite>().as_ref().map(song_of) {
+                    songs.insert(*at, song);
+                }
+            }
+            petros::ivm::Patch::Remove { at } => {
+                songs.remove(*at);
+            }
+            petros::ivm::Patch::Update { at, node } => {
+                if let Some(song) = node.decode::<SongRow, Favorite>().as_ref().map(song_of) {
+                    songs[*at] = song;
+                }
+            }
+        }
+    }
 }
 
 /// The favourites playlist, in playlist order.

@@ -179,9 +179,13 @@ impl App {
         match self.client.take_changes() {
             Changes::Applied(changes) if changes.is_empty() => {}
             Changes::Applied(changes) => {
-                let mut store = self.client.store();
-                self.library.apply(&mut store, &changes);
-                self.songs = harken::songs_of(&self.library);
+                let patches = {
+                    let mut store = self.client.store();
+                    self.library.apply(&mut store, &changes)
+                };
+                // Splice rather than rebuild: the query is maintained, and so
+                // is the decoded list. A tap costs the rows that moved.
+                harken::patch(&mut self.songs, &patches);
             }
             Changes::Rebuilt => {
                 let mut store = self.client.store();

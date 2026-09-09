@@ -60,3 +60,97 @@ fn library_and_favorites_agree_with_what_apply_wrote() {
     assert_eq!(harken::library(&mut c.store()).unwrap().len(), 3);
     assert_eq!(harken::favorites(&mut c.store()).unwrap().len(), 1);
 }
+
+/// The maintained library has to say exactly what the read one says, and the
+/// list a screen holds has to say exactly what the view says.
+///
+/// This is what the iced client depends on: it hydrates once at boot, is told
+/// what changed after that, and splices its own `Vec<Song>` from the patches.
+/// If any of the three drift the screen is wrong and nothing else notices.
+#[test]
+fn the_maintained_library_agrees_with_the_read_one() {
+    use petros::Changes;
+
+    let mut client = petros::Client::<harken::HarkenApp>::open(
+        petros::open_memory().unwrap(),
+        "alice",
+        petros::AutoCtx::seeded(7),
+    )
+    .unwrap();
+
+    let mut view = harken::library_view();
+    {
+        let mut store = client.store();
+        view.hydrate(&mut store);
+    }
+    let _ = client.take_changes();
+    // The rendered list, decoded once and spliced from then on.
+    let mut rendered = harken::songs_of(&view);
+
+    fn shown(songs: &[harken::Song]) -> Vec<(String, bool, i64)> {
+        songs
+            .iter()
+            .map(|s| (s.title.clone(), s.favorited(), s.pos))
+            .collect()
+    }
+
+    let mut settle = |client: &mut petros::Client<harken::HarkenApp>,
+                      view: &mut harken::LibraryView,
+                      rendered: &mut Vec<harken::Song>| {
+        match client.take_changes() {
+            Changes::Applied(changes) => {
+                let patches = {
+                    let mut store = client.store();
+                    view.apply(&mut store, &changes)
+                };
+                harken::patch(rendered, &patches);
+            }
+            Changes::Rebuilt => {
+                {
+                    let mut store = client.store();
+                    view.hydrate(&mut store);
+                }
+                *rendered = harken::songs_of(view);
+            }
+        }
+        let read = harken::library(&mut client.store()).unwrap();
+        assert_eq!(shown(rendered), shown(&harken::songs_of(view)), "spliced");
+        assert_eq!(shown(rendered), shown(&read), "against a re-read");
+    };
+
+    for title in ["Glue", "Apricots", "Opal"] {
+        client
+            .mutate(harken::add_song(title.into(), "Bicep".into()))
+            .unwrap();
+        settle(&mut client, &mut view, &mut rendered);
+    }
+
+    let opal = harken::library(&mut client.store()).unwrap()[2]
+        .id
+        .0
+        .as_bytes()
+        .to_vec();
+    client.mutate(harken::favorite(opal.clone())).unwrap();
+    settle(&mut client, &mut view, &mut rendered);
+    assert!(
+        rendered[2].favorited(),
+        "hearting reached the rendered list"
+    );
+
+    client.mutate(harken::unfavorite(opal)).unwrap();
+    settle(&mut client, &mut view, &mut rendered);
+    assert!(!rendered[2].favorited());
+
+    client.mutate(harken::favorite_all()).unwrap();
+    settle(&mut client, &mut view, &mut rendered);
+    assert!(rendered.iter().all(|s| s.favorited()));
+
+    let glue = harken::library(&mut client.store()).unwrap()[0]
+        .id
+        .0
+        .as_bytes()
+        .to_vec();
+    client.mutate(harken::remove_song(glue)).unwrap();
+    settle(&mut client, &mut view, &mut rendered);
+    assert_eq!(rendered.len(), 2);
+}

@@ -312,24 +312,28 @@ view, produce the list a screen renders:
        1000      1.402 ms      0.224 ms     6.3x
 ```
 
-Six times, not the eighty-seven the engine's own microbenchmark shows for the
-same query. The difference is the honest part: **the query is maintained, the
-list is not.** `songs_of` decodes every row of the view into a `Song` on every
-call, which is O(n) whatever the query costs, and at a thousand songs it is now
-almost all of the 0.224ms.
+Six times, and the cost still grew with the library. That was the interesting
+part rather than the good part: **the query was maintained and the list was
+not.** `songs_of` decoded every row into a `Song` on every call — O(n) whatever
+the query costs — and at a thousand songs it was almost all of the 0.224ms.
 
-That is fine here and is deliberately not being fixed. A quarter of a
-millisecond is nothing next to what iced then does with the list, and the
-alternative — the view handing back deltas so the client splices its own
-`Vec<Song>` — is a real API with a real cost in complexity.
+So the view reports what it did to its own list, as positions, and the client
+splices instead of rebuilding:
 
-Where it *will* matter is the phone, and for a different reason: there the list
-crosses the UniFFI bridge on every change, and maintaining the query saves the
-SQL while the bridge cost stays. So the phone wants the same delta-level API for
-a stronger reason than the desktop does, and it should be designed once, after
-the bridge is measured rather than before.
+```
+      songs       re-read    maintained    ratio
+         10      0.165 ms      0.026 ms     6.5x
+        100      0.349 ms      0.019 ms    18.3x
+       1000      1.360 ms      0.009 ms   160.0x
+```
 
-The engine side of it is ready: a module's writes report what they changed now,
-collected across the whole apply rather than lost when each host request's store
-was dropped. So a phone can maintain a view whenever the rest of it is worth
-building.
+Flat. That is the property, not the ratio — the cost is the rows that moved,
+and a thousand songs is the same tap as ten.
+
+The same patches are what the phone will want, for a stronger reason: there the
+whole list crosses the UniFFI bridge on every change, so a maintained query
+alone would save the SQL and leave the expensive half. The engine side is ready
+— a module's writes report what they changed now, collected across the whole
+apply rather than lost when each host request's store was dropped — but the
+bridge has not been measured on a device, and designing for it before measuring
+is how the O(n) decode got missed the first time.
