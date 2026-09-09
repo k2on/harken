@@ -163,3 +163,33 @@ Petros still uses Diesel for its own three tables, and `petros::Connection` is
 still `diesel::SqliteConnection`. That is the engine's business. An app declares
 `App::SCHEMA` and `petros::batch` runs statements that take no parameters, so
 nothing above the engine has to name a database library at all.
+
+## The seed and the JSON encoder were never ours
+
+Both were copied into this app from the engine's example and were identical to
+it byte for byte. Neither was domain code.
+
+`Seed` expands one uuid into as many ids as a verb needs, which is a rule of
+`fill_auto`'s contract: it is the only place non-determinism is allowed, and
+everything after it must be a pure function of what it wrote. `from_json` is the
+other end of `mutations!` — the macro declares the verbs, petros-codegen emits
+the TypeScript that calls them, and that TypeScript sends JSON. The id
+convention was documented by the generator and implemented here, separately, in
+every app that existed.
+
+Both are `petros-schema` now, with tests the app never had: the expansion is
+pinned against a fixture, because what it produces goes into the log and is
+replayed forever.
+
+## A feature on a dependency line reaches the wasm build
+
+Asking for `petros-schema/author` beside `cbor` put serde_json and uuid in the
+module, even though `crates/harken-wasm` sets `default-features = false` on the
+domain crate. Features unify per target; turning a crate's own feature off does
+not withdraw one it asked of a dependency unconditionally.
+
+This is the same trap this log already records for `default-features` itself,
+and it fails the same quiet way: the module builds, it runs, and it is bigger.
+Size is the loop here, because Metro pushes the module on every save. The
+feature belongs in `storage` — the one the wasm build actually turns off — and
+`cargo tree -p harken-wasm --target wasm32-unknown-unknown` is how to check.
