@@ -28,54 +28,8 @@ use std::sync::Mutex;
 
 pub use crate::wasm_app::WasmHarken;
 
-use crate::{favorites, library, Song};
+use crate::{favorites, library, FfiSong};
 use petros::{decode, encode, AutoCtx, Client, MutationError, ServerMsg};
-
-/// One song, as it crosses to JavaScript.
-///
-/// A near-copy of [`crate::Song`], which is not ideal and is not avoidable:
-/// `Song.id` is a `petros::Id`, and teaching UniFFI to carry a foreign type
-/// needs `impl FfiConverter for Id` — a foreign trait on a foreign type, which
-/// the orphan rule refuses. `#[uniffi::remote]` re-declares a shape rather than
-/// mapping one, so it does not help either.
-///
-/// What that costs is one `From` impl, checked by the compiler: add a field to
-/// `crate::Song` and this stops compiling until it is carried across.
-#[derive(Debug, Clone, uniffi::Record)]
-pub struct FfiSong {
-    /// The canonical 8-4-4-4-12 form. Sixteen bytes in SQLite and in the log; a
-    /// string here because that is what a foreign caller can hold, compare and
-    /// use as a list key.
-    pub id: String,
-    pub title: String,
-    pub artist: String,
-    /// Recomputed on every replay from `MAX(pos) + 1`, which is what makes the
-    /// rebase visible: a song added while offline moves down as confirmed
-    /// entries land underneath it.
-    pub pos: i64,
-    pub added_ms: i64,
-    pub actor: String,
-    pub favorited: bool,
-    /// Its place in the favourites playlist, or -1 when it is not on it.
-    /// Positions start at 1, so the sentinel is unambiguous and the record stays
-    /// flat across the boundary.
-    pub favorite_pos: i64,
-}
-
-impl From<Song> for FfiSong {
-    fn from(song: Song) -> Self {
-        FfiSong {
-            favorited: song.favorited(),
-            favorite_pos: song.favorite_pos.unwrap_or(-1),
-            id: song.id.to_string(),
-            title: song.title,
-            artist: song.artist,
-            pos: song.pos,
-            added_ms: song.added_ms,
-            actor: song.actor,
-        }
-    }
-}
 
 /// A mutation the server refused. Not a failure: a deterministic verdict every
 /// replica would have reached identically.

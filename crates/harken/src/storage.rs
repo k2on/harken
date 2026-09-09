@@ -20,20 +20,33 @@ use petros::backend::SqliteStore;
 use petros::{ActorId, App, AutoCtx, Connection, Id, Mutation, MutationError, Transaction};
 use serde::{Deserialize, Serialize};
 
-/// A song, and where it sits in the favourites playlist if it is on it.
-#[derive(Debug, Clone)]
-pub struct Song {
-    pub id: Id,
-    pub title: String,
-    pub artist: String,
-    pub pos: i64,
-    pub added_ms: i64,
-    pub actor: String,
-    /// `Some(n)` if favourited, and `n` is its place in the playlist. Recomputed
-    /// on every replay, which is what makes the rebase visible: favourite
-    /// something offline and it lands after whatever arrived while you were
-    /// away.
-    pub favorite_pos: Option<i64>,
+petros_schema::ffi_row! {
+    /// A song, and where it sits in the favourites playlist if it is on it.
+    Song => #[cfg(feature = "ffi")] FfiSong {
+        /// Sixteen bytes in SQLite and in the log. The canonical 8-4-4-4-12
+        /// string on the far side, because that is what a foreign caller can
+        /// hold, compare and use as a list key.
+        id: Id => String { |id| id.to_string() },
+        title: String,
+        artist: String,
+        /// Recomputed on every replay from `MAX(pos) + 1`, which is what makes
+        /// the rebase visible: a song added while offline moves down as
+        /// confirmed entries land underneath it.
+        pos: i64,
+        added_ms: i64,
+        actor: String,
+        /// `Some(n)` if favourited, and `n` is its place in the playlist.
+        ///
+        /// `-1` on the far side rather than an optional: positions start at 1,
+        /// so the sentinel is unambiguous and the record stays flat across the
+        /// boundary.
+        favorite_pos: Option<i64> => i64 { |p| p.unwrap_or(-1) },
+    } and {
+        /// Derivable from `favorite_pos`, and carried anyway so the sentinel's
+        /// meaning stays on this side of the boundary rather than in the
+        /// TypeScript reading it.
+        favorited: bool = |row| row.favorite_pos.is_some(),
+    }
 }
 
 impl Song {

@@ -222,13 +222,18 @@ them so UniFFI could see them. It is `src/ffi.rs` behind a feature now, and
 `cargo tree -e normal` finds no uniffi and no wasmi in the iced client, the
 server or the module.
 
-One duplicate survives. `ffi::FfiSong` is a near-copy of `Song` because
-`Song.id` is a `petros::Id`, and carrying a foreign type across UniFFI needs
+Two structs survive. `FfiSong` is a near-copy of `Song` because `Song.id` is a
+`petros::Id`, and carrying a foreign type across UniFFI needs
 `impl FfiConverter for Id` — a foreign trait on a foreign type, which the orphan
 rule refuses; `uniffi::custom_type!` expands to exactly that impl and does not
-compile. `#[uniffi::remote]` re-declares a shape rather than mapping one, so it
-does not help. What is left is one `From` impl the compiler checks, which is a
-cheaper thing to maintain than a package.
+compile, and `#[uniffi::remote]` re-declares a shape rather than mapping one.
+
+Two *declarations* did not have to survive, and do not. `petros_schema::ffi_row!`
+takes one and emits both, plus the `From` between them: fields cross unchanged
+unless told otherwise, a field that differs states the far type and how to get
+there, and a field that exists only on the far side states how to compute it.
+The doc comments reach the generated TypeScript, which is the part that makes it
+worth doing rather than merely tidy.
 
 ## One script, three callers
 

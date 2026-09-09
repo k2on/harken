@@ -98,11 +98,12 @@ otherwise, because a build container has no sibling directory.
 with `cargoExtras: [--features, ffi]`. Off by default, so `cargo tree -e normal`
 finds no uniffi and no wasmi in the desktop client, the server, or the module.
 
-One duplicate survives and cannot be removed: `ffi::FfiSong` is a near-copy of
-`Song`, because `Song.id` is a `petros::Id` and teaching UniFFI to carry it needs
-`impl FfiConverter for Id` — a foreign trait on a foreign type, which the orphan
-rule refuses. The cost is one `From` impl the compiler checks: add a field to
-`Song` and it stops compiling until the field is carried across.
+There are still two structs — `Song` for Rust and `FfiSong` for the boundary,
+because `Song.id` is a `petros::Id` and UniFFI cannot be taught a foreign type
+without `impl FfiConverter for Id`, which the orphan rule refuses. But there is
+one declaration: `petros_schema::ffi_row!` in `storage.rs` emits both and the
+`From` between them. Add a field and the record gains it; the doc comments reach
+the generated TypeScript too.
 
 ## The heart is a path on the desktop and a character on the phone
 
