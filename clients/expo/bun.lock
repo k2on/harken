@@ -5,7 +5,7 @@
       "name": "exo-expo",
       "dependencies": {
         "@expo/ui": "~57.0.16",
-        "@petros/client": "file:../../../petros-js/packages/client",
+        "@petros/client": "github:k2on/petros-js#0f855ce28bb554511eb15f88e3f38757f245c3b7",
         "expo": "~57.0.20",
         "expo-constants": "~57.0.17",
         "expo-dev-client": "^57.0.18",
@@ -283,7 +283,7 @@
 
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.31", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.1.0", "@jridgewell/sourcemap-codec": "^1.4.14" } }, "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw=="],
 
-    "@petros/client": ["@petros/client@file:../../../petros-js/packages/client", { "peerDependencies": { "react": ">=18" }, "optionalPeers": ["react"] }],
+    "@petros/client": ["@petros/client@github:k2on/petros-js#0f855ce", { "peerDependencies": { "react": ">=18" }, "optionalPeers": ["react"] }, "k2on-petros-js-0f855ce"],
 
     "@radix-ui/primitive": ["@radix-ui/primitive@1.1.7", "", {}, "sha512-rqWnm76nYT8HoNNqEjpgJ7Pw/DrBj5iBTrmEPo6HTX5+VJyBNOqTdv4g89G63HuR5g0AaENoAcH7Is5fF2kZ8Q=="],
 

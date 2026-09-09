@@ -169,3 +169,13 @@ expo-ios: expo-install
 
 doc:
     cargo doc -p petros --no-deps --all-features --open
+
+# Move the pin on the engine. Seven dependency lines share one revision, and a
+# build container resolves exactly what is written here — so they move together
+# or not at all.
+#
+#     just engine $(git -C ../petros rev-parse HEAD)
+engine rev:
+    sed -i 's|rev = "[0-9a-f]\{40\}"|rev = "{{rev}}"|g' Cargo.toml
+    cargo update -p petros --precise 0.1.0 2>/dev/null || true
+    @grep -c 'rev = "{{rev}}"' Cargo.toml | xargs -I{} echo "  {} dependencies pinned to {{rev}}"

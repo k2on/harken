@@ -29,7 +29,7 @@
     "react-native-screens": "~4.26.0",
     "react-native-web": "~0.21.0",
     "react-native-worklets": "0.10.1",
-    "@petros/client": "file:../../../petros-js/packages/client"
+    "@petros/client": "github:k2on/petros-js#0f855ce28bb554511eb15f88e3f38757f245c3b7"
   },
   "devDependencies": {
     "@types/react": "~19.2.2",

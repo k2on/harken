@@ -23,17 +23,24 @@ ciborium = "0.2"
 # `../petros` would not exist in the build container. A git dependency resolves
 # the same on a laptop and on a builder.
 #
-# `.cargo/config.toml` patches these back to the working copy next door, so day
-# to day this still builds from the checkout and picks up edits without a
-# commit. That file is gitignored, which is what makes a fresh clone — and EAS —
-# get the committed engine instead.
-petros = { git = "https://github.com/k2on/petros", branch = "main" }
-petros-wasm-host = { git = "https://github.com/k2on/petros", branch = "main" }
-petros-schema = { git = "https://github.com/k2on/petros", branch = "main" }
-petros-sql = { git = "https://github.com/k2on/petros", branch = "main" }
-petros-testkit = { git = "https://github.com/k2on/petros", branch = "main" }
-petros-wasm-guest = { git = "https://github.com/k2on/petros", branch = "main" }
-petros-axum = { git = "https://github.com/k2on/petros", branch = "main" }
+# Pinned to a revision, not a branch. The committed Cargo.lock cannot help here:
+# `.cargo/config.toml` patches these to the working copy and the patch shapes the
+# lock, so what is committed records a path and no revision at all. A branch
+# would then mean a build container resolves whatever `main` happens to be that
+# minute.
+#
+# That patch is why day-to-day work still builds from the checkout next door and
+# picks up edits without a commit. It is gitignored, which is what makes a fresh
+# clone — and EAS — get the pinned engine instead.
+#
+# Moving the pin means moving all seven, which `just engine <rev>` does.
+petros = { git = "https://github.com/k2on/petros", rev = "69a0582e8550ba9d6ce1f83a1d87fb55f988c4cb" }
+petros-wasm-host = { git = "https://github.com/k2on/petros", rev = "69a0582e8550ba9d6ce1f83a1d87fb55f988c4cb" }
+petros-schema = { git = "https://github.com/k2on/petros", rev = "69a0582e8550ba9d6ce1f83a1d87fb55f988c4cb" }
+petros-sql = { git = "https://github.com/k2on/petros", rev = "69a0582e8550ba9d6ce1f83a1d87fb55f988c4cb" }
+petros-testkit = { git = "https://github.com/k2on/petros", rev = "69a0582e8550ba9d6ce1f83a1d87fb55f988c4cb" }
+petros-wasm-guest = { git = "https://github.com/k2on/petros", rev = "69a0582e8550ba9d6ce1f83a1d87fb55f988c4cb" }
+petros-axum = { git = "https://github.com/k2on/petros", rev = "69a0582e8550ba9d6ce1f83a1d87fb55f988c4cb" }
 harken = { path = "crates/harken", default-features = false }
 # `fira-sans` embeds a default font. Without it iced asks the system for
 # one, which works on a desktop and gets you nothing at all in a browser:
