@@ -18,12 +18,19 @@ fn the_client_runs_the_module() {
 
     let client = Peer::open(db, "alice".into()).expect("open");
 
-    // The generation is process-wide and other tests in this binary move it
-    // too, so what matters is that a swap advances it, not what it reads.
+    // The generation is process-wide and the other test in this binary loads a
+    // module too, so between the call returning and the read below it can have
+    // moved again. What is guaranteed is that it is at least what this install
+    // was given — and further down, that a swap advances it. Asserting equality
+    // here contradicted the comment above it and failed roughly one run in
+    // four, on thread scheduling alone.
     let installed = client
         .load_mutators(MODULE.to_vec())
         .expect("install the module");
-    assert_eq!(client.mutators_generation(), installed);
+    assert!(
+        client.mutators_generation() >= installed,
+        "the generation does not go backwards: {installed}"
+    );
 
     client
         .add_song("Glue".into(), "Bicep".into())
