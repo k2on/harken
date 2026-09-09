@@ -17,13 +17,23 @@ rust-version = "1.88"
 
 [workspace.dependencies]
 ciborium = "0.2"
-petros = { path = "../petros/crates/petros" }
-petros-wasm-host = { path = "../petros/crates/petros-wasm-host" }
-petros-schema = { path = "../petros/crates/petros-schema" }
-petros-sql = { path = "../petros/crates/petros-sql" }
-petros-testkit = { path = "../petros/crates/petros-testkit" }
-petros-wasm-guest = { path = "../petros/crates/petros-wasm-guest" }
-petros-axum = { path = "../petros/crates/petros-axum" }
+# The engine, by git rather than by path.
+#
+# Not a preference: EAS archives this repository and nothing beside it, so a
+# `../petros` would not exist in the build container. A git dependency resolves
+# the same on a laptop and on a builder.
+#
+# `.cargo/config.toml` patches these back to the working copy next door, so day
+# to day this still builds from the checkout and picks up edits without a
+# commit. That file is gitignored, which is what makes a fresh clone — and EAS —
+# get the committed engine instead.
+petros = { git = "https://github.com/k2on/petros", branch = "typed-writes" }
+petros-wasm-host = { git = "https://github.com/k2on/petros", branch = "typed-writes" }
+petros-schema = { git = "https://github.com/k2on/petros", branch = "typed-writes" }
+petros-sql = { git = "https://github.com/k2on/petros", branch = "typed-writes" }
+petros-testkit = { git = "https://github.com/k2on/petros", branch = "typed-writes" }
+petros-wasm-guest = { git = "https://github.com/k2on/petros", branch = "typed-writes" }
+petros-axum = { git = "https://github.com/k2on/petros", branch = "typed-writes" }
 # `default-features = false` here so `crates/harken-wasm` can actually turn the
 # storage half off — a member's `default-features = false` is ignored unless the
 # workspace dependency says so too, silently, which put Diesel and SQLite in a

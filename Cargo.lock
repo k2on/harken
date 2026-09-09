@@ -2877,6 +2877,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 [[package]]
 name = "petros"
 version = "0.1.0"
+source = "git+https://github.com/k2on/petros?branch=typed-writes#357b090d10b83e386a31156abbb87c0d7b51c848"
 dependencies = [
  "ciborium",
  "diesel",
@@ -2898,6 +2899,7 @@ dependencies = [
 [[package]]
 name = "petros-axum"
 version = "0.1.0"
+source = "git+https://github.com/k2on/petros?branch=typed-writes#357b090d10b83e386a31156abbb87c0d7b51c848"
 dependencies = [
  "axum",
  "futures-util",
@@ -2908,6 +2910,7 @@ dependencies = [
 [[package]]
 name = "petros-schema"
 version = "0.1.0"
+source = "git+https://github.com/k2on/petros?branch=typed-writes#357b090d10b83e386a31156abbb87c0d7b51c848"
 dependencies = [
  "ciborium",
  "serde",
@@ -2916,6 +2919,7 @@ dependencies = [
 [[package]]
 name = "petros-sql"
 version = "0.1.0"
+source = "git+https://github.com/k2on/petros?branch=typed-writes#357b090d10b83e386a31156abbb87c0d7b51c848"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2926,6 +2930,7 @@ dependencies = [
 [[package]]
 name = "petros-testkit"
 version = "0.1.0"
+source = "git+https://github.com/k2on/petros?branch=typed-writes#357b090d10b83e386a31156abbb87c0d7b51c848"
 dependencies = [
  "diesel",
  "petros",
@@ -2935,6 +2940,7 @@ dependencies = [
 [[package]]
 name = "petros-wasm-guest"
 version = "0.1.0"
+source = "git+https://github.com/k2on/petros?branch=typed-writes#357b090d10b83e386a31156abbb87c0d7b51c848"
 dependencies = [
  "ciborium",
  "petros-schema",
@@ -2943,6 +2949,7 @@ dependencies = [
 [[package]]
 name = "petros-wasm-host"
 version = "0.1.0"
+source = "git+https://github.com/k2on/petros?branch=typed-writes#357b090d10b83e386a31156abbb87c0d7b51c848"
 dependencies = [
  "ciborium",
  "diesel",
