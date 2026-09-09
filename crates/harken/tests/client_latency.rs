@@ -16,7 +16,7 @@
 
 use std::time::Instant;
 
-const MODULE: &[u8] = harken::wasm_app::BUNDLED;
+const MODULE: &[u8] = harken::BUNDLED;
 
 fn median(mut v: Vec<f64>) -> f64 {
     v.sort_by(|a, b| a.partial_cmp(b).unwrap());

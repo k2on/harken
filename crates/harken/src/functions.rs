@@ -23,6 +23,12 @@
 
 use petros_schema::prelude::*;
 
+// `#[mutation]` and `#[query]` each emit a method on the peer a foreign caller
+// talks to. UniFFI will not take a qualified self-type, so the name has to be
+// in scope here rather than in what they generate.
+#[cfg(feature = "foreign")]
+use crate::Peer;
+
 // Only the queries below use these, and a query is not built for the sandbox.
 #[cfg(feature = "storage")]
 use crate::schema::{id_of, Song};

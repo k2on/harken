@@ -6,7 +6,7 @@
 //! That makes "nothing is loaded yet" a state only a fresh process can observe,
 //! and cargo gives each test file one.
 
-use harken::foreign_client::HarkenClient;
+use harken::Peer;
 
 #[test]
 fn mutating_without_a_module_is_refused_rather_than_ignored() {
@@ -14,7 +14,7 @@ fn mutating_without_a_module_is_refused_rather_than_ignored() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
 
-    let client = HarkenClient::open(
+    let client = Peer::open(
         dir.join("peer.db").to_string_lossy().into_owned(),
         "alice".into(),
     )

@@ -50,9 +50,12 @@ petros_wasm_guest::export!(functions);
 #[cfg(feature = "foreign")]
 uniffi::setup_scaffolding!();
 
-// The client a foreign caller sees: the same functions, reached over UniFFI,
-// with `apply` arriving as a module rather than linked.
+// The peer a foreign caller talks to: the same functions, reached over UniFFI,
+// with `apply` arriving as a module rather than linked. Everything but the
+// module itself is generated — the verbs and queries by their own attributes,
+// the rest by this.
 #[cfg(feature = "foreign")]
-pub mod foreign_client;
-#[cfg(feature = "foreign")]
-pub mod wasm_app;
+petros::foreign_peer!(Peer {
+    schema: crate::schema::SCHEMA,
+    module: include_bytes!("../../../target/wasm32-unknown-unknown/mutators/harken.wasm"),
+});

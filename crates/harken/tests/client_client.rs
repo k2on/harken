@@ -2,9 +2,9 @@
 //! the module, the module writes the row, and swapping the module mid-session
 //! changes what the next mutation does without disturbing the database.
 
-use harken::foreign_client::HarkenClient;
+use harken::Peer;
 
-const MODULE: &[u8] = harken::wasm_app::BUNDLED;
+const MODULE: &[u8] = harken::BUNDLED;
 
 /// The point of all of it: a mutation made through the public client runs the
 /// module, not a linked `apply` — and swapping the module changes what the very
@@ -16,7 +16,7 @@ fn the_client_runs_the_module() {
     std::fs::create_dir_all(&dir).unwrap();
     let db = dir.join("peer.db").to_string_lossy().into_owned();
 
-    let client = HarkenClient::open(db, "alice".into()).expect("open");
+    let client = Peer::open(db, "alice".into()).expect("open");
 
     // The generation is process-wide and other tests in this binary move it
     // too, so what matters is that a swap advances it, not what it reads.
@@ -79,7 +79,7 @@ fn a_verb_the_client_never_heard_of() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
 
-    let client = HarkenClient::open(
+    let client = Peer::open(
         dir.join("peer.db").to_string_lossy().into_owned(),
         "alice".into(),
     )

@@ -14,7 +14,9 @@ import { useEffect, useMemo } from 'react';
 import { AppState } from 'react-native';
 import { Paths } from 'expo-file-system';
 import { usePeer as usePetrosPeer } from '@petros/client/react';
-import { HarkenClient, type HarkenClientLike, type Song } from 'harken-native';
+// Aliased: this file's own `Peer` is the hook's return type, and the native
+// one is the object it drives.
+import { Peer as NativePeer, type PeerLike, type Song } from 'harken-native';
 
 import { install, watch } from './mutators';
 // Generated from the module's own schema section by `just mutators`. A call
@@ -59,10 +61,10 @@ function databasePath(actor: string): string {
 }
 
 export function usePeer(actor: string, server: string): Peer {
-  const peer = usePetrosPeer<HarkenClientLike, Song[]>({
+  const peer = usePetrosPeer<PeerLike, Song[]>({
     key: actor,
     server,
-    open: () => HarkenClient.open(databasePath(actor), actor),
+    open: () => NativePeer.open(databasePath(actor), actor),
     query: (client) => client.library(),
     install,
     watch,

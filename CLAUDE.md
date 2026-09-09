@@ -109,9 +109,15 @@ between them is where `petros-codegen` comes from: the checkout beside this one
 when there is one, so an engine edit needs no commit, and the published branch
 otherwise, because a build container has no sibling directory.
 
-## The bindings are a feature, not a package
+## The bindings are generated, and are a feature rather than a package
 
-`src/foreign_client.rs` exports the client a foreign caller sees, and
+`petros::foreign_peer!` in `lib.rs` generates the peer a foreign caller talks
+to — the object, the errors, the engine methods, and the `App` whose `apply`
+arrives as a module. Every named method comes from the function it belongs to:
+`#[mutation]` and `#[query]` each emit their own `#[uniffi::export] impl Peer`
+block, and the doc comment written once in `functions.rs` reaches the generated
+TypeScript.
+
 `ubrn.config.yaml` builds this crate with `cargoExtras: [--features, foreign]`.
 Off by default, so `cargo tree -e normal` finds no uniffi and no wasmi in the
 desktop client, the server, or the wasm module.
