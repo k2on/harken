@@ -34,13 +34,13 @@ ciborium = "0.2"
 # clone — and EAS — get the pinned engine instead.
 #
 # Moving the pin means moving all seven, which `just engine <rev>` does.
-petros = { git = "https://github.com/k2on/petros", rev = "3ead37068f35afce5e471ad5ddac8663a96d472b" }
-petros-wasm-host = { git = "https://github.com/k2on/petros", rev = "3ead37068f35afce5e471ad5ddac8663a96d472b" }
-petros-schema = { git = "https://github.com/k2on/petros", rev = "3ead37068f35afce5e471ad5ddac8663a96d472b" }
-petros-sql = { git = "https://github.com/k2on/petros", rev = "3ead37068f35afce5e471ad5ddac8663a96d472b" }
-petros-testkit = { git = "https://github.com/k2on/petros", rev = "3ead37068f35afce5e471ad5ddac8663a96d472b" }
-petros-wasm-guest = { git = "https://github.com/k2on/petros", rev = "3ead37068f35afce5e471ad5ddac8663a96d472b" }
-petros-axum = { git = "https://github.com/k2on/petros", rev = "3ead37068f35afce5e471ad5ddac8663a96d472b" }
+petros = { git = "https://github.com/k2on/petros", rev = "118374a0f36e70cbecd31234e612c9789d1fe690" }
+petros-wasm-host = { git = "https://github.com/k2on/petros", rev = "118374a0f36e70cbecd31234e612c9789d1fe690" }
+petros-schema = { git = "https://github.com/k2on/petros", rev = "118374a0f36e70cbecd31234e612c9789d1fe690" }
+petros-sql = { git = "https://github.com/k2on/petros", rev = "118374a0f36e70cbecd31234e612c9789d1fe690" }
+petros-testkit = { git = "https://github.com/k2on/petros", rev = "118374a0f36e70cbecd31234e612c9789d1fe690" }
+petros-wasm-guest = { git = "https://github.com/k2on/petros", rev = "118374a0f36e70cbecd31234e612c9789d1fe690" }
+petros-axum = { git = "https://github.com/k2on/petros", rev = "118374a0f36e70cbecd31234e612c9789d1fe690" }
 harken = { path = "crates/harken", default-features = false }
 # `fira-sans` embeds a default font. Without it iced asks the system for
 # one, which works on a desktop and gets you nothing at all in a browser:
