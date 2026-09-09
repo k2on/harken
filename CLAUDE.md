@@ -48,6 +48,7 @@ macro — are in `../petros/docs/decisions.md`. Read that first.
 
 ```
 just              # fmt, lint, test
+just latency      # the measurements: fsync, the sandbox, the maintained view
 just mutators     # rebuild the domain module and hand it to Metro (~0.35s)
 just mutators-watch # …on every save. Leave it running beside `bun start`.
 just serve        # the sync server…
@@ -163,9 +164,27 @@ so the Expo screen just writes `♥`.
   `std::env::temp_dir()`, so a server started inside `nix develop --command`
   does not share a database with one started under direnv.
 
+## The desktop client maintains its list; the phone does not yet
+
+`clients/iced` holds a `petros::ivm::View`, hydrates it once at boot, and
+splices its `Vec<Song>` from the patches the view reports. A tap costs the rows
+that moved rather than the whole library — flat, where re-reading grew:
+`just latency` prints the numbers and `docs/decisions.md` explains them.
+
+The Expo client still calls `library()` on every change, and that is deliberate
+rather than unfinished. Its cost is the list crossing the UniFFI bridge, not the
+query, so maintaining the query alone would save the cheap half. The engine side
+is ready — a module's writes report what they changed — but the bridge has not
+been measured on a device, and designing for it unmeasured is how the desktop's
+O(n) decode was missed the first time.
+
 ## Not verified
 
 Android and iOS have never been built end to end from this repository — no
 machine here can run either toolchain — so `.github/workflows/expo.yml` is
 written but has not had a green run. What *is* verified is everything up to that
 line: the Rust builds, the bindings generate, and the app typechecks.
+
+Verified another way too, because the local `.cargo/config.toml` hides it: with
+the patch moved aside, the whole suite builds and passes against the *pinned*
+engine from git, which is what CI and EAS actually resolve.
