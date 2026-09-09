@@ -76,29 +76,37 @@ jobs:
       - name: Point every tool at the same NDK
         run: echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
 
-      # `eas build --local` runs the same profile, the same hooks and the same
-      # credentials as a build on Expo's servers — on this runner. That is the
-      # point: a green run here means the hosted build has no reason to differ,
-      # and the workflow stops re-implementing what eas.json already says.
+      # No Expo account in the loop. `eas build` — hosted or `--local` — fetches
+      # a keystore from their credentials service, and a *debug* build does not
+      # need one: gradle signs with the standard `~/.android/debug.keystore`,
+      # which it generates on first use.
       #
-      # It still archives from git, so anything uncommitted is not in the build.
-      - name: Build the development client
-        env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      # What that gives up is the release signing config in eas.json, which a
+      # development client does not use anyway.
+      - name: Build the Rust and the turbo module
+        run: |
+          nix develop .#android --command bash -c '
+            ./scripts/mutators.sh
+            cd clients/expo && bun install
+            cd modules/harken-native
+            ../../node_modules/.bin/ubrn build android \
+              --config ubrn.config.yaml --and-generate --release
+          '
+
+      # `run:android` would need an emulator; stopping at the APK is what tells
+      # us the JNI, the CMake and the Rust still agree.
+      - name: Prebuild and assemble
         run: |
           nix develop .#android --command bash -c '
             cd clients/expo
-            bun install
-            ./node_modules/.bin/eas build \
-              --platform android --profile development \
-              --local --non-interactive \
-              --output "$PWD/harken.apk"
+            bunx expo prebuild --platform android --clean
+            cd android && ./gradlew assembleDebug --no-daemon
           '
 
       - uses: actions/upload-artifact@v4
         with:
           name: harken-android
-          path: clients/expo/harken.apk
+          path: clients/expo/android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
 
   ios:

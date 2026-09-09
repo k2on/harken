@@ -33,11 +33,15 @@ ws = ["storage", "petros/ws"]
 foreign = ["storage", "dep:petros-wasm-host", "dep:thiserror", "dep:uniffi"]
 
 [lib]
-# `cdylib` for the module the phone loads. Listed unconditionally because Cargo
-# has no per-target crate-type, but it costs nothing native: as a dependency
-# other crates take the rlib, and the extra link is only done when this package
-# is built directly.
-crate-type = ["rlib", "cdylib"]
+# Three, and each is load-bearing. `rlib` is what other crates link. `cdylib` is
+# the module the phone loads over Metro. `staticlib` is what `ubrn build android`
+# copies into jniLibs — dropping it when the FFI crate was folded in here is what
+# broke CI with "libharken.a does not exist".
+#
+# Cargo has no per-target crate-type, so all three are listed unconditionally.
+# That costs nothing as a dependency: other crates take the rlib, and the extra
+# links happen only when this package is built directly.
+crate-type = ["rlib", "cdylib", "staticlib"]
 
 [dependencies]
 ciborium.workspace = true
