@@ -94,9 +94,9 @@ fn the_maintained_library_agrees_with_the_read_one() {
             .collect()
     }
 
-    let mut settle = |client: &mut petros::Client<harken::HarkenApp>,
-                      view: &mut harken::LibraryView,
-                      rendered: &mut Vec<harken::Song>| {
+    let settle = |client: &mut petros::Client<harken::HarkenApp>,
+                  view: &mut harken::LibraryView,
+                  rendered: &mut Vec<harken::Song>| {
         match client.take_changes() {
             Changes::Applied(changes) => {
                 let patches = {
