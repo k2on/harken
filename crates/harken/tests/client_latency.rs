@@ -142,3 +142,64 @@ fn one_tap_at_a_fixed_depth() {
         );
     }
 }
+
+/// What a bulk mutation costs now that it is a loop.
+///
+/// `favorite_all` was one `INSERT ... SELECT` with a window function; typed
+/// writes made it a scan and a write per song, because a statement that inserts
+/// a thousand rows reports one result and not which rows they were — which is
+/// exactly what an incremental view cannot work from. That trade is only worth
+/// it if the loop is affordable, and on the phone every row in it crosses the
+/// sandbox boundary. This measures both sides at three library sizes.
+#[test]
+#[ignore = "a measurement, not an assertion: run it with `just latency`"]
+fn a_bulk_mutation_row_by_row() {
+    use petros::backend::SqliteStore;
+    use petros_wasm_host::Mutators;
+
+    println!("\n  favorite_all, as a loop over N songs:");
+    println!("    {:>6}  {:>10}  {:>10}", "songs", "native", "wasm");
+    for n in [10, 100, 1000] {
+        let mut times = Vec::new();
+        for build in 0..2 {
+            let mut conn = petros::open_memory().unwrap();
+            petros::batch(&mut conn, harken::SCHEMA).unwrap();
+            let mut auto = petros::AutoCtx::seeded(1);
+            let m = Mutators::load(MODULE).unwrap();
+
+            // Fill the library through the same path, so the rows are real.
+            for i in 0..n {
+                let raw = harken::add_song(format!("song {i}"), "Bicep".into());
+                let mut bytes = Vec::new();
+                ciborium::into_writer(&raw, &mut bytes).unwrap();
+                let filled = m.fill_auto(&bytes, &mut auto).unwrap();
+                m.apply(&mut conn, &filled, "alice").unwrap().unwrap();
+            }
+
+            let raw = harken::favorite_all();
+            let mut bytes = Vec::new();
+            ciborium::into_writer(&raw, &mut bytes).unwrap();
+            let filled = m.fill_auto(&bytes, &mut auto).unwrap();
+
+            let t = Instant::now();
+            if build == 0 {
+                let payload: harken::Payload = ciborium::from_reader(&filled[..])
+                    .map(harken::Payload)
+                    .unwrap();
+                harken::apply(&mut SqliteStore::new(&mut conn), &payload.0, "alice").unwrap();
+            } else {
+                m.apply(&mut conn, &filled, "alice").unwrap().unwrap();
+            }
+            times.push(t.elapsed().as_secs_f64() * 1000.0);
+
+            // The playlist is the whole library, or the loop skipped rows.
+            assert_eq!(
+                harken::favorites(&mut SqliteStore::new(&mut conn))
+                    .unwrap()
+                    .len(),
+                n
+            );
+        }
+        println!("    {:>6}  {:>7.2} ms  {:>7.2} ms", n, times[0], times[1]);
+    }
+}

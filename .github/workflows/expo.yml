@@ -38,7 +38,7 @@ jobs:
       - name: Build the mutator module
         run: nix develop --command just mutators
       - name: Generate and typecheck
-        run: nix develop --command just ffi-bindings
+        run: nix develop --command just bindings
       - name: The Rust the bindings came from
         run: nix develop --command just test
 

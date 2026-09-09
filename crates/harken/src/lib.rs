@@ -14,9 +14,11 @@
 //! the rest — not the read model, not the engine, not the rows.
 
 pub mod functions;
-/// The model. Only where there is a database: the sandbox applies mutations and
-/// never reads a row back.
-#[cfg(feature = "storage")]
+/// The model: the tables, and the view a client reads.
+///
+/// The tables are here in every build, because a mutation writes rows and the
+/// sandbox runs mutations. The view is not — reading one is something only a
+/// client does.
 pub mod schema;
 
 pub use functions::*;

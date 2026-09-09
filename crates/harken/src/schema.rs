@@ -1,12 +1,29 @@
 //! The model: what a row is, and what the tables are.
 //!
-//! Two descriptions and they are held together. `schema.sql` is what `migrate`
-//! runs and what `petros-sql` prepares every statement in `functions.rs`
-//! against at build time — rename a column there and the call sites using it
-//! stop compiling. The rows below are what those statements read back.
+//! One description. `schema.sql` is what `migrate` runs, and `tables!` asks
+//! SQLite what is in it — the columns, their types, the keys, and the foreign
+//! keys — so the row types and the relationships between them are generated
+//! rather than written. Rename a column there and the call sites using it stop
+//! compiling.
 
+#[cfg(feature = "storage")]
 use petros::Id;
 
+/// The tables, generated from `schema.sql`: a row type each, plus a typed
+/// constant per column and per relationship.
+///
+/// In a module of their own because `tables::Song` is the *table* and `Song`
+/// below is the view a client reads — a different shape, carrying the playlist
+/// position that lives on the other table. `functions.rs` imports the table as
+/// `SongRow` and builds the view out of it.
+pub mod tables {
+    petros_sql::tables!();
+}
+
+// The view a client reads: a song, with where it sits in the playlist folded
+// in. Behind `storage`, like the read model that produces it — the sandbox
+// applies mutations and never reads a row back.
+#[cfg(feature = "storage")]
 petros_schema::row! {
     /// A song, and where it sits in the favourites playlist if it is on it.
     Song => {
@@ -36,6 +53,7 @@ petros_schema::row! {
     };
 }
 
+#[cfg(feature = "storage")]
 impl Song {
     pub fn favorited(&self) -> bool {
         self.favorite_pos.is_some()
@@ -50,6 +68,7 @@ pub const SCHEMA: &str = include_str!("../schema.sql");
 
 /// Sixteen bytes out of a BLOB column. A row whose id is not sixteen bytes did
 /// not come from a mutation, and there is nothing useful to do with it.
+#[cfg(feature = "storage")]
 pub(crate) fn id_of(bytes: &[u8]) -> Id {
     Id(petros::uuid::Uuid::from_slice(bytes).unwrap_or(petros::uuid::Uuid::nil()))
 }

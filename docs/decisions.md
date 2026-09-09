@@ -22,7 +22,7 @@ not of two that intend to match.
 So `crates/harken`'s `ffi` feature exports the client over UniFFI and
 `uniffi-bindgen-react-native` generates the TypeScript. The generated files are
 gitignored rather than committed, so nobody can hand-edit them and wonder why
-the next build reverts it, and `just ffi-bindings` regenerates and then runs
+the next build reverts it, and `just bindings` regenerates and then runs
 `tsc` — which turns "the app still calls the API the Rust used to have" into a
 compile error instead of a crash on a device.
 
@@ -68,7 +68,7 @@ mobile build runs on an ARM Linux workstation, and both run in CI instead:
 macOS one, with nix supplying the identical toolchain in both. Nothing in the
 flake changes; the machine does.
 
-`just ffi-bindings` deliberately needs neither. It reads the UniFFI metadata out
+`just bindings` deliberately needs neither. It reads the UniFFI metadata out
 of a *host* build of the crate, so the loop that actually matters day to day —
 change the Rust, regenerate, see whether the app still compiles — is a couple of
 seconds on any machine.
@@ -236,7 +236,7 @@ The doc comments reach the generated TypeScript, which is the part that makes it
 worth doing rather than merely tidy.
 
 The macro also owns the far name and the `#[cfg]`, so the declaration is domain
-and nothing else — `grep -i ffi` over `domain.rs` and `storage.rs` finds
+and nothing else — `grep -i ffi` over `schema.rs` and `functions.rs` finds
 nothing. The record is `foreign::Song` in a generated module rather than a
 suffixed name, because macro_rules cannot build an identifier and a module needs
 no `paste` dependency; it also means the generated TypeScript says `Song`.
@@ -254,3 +254,45 @@ there is not, which is the only thing that actually differs between a laptop and
 a build container. Exercised both ways: the no-sibling path was run against a
 copy of the tree with the local `.cargo` patch removed, so it resolved the engine
 from git exactly as EAS will.
+
+## The read model is a tree, and the join is in the schema
+
+`library()` was a LEFT JOIN and `favorites()` an INNER JOIN, written as SQL in
+the app. Both are gone, and neither word was replaced by another one.
+
+`REFERENCES song(id)` in `schema.sql` is now the only place the two tables are
+said to meet. `tables!` reads it back with `PRAGMA foreign_key_list` and
+generates both directions — `Song::favorite` and `Favorite::song` — and a read
+returns a *tree*: a song with its favourites hanging off it, already grouped,
+rather than a product with the song repeated once per child. Which end you read
+from decides the join. `library()` reads down from the song, so a song nobody
+favourited is still a row; `favorites()` reads up from the favourite, so a
+favourite is only a row if its song exists.
+
+That is Zero's shape, and it was chosen for Zero's reason rather than for
+tidiness: a change to a child is a change to one node of a tree, which an
+incremental view can maintain, whereas the same change to a flat join alters
+every row the join produced.
+
+What it cost is real and is written down here rather than discovered later.
+`favorite_all` was one `INSERT ... SELECT` with a window function — a thousand
+rows in one statement — and is now a write per song, because typed writes must
+say *what* changed and a bulk statement reports a count. `just latency` runs it
+at three sizes:
+
+```
+  favorite_all, as a loop over N songs:
+     songs      native        wasm
+        10     0.22 ms     2.53 ms
+       100     2.13 ms    16.45 ms
+      1000    34.55 ms    72.81 ms
+```
+
+Seventy milliseconds for a thousand songs, on the phone, through the sandbox
+boundary once per row. A library that size is not typical and favouriting all of
+it is a deliberate act, so this is affordable — but it is the number to re-run
+if a bulk verb ever feels slow, and the fix if it does is a batched request
+rather than a return to SQL.
+
+The module grew 140,766 → 151,865 bytes, about eight percent, which is the
+builder and the row types arriving in a build that used to send strings.

@@ -36,36 +36,31 @@ fn database() -> Connection {
 }
 
 fn rows(conn: &mut Connection) -> Vec<Row> {
-    let mut store = SqliteStore(conn);
-    // `hex()` and `COALESCE()` are expressions, so SQLite has no declared type
-    // for either and both are named here.
-    petros_sql::query!(
-        store,
-        "SELECT hex(s.id) AS \"id: Text\", s.title, s.artist, s.pos, s.actor,
-                COALESCE(f.pos, 0) AS \"fav: Int\"
-           FROM song s LEFT JOIN favorite f ON f.song_id = s.id
-          ORDER BY s.pos, s.id"
-    )
-    .into_iter()
-    .map(|r| Row {
-        id: r.id,
-        title: r.title,
-        artist: r.artist,
-        pos: r.pos,
-        fav: r.fav,
-        actor: r.actor,
-    })
-    .collect()
+    // Through the app's own read model, which is the thing both builds have to
+    // agree about. It reads a song with its favourite hanging off it, so one
+    // pass covers both tables.
+    harken::library(&mut SqliteStore::new(conn))
+        .expect("read")
+        .into_iter()
+        .map(|s| Row {
+            id: s.id.to_string(),
+            title: s.title,
+            artist: s.artist,
+            pos: s.pos,
+            fav: s.favorite_pos.unwrap_or(0),
+            actor: s.actor,
+        })
+        .collect()
 }
 
 /// The native side, exactly as `harken::Payload`'s `Mutation::apply` runs it:
-/// the same checked SQL, through a store backed by a real connection.
+/// the same typed writes, through a store backed by a real connection.
 fn native_apply(
     conn: &mut Connection,
     payload: &harken::Payload,
     actor: &str,
 ) -> Result<(), String> {
-    harken::apply(&mut petros::backend::SqliteStore(conn), &payload.0, actor)
+    harken::apply(&mut SqliteStore::new(conn), &payload.0, actor)
 }
 
 fn encode(p: &harken::Payload) -> Vec<u8> {

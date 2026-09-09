@@ -14,12 +14,12 @@
 //! choose differently and diverge. `Actor` is who authored the entry. Which is
 //! which is decided by type, so there is no list to keep in step.
 //!
-//! # The SQL is checked
+//! # There is no SQL here
 //!
-//! `petros_sql::exec!` and `query!` prepare each statement against
-//! `schema.sql` at build time with SQLite as the judge, so a misspelled column
-//! is a compile error even though this runs inside a sandbox that has no
-//! SQLite in it.
+//! Reads and writes are the same shape: `db.select(query)` and `db.put(&row)`,
+//! over row types generated from `schema.sql`. A misspelled column is a compile
+//! error rather than a missing row on a device, and a write says what it
+//! changed — which is what an incrementally maintained query will need.
 
 use petros_schema::prelude::*;
 
@@ -28,6 +28,8 @@ use petros_schema::prelude::*;
 // in scope here rather than in what they generate.
 #[cfg(feature = "foreign")]
 use crate::Peer;
+
+use crate::schema::tables::{Favorite, Song as SongRow};
 
 // Only the queries below use these, and a query is not built for the sandbox.
 #[cfg(feature = "storage")]
@@ -50,33 +52,20 @@ pub fn add_song(
     }
     // The same entry arriving twice is a no-op, which is what makes redelivery
     // safe.
-    if petros_sql::query!(db, "SELECT 1 AS \"found: Int\" FROM song WHERE id = ?", id)
-        .first()
-        .is_some()
-    {
+    if db.exists::<SongRow>(&SongRow::key_of(&id)) {
         return Ok(());
     }
     // `pos` is read out of current state: an intent, not a fact. It is what
     // makes the rebase visible when an entry lands underneath yours.
-    let last = petros_sql::query!(
-        db,
-        "SELECT COALESCE(MAX(pos), 0) AS \"last: Int\" FROM song"
-    )
-    .first()
-    .map(|r| r.last)
-    .unwrap_or(0);
-    let (title, artist) = (title.trim().to_string(), artist.trim().to_string());
-    petros_sql::exec!(
-        db,
-        "INSERT INTO song (id, title, artist, pos, added_ms, actor)
-         VALUES (?, ?, ?, ?, ?, ?)",
-        id,
-        title,
-        artist,
-        last + 1,
+    let last = last_pos(db);
+    db.put(&SongRow {
+        id: id.to_vec(),
+        title: title.trim().to_string(),
+        artist: artist.trim().to_string(),
+        pos: last + 1,
         added_ms,
-        actor
-    );
+        actor: actor.to_string(),
+    });
     Ok(())
 }
 
@@ -88,77 +77,92 @@ pub fn add_song(
 /// got.
 #[mutation]
 pub fn favorite(db: &mut Db, favorited_ms: Now, actor: Actor, id: Id) -> Result {
-    if petros_sql::query!(db, "SELECT 1 AS \"found: Int\" FROM song WHERE id = ?", id)
-        .first()
-        .is_none()
-    {
+    if !db.exists::<SongRow>(&SongRow::key_of(&id)) {
         return Ok(());
     }
-    if petros_sql::query!(
-        db,
-        "SELECT 1 AS \"found: Int\" FROM favorite WHERE song_id = ?",
-        id
-    )
-    .first()
-    .is_some()
-    {
+    if db.exists::<Favorite>(&Favorite::key_of(&id)) {
         return Ok(());
     }
-    let last = petros_sql::query!(
-        db,
-        "SELECT COALESCE(MAX(pos), 0) AS \"last: Int\" FROM favorite"
-    )
-    .first()
-    .map(|r| r.last)
-    .unwrap_or(0);
-    petros_sql::exec!(
-        db,
-        "INSERT INTO favorite (song_id, pos, favorited_ms, actor) VALUES (?, ?, ?, ?)",
-        id,
-        last + 1,
+    let last = last_favorite_pos(db);
+    db.put(&Favorite {
+        song_id: id.to_vec(),
+        pos: last + 1,
         favorited_ms,
-        actor
-    );
+        actor: actor.to_string(),
+    });
     Ok(())
 }
 
 /// Take a song back out of the playlist. The song itself stays.
 #[mutation]
 pub fn unfavorite(db: &mut Db, id: Id) -> Result {
-    petros_sql::exec!(db, "DELETE FROM favorite WHERE song_id = ?", id);
+    db.delete::<Favorite>(&Favorite::key_of(&id));
     Ok(())
 }
 
 /// Favourite everything in the library that is not already favourited.
 ///
 /// One entry rather than one per song, so it covers songs another peer added in
-/// the meantime — that is what makes it an intent. And one *statement*, which
-/// is what checked SQL buys over a query builder: the alternative is a scan and
-/// a write per song, and each of those is a boundary crossing on a phone.
+/// the meantime — that is what makes it an intent, and why it cannot be the
+/// client sending N of them.
+///
+/// It was one `INSERT ... SELECT` with a window function when this was SQL. It
+/// is a loop now, and that is the price of a write that says what it changed:
+/// a statement that inserts a thousand rows produces one result and no record
+/// of which rows they were, which is exactly what an incremental view cannot
+/// work from.
 #[mutation]
 pub fn favorite_all(db: &mut Db, favorited_ms: Now, actor: Actor) -> Result {
-    petros_sql::exec!(
-        db,
-        "INSERT INTO favorite (song_id, pos, favorited_ms, actor)
-         SELECT s.id,
-                (SELECT COALESCE(MAX(pos), 0) FROM favorite)
-                  + ROW_NUMBER() OVER (ORDER BY s.pos, s.id),
-                ?, ?
-           FROM song s
-          WHERE NOT EXISTS (SELECT 1 FROM favorite f WHERE f.song_id = s.id)
-          ORDER BY s.pos, s.id",
-        favorited_ms,
-        actor
+    let mut pos = last_favorite_pos(db);
+    // Ordered, because the positions it assigns go into the log and every
+    // replica has to assign the same ones.
+    let songs = db.select(
+        SongRow::all()
+            .order_by(SongRow::pos.asc())
+            .order_by(SongRow::id.asc()),
     );
+    for song in songs {
+        if db.exists::<Favorite>(&Favorite::key_of(&song.id)) {
+            continue;
+        }
+        pos += 1;
+        db.put(&Favorite {
+            song_id: song.id,
+            pos,
+            favorited_ms,
+            actor: actor.to_string(),
+        });
+    }
     Ok(())
 }
 
 /// Remove a song from the library, and from the playlist with it.
 #[mutation]
 pub fn remove_song(db: &mut Db, id: Id) -> Result {
-    petros_sql::exec!(db, "DELETE FROM favorite WHERE song_id = ?", id);
-    petros_sql::exec!(db, "DELETE FROM song WHERE id = ?", id);
+    db.delete::<Favorite>(&Favorite::key_of(&id));
+    db.delete::<SongRow>(&SongRow::key_of(&id));
     Ok(())
+}
+
+// The two helpers take `&mut impl Store` rather than `&mut Db`. Inside a
+// `#[mutation]` the store is a type parameter — the same body runs over SQLite
+// natively and over the host's store through the sandbox ABI — and `Db` is only
+// the marker that stands for it in a signature the attribute rewrites.
+
+/// The end of the library, which is where a new song goes.
+fn last_pos(db: &mut impl Store) -> i64 {
+    db.select(SongRow::all().order_by(SongRow::pos.desc()).limit(1))
+        .first()
+        .map(|s| s.pos)
+        .unwrap_or(0)
+}
+
+/// The end of the playlist. `MAX(pos)`, as a query that reads one row.
+fn last_favorite_pos(db: &mut impl Store) -> i64 {
+    db.select(Favorite::all().order_by(Favorite::pos.desc()).limit(1))
+        .first()
+        .map(|f| f.pos)
+        .unwrap_or(0)
 }
 
 // -------------------------------------------------------------------- queries
@@ -170,50 +174,61 @@ pub fn remove_song(db: &mut Db, id: Id) -> Result {
 /// that only appears on someone else's machine.
 #[query]
 pub fn library(db: &mut Db) -> Result<Vec<Song>> {
-    // `f.pos` is aliased because `s.pos` is already called `pos`, and it is
-    // nullable because the join is a left join — neither of which SQLite can
-    // tell us, so both are said here.
-    Ok(petros_sql::query!(
-        db,
-        "SELECT s.id, s.title, s.artist, s.pos, s.added_ms, s.actor,
-                f.pos AS \"favorite_pos?: Int\"
-           FROM song s LEFT JOIN favorite f ON f.song_id = s.id
-          ORDER BY s.pos, s.id"
-    )
-    .into_iter()
-    .map(|r| Song {
-        id: id_of(&r.id),
-        title: r.title,
-        artist: r.artist,
-        pos: r.pos,
-        added_ms: r.added_ms,
-        actor: r.actor,
-        favorite_pos: r.favorite_pos,
-    })
-    .collect())
+    // A song *with* its favourite, which is a tree rather than a join: a song
+    // that is not favourited is still a row, carrying nothing. That is the LEFT
+    // JOIN, and it is the relationship's shape rather than a keyword.
+    let rows = db.select_with(
+        SongRow::all()
+            .order_by(SongRow::pos.asc())
+            .order_by(SongRow::id.asc()),
+        SongRow::favorite,
+        Favorite::all(),
+    );
+    Ok(rows.iter().map(view).collect())
 }
 
 /// The favourites playlist, in playlist order.
 #[query]
 pub fn favorites(db: &mut Db) -> Result<Vec<Song>> {
-    Ok(petros_sql::query!(
-        db,
-        "SELECT s.id, s.title, s.artist, s.pos, s.added_ms, s.actor,
-                f.pos AS \"favorite_pos: Int\"
-           FROM song s JOIN favorite f ON f.song_id = s.id
-          ORDER BY f.pos, s.id"
-    )
-    .into_iter()
-    .map(|r| Song {
-        id: id_of(&r.id),
-        title: r.title,
-        artist: r.artist,
-        pos: r.pos,
-        added_ms: r.added_ms,
-        actor: r.actor,
-        favorite_pos: Some(r.favorite_pos),
-    })
-    .collect())
+    // Read from the other end: favourites, each carrying its song. A favourite
+    // whose song is gone carries nothing and is dropped, which is the INNER
+    // JOIN — and `remove_song` deletes both, so it should not arise.
+    let rows = db.select_with(
+        Favorite::all()
+            .order_by(Favorite::pos.asc())
+            .order_by(Favorite::song_id.asc()),
+        Favorite::song,
+        SongRow::all(),
+    );
+    Ok(rows
+        .iter()
+        .filter_map(|r| {
+            let song = r.one()?;
+            Some(Song {
+                id: id_of(&song.id),
+                title: song.title.clone(),
+                artist: song.artist.clone(),
+                pos: song.pos,
+                added_ms: song.added_ms,
+                actor: song.actor.clone(),
+                favorite_pos: Some(r.row.pos),
+            })
+        })
+        .collect())
+}
+
+/// A song row and its place in the playlist, as a client reads it.
+#[cfg(feature = "storage")]
+fn view(row: &With<SongRow, Favorite>) -> Song {
+    Song {
+        id: id_of(&row.row.id),
+        title: row.row.title.clone(),
+        artist: row.row.artist.clone(),
+        pos: row.row.pos,
+        added_ms: row.row.added_ms,
+        actor: row.row.actor.clone(),
+        favorite_pos: row.one().map(|f| f.pos),
+    }
 }
 
 peer!(add_song, favorite, unfavorite, favorite_all, remove_song);

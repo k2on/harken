@@ -21,10 +21,10 @@ after whatever arrived while you were away.
 ```
 crates/harken/           the domain — the ONLY apply
   schema.sql             the one description of the tables. `migrate` runs it,
-                         and petros-sql checks every statement against it
-  domain.rs              `mutations!` — verbs, arguments and bodies in one
-                         declaration; plus fill_auto
-  storage.rs             the read model — checked SQL, same as the writes
+                         `tables!` generates the row types from it, and its
+                         foreign keys generate the relationships between them
+  src/schema.rs          the model: the tables, and the view a client reads
+  src/functions.rs       every mutation and every query, one definition each
   tests/conformance.rs   the native and wasm builds of `apply`, compared
   tests/converge.rs      the domain against a simulated fleet
   tests/read_model.rs    library() and favorites() against rows apply wrote
@@ -86,16 +86,26 @@ where a rebuild costs four minutes instead of a third of a second.
 `tests/conformance.rs` runs every verb through both builds and compares rows and
 refusals, so the two cannot drift.
 
-The SQL in it is real SQL and it is checked: `petros_sql::exec!` and
-`petros_sql::query!` prepare each statement against `schema.sql` at build time,
-with SQLite as the judge. Rename a column there and every call site using it
-stops compiling — the reads in `storage.rs` as well as the writes in
-`domain.rs`. That is why `FavoriteAll` can be one `INSERT ... SELECT` with a
-window function while still running inside a sandbox that has no SQLite in it.
+**There is no SQL in it, and no ORM.** Reads and writes are the same shape —
+`db.select(query)` and `db.put(&row)` — over row types `tables!` generates by
+asking SQLite what is in `schema.sql`. Rename a column there and every call site
+using it stops compiling, reads as well as writes, even though this runs inside
+a sandbox that has no SQLite in it.
 
-**There is no ORM here, and no `diesel` anywhere in this repository.** There was
-one for reads only, which meant the schema was described twice — as `table!` and
-as DDL — and checked two different ways, neither of which could reach `apply`.
+A join is not a keyword either. `REFERENCES song(id)` in the DDL generates
+`Song::favorite` and `Favorite::song`, and a read through one of them returns a
+*tree* — a song with its favourites hanging off it — rather than a flat product.
+Which direction you read decides whether a childless parent survives, so
+`library()` gets the LEFT JOIN and `favorites()` the INNER one without either
+word appearing.
+
+The cost is that a bulk mutation is a loop: `favorite_all` was one
+`INSERT ... SELECT` with a window function and is now a write per song, because
+a statement that inserts a thousand rows reports one result and not which rows
+they were — which is exactly what an incremental view cannot work from.
+`just latency` measures it. A thousand songs is 35ms natively and 73ms through
+the sandbox; a hundred is 2ms and 16ms.
+
 Petros still uses Diesel internally; that is the engine's business. An app
 declares `App::SCHEMA` and never names a database library.
 
@@ -125,9 +135,9 @@ desktop client, the server, or the wasm module.
 There are two `Song` structs — the row, and `foreign::Song` for the boundary —
 because `Song.id` is a `petros::Id` and UniFFI cannot be taught a foreign type
 without `impl FfiConverter for Id`, which the orphan rule refuses. There is one
-declaration: `petros_schema::row!` in `storage.rs` emits both, the `From`
-between them, and the `#[cfg]` on the far half. `domain.rs` and `storage.rs`
-never mention bindings; the doc comments reach the generated TypeScript.
+declaration: `petros_schema::row!` in `schema.rs` emits both, the `From`
+between them, and the `#[cfg]` on the far half. Neither file mentions bindings;
+the doc comments reach the generated TypeScript.
 
 ## The heart is a path on the desktop and a character on the phone
 

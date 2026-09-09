@@ -15,8 +15,12 @@ CREATE TABLE IF NOT EXISTS song (
 -- The favourites playlist is a playlist, not a flag: it has an order, and
 -- "add to favourites" reads the end of it. That is what makes the rebase
 -- visible — a favourite made offline lands after whatever arrived meanwhile.
+-- The REFERENCES is not decoration. `tables!` reads it back with
+-- `PRAGMA foreign_key_list` and generates both directions of the relationship
+-- from it — `Song::favorite` and `Favorite::song` — so how the two tables meet
+-- is written once, here, and never in a query.
 CREATE TABLE IF NOT EXISTS favorite (
-    song_id      BLOB PRIMARY KEY NOT NULL,
+    song_id      BLOB PRIMARY KEY NOT NULL REFERENCES song(id),
     pos          BIGINT NOT NULL,
     favorited_ms BIGINT NOT NULL,
     actor        TEXT NOT NULL

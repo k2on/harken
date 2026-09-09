@@ -49,13 +49,13 @@ fn the_domain_converges_when_peers_go_dark_and_come_back() {
     }
     assert_eq!(first, sim.server_hash(), "the server disagrees");
     assert_eq!(
-        harken::library(&mut petros::backend::SqliteStore(sim.conn(0)))
+        harken::library(&mut petros::backend::SqliteStore::new(sim.conn(0)))
             .unwrap()
             .len(),
         17,
         "9 shared + 4 dark + 4 lit, none lost and none duplicated"
     );
-    let playlist = harken::favorites(&mut petros::backend::SqliteStore(sim.conn(0))).unwrap();
+    let playlist = harken::favorites(&mut petros::backend::SqliteStore::new(sim.conn(0))).unwrap();
     assert_eq!(
         playlist.len(),
         17,
