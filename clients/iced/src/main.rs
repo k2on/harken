@@ -1,5 +1,9 @@
 //! The Harken library, in iced — on the desktop and in a browser.
 //!
+//! One of two clients, and the other is `clients/expo`. They run the same
+//! `apply`: this one links it, the phone loads it as a module. Neither of them
+//! contains a line of domain logic.
+//!
 //!   terminal 1:  just serve
 //!   terminal 2:  just iced alice     # this, on the desktop
 //!   terminal 3:  just iced bob       # …and again, as someone else
@@ -15,7 +19,6 @@
 //! The engine does not know which of these it is running in. What differs is
 //! two lines: where the database lives, and which transport carries the bytes.
 
-#[path = "heart.rs"]
 mod heart;
 
 use std::time::Duration;

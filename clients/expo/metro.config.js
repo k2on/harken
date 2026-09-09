@@ -6,7 +6,10 @@
 // edits to the library are silently never picked up — which is the entire loop
 // this architecture exists for.
 const path = require('path');
-const { getDefaultConfig } = require('expo/metro-config');
+// `@expo/metro-config` rather than the `expo/metro-config` re-export: EAS
+// checks this file for the scoped name and warns that the config does not
+// extend the default one when it cannot find it.
+const { getDefaultConfig } = require('@expo/metro-config');
 
 const projectRoot = __dirname;
 const config = getDefaultConfig(projectRoot);

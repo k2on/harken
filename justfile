@@ -26,7 +26,7 @@ serve addr="127.0.0.1:8787":
 
 # A desktop peer. Run it twice with different names to watch them sync.
 iced user="alice" addr="127.0.0.1:8787":
-    cargo run -p harken --features ws --example iced -- --user {{user}} --server {{addr}}
+    cargo run -p harken-iced -- --user {{user}} --server {{addr}}
 
 # The iced client in a browser.
 #
@@ -71,23 +71,22 @@ web-build:
         fi
     fi
 
-    mkdir -p target/wasm-sqlite-stub crates/harken/examples/web/pkg
+    mkdir -p target/wasm-sqlite-stub clients/iced/web/pkg
     printf '!<arch>\n' > target/wasm-sqlite-stub/libsqlite3.a
     CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS='--cfg getrandom_backend="wasm_js"' \
     CC_wasm32_unknown_unknown="$cc" \
     AR_wasm32_unknown_unknown="${WASM_AR:-llvm-ar}" \
     CFLAGS_wasm32_unknown_unknown="$cflags" \
     SQLITE3_LIB_DIR="$PWD/target/wasm-sqlite-stub" SQLITE3_STATIC=1 \
-        cargo build -p harken --features ws --example iced \
-            --target wasm32-unknown-unknown --release
+        cargo build -p harken-iced --target wasm32-unknown-unknown --release
     "$bindgen" --target web --no-typescript \
-        --out-dir crates/harken/examples/web/pkg \
-        target/wasm32-unknown-unknown/release/examples/iced.wasm
+        --out-dir clients/iced/web/pkg \
+        target/wasm32-unknown-unknown/release/harken-iced.wasm
 
 # Build it and serve it at http://localhost:8080
 web: web-build
     @echo "serving on http://localhost:8080"
-    cd crates/harken/examples/web && python3 -m http.server 8080
+    cd clients/iced/web && python3 -m http.server 8080
 
 # ---------------------------------------------------------------- the Expo peer
 #

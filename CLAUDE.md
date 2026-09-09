@@ -1,7 +1,11 @@
 # harken
 
 A self-hosted, local-first music system, and a **Petros app** — the sync engine
-lives next door in `../petros` and arrives by path until it is published.
+lives next door in `../petros` and arrives as a git dependency, patched back to
+that working copy by a gitignored `.cargo/config.toml`.
+
+Two clients, `clients/iced` and `clients/expo`, and one server. All three run
+the same `apply`: the first two link it, the phone loads it as a module.
 
 The domain is songs and a favourites playlist. Favourites is a real ordered
 playlist rather than a flag, so "add to favourites" reads `MAX(pos) + 1` — which
@@ -17,14 +21,15 @@ crates/harken/           the domain — the ONLY apply
   domain.rs              `mutations!` — verbs, arguments and bodies in one
                          declaration; plus fill_auto
   storage.rs             the read model, through Diesel
-  examples/iced.rs       the desktop and browser peer
-  examples/heart.rs      the heart, drawn as a path (see below)
   tests/conformance.rs   the native and wasm builds of `apply`, compared
   tests/converge.rs      the domain against a simulated fleet
 crates/harken-wasm/      the same domain as wasm — one `export!`
 crates/ffi/              the client over UniFFI, for the Expo app
 crates/server/           axum, with one Petros handler mounted on it
-clients/expo/            the Expo app; src/ is UI and a socket, nothing else
+clients/iced/            the desktop and browser client
+  src/heart.rs           the heart, drawn as a path (see below)
+  web/                   the browser shell `just web` serves
+clients/expo/            the phone client; src/ is UI and a socket, nothing else
   modules/harken-native/ the turbo module — generated, gitignored, not authored
 docs/decisions.md        what is true because this ships to a phone
 ```

@@ -5,6 +5,7 @@ members = [
     "crates/harken-wasm",
     "crates/ffi",
     "crates/server",
+    "clients/iced",
 ]
 
 [workspace.package]
