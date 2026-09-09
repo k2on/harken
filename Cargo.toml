@@ -2,7 +2,6 @@
 resolver = "2"
 members = [
     "crates/harken",
-    "clients/expo/rust",
     "crates/server",
     "clients/iced",
 ]

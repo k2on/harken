@@ -27,7 +27,7 @@ use petros_wasm_host::MUTATORS;
 /// exactly this and nothing else, so it is baked in rather than found at
 /// runtime. `just mutators` is what puts it there.
 pub const BUNDLED: &[u8] =
-    include_bytes!("../../../../target/wasm32-unknown-unknown/mutators/harken.wasm");
+    include_bytes!("../../../target/wasm32-unknown-unknown/mutators/harken.wasm");
 
 /// Install [`BUNDLED`]. What a peer with no Metro attached calls at startup.
 pub fn load_bundled() -> Result<u64, String> {
@@ -36,15 +36,15 @@ pub fn load_bundled() -> Result<u64, String> {
 
 /// One mutation, as the bytes the log stores.
 ///
-/// Wire-identical to [`harken::Payload`] — both are `#[serde(transparent)]` over
+/// Wire-identical to [`crate::Payload`] — both are `#[serde(transparent)]` over
 /// the same CBOR value — and separate only because a crate may not implement a
 /// foreign trait for a foreign type. `conformance.rs` checks they agree.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Payload(pub Value);
 
-impl From<harken::Payload> for Payload {
-    fn from(p: harken::Payload) -> Self {
+impl From<crate::Payload> for Payload {
+    fn from(p: crate::Payload) -> Self {
         Payload(p.0)
     }
 }
@@ -104,10 +104,10 @@ impl App for WasmHarken {
     // One schema, and the linked crate's. Migrations are the one thing that
     // should not arrive over the air, so they stay where every peer can see
     // them — this peer replaces `apply`, not the shape of the database.
-    const SCHEMA: &'static str = <harken::HarkenApp as App>::SCHEMA;
+    const SCHEMA: &'static str = <crate::HarkenApp as App>::SCHEMA;
 }
 
 /// Author a mutation by name, through the same encoder every peer uses.
 pub fn from_json(kind: &str, args_json: &str) -> Result<Payload, String> {
-    harken::from_json(kind, args_json).map(Payload::from)
+    crate::from_json(kind, args_json).map(Payload::from)
 }

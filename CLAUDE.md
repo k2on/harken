@@ -7,9 +7,9 @@ that working copy by a gitignored `.cargo/config.toml`.
 Two clients, `clients/iced` and `clients/expo`, and one server. All three run
 the same `apply`: the first two link it, the phone loads it as a module.
 
-Four packages and no adapters. There is one domain crate, one server, and a
-crate per client — the phone's is `clients/expo/rust`, because a UniFFI library
-is the native half of that client and not a thing of its own.
+Three packages. One domain crate, one server, one desktop client — and the
+phone's native half is a *feature* of the domain crate rather than a package,
+because everything it exports was already defined there.
 
 The domain is songs and a favourites playlist. Favourites is a real ordered
 playlist rather than a flag, so "add to favourites" reads `MAX(pos) + 1` — which
@@ -29,13 +29,13 @@ crates/harken/           the domain — the ONLY apply
   tests/converge.rs      the domain against a simulated fleet
   tests/read_model.rs    library() and favorites() against rows apply wrote
   src/lib.rs             …and, under `cfg(wasm32)`, the module's ABI
+  src/ffi.rs             the phone's client over UniFFI  (feature `ffi`)
+  src/wasm_app.rs        the App whose `apply` is a module (feature `ffi`)
 crates/server/           axum, with one Petros handler mounted on it
 clients/iced/            the desktop and browser client
   src/heart.rs           the heart, drawn as a path (see below)
   web/                   the browser shell `just web` serves
-clients/expo/            the phone client
-  src/                   its TypeScript half — UI and a socket, nothing else
-  rust/                  its native half — the client over UniFFI
+clients/expo/            the phone client; src/ is UI and a socket, nothing else
   modules/harken-native/ the turbo module — generated, gitignored, not authored
 scripts/mutators.sh      builds the module and its TypeScript types
 docs/decisions.md        what is true because this ships to a phone
@@ -54,7 +54,7 @@ just serve        # the sync server…
 just iced alice   # …a desktop peer…
 just iced bob     # …and another, to watch them sync
 just web          # …a browser peer, at localhost:8080
-just ffi-bindings # regenerate the Expo client's TS from clients/expo/rust
+just ffi-bindings # regenerate the Expo client's TS from crates/harken
 just expo-android # …and a phone. Needs `nix develop .#android`.
 ```
 
@@ -91,6 +91,18 @@ EAS hook and CI all call it — only one of them has `just`. The single differen
 between them is where `petros-codegen` comes from: the checkout beside this one
 when there is one, so an engine edit needs no commit, and the published branch
 otherwise, because a build container has no sibling directory.
+
+## The FFI is a feature, not a package
+
+`src/ffi.rs` exports the phone's client, and `ubrn.config.yaml` builds this crate
+with `cargoExtras: [--features, ffi]`. Off by default, so `cargo tree -e normal`
+finds no uniffi and no wasmi in the desktop client, the server, or the module.
+
+One duplicate survives and cannot be removed: `ffi::FfiSong` is a near-copy of
+`Song`, because `Song.id` is a `petros::Id` and teaching UniFFI to carry it needs
+`impl FfiConverter for Id` — a foreign trait on a foreign type, which the orphan
+rule refuses. The cost is one `From` impl the compiler checks: add a field to
+`Song` and it stops compiling until the field is carried across.
 
 ## The heart is a path on the desktop and a character on the phone
 

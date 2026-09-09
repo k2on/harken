@@ -1,13 +1,18 @@
 # How the generated turbo-module is wired to the Rust.
 #
-# `rust.directory` points back at this repository's cargo workspace: the crate
-# below is the same one `cargo test` builds, not a vendored copy. That is the
-# whole point — the mutations and the queries have one definition, in
-# `crates/harken`, and everything a foreign caller sees is generated from it.
+# `rust.directory` points back at this repository's cargo workspace, and the
+# crate below is the domain crate itself — not a vendored copy and not a wrapper
+# package. That is the whole point: the mutations and the queries have one
+# definition, and everything a foreign caller sees is generated from it.
+#
+# `cargoExtras: --features ffi` is what makes that possible. The binding layer
+# is a feature of the domain crate rather than a crate of its own, and it is off
+# by default so the desktop client and the server do not build uniffi and a wasm
+# interpreter to reach the same `apply`.
 ---
 rust:
   directory: ../../../..
-  manifestPath: clients/expo/rust/Cargo.toml
+  manifestPath: crates/harken/Cargo.toml
 
 bindings:
   cpp: cpp/generated
@@ -21,9 +26,15 @@ android:
     - arm64-v8a
     - x86_64
   apiLevel: 24
+  cargoExtras:
+    - --features
+    - ffi
 
 ios:
   directory: ios
   targets:
     - aarch64-apple-ios
     - aarch64-apple-ios-sim
+  cargoExtras:
+    - --features
+    - ffi

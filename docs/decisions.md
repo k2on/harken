@@ -19,7 +19,7 @@ removed — the replicas diverge silently and neither side is obviously at fault
 Every invariant at the top of `CLAUDE.md` is a property of one implementation,
 not of two that intend to match.
 
-So `clients/expo/rust` exports the client over UniFFI and
+So `crates/harken`'s `ffi` feature exports the client over UniFFI and
 `uniffi-bindgen-react-native` generates the TypeScript. The generated files are
 gitignored rather than committed, so nobody can hand-edit them and wonder why
 the next build reverts it, and `just ffi-bindings` regenerates and then runs
@@ -32,7 +32,7 @@ One place to change, and it is the place that already had to be right.
 
 ## The socket stayed in JavaScript
 
-`clients/expo/rust` exposes the sans-io client and nothing else: `take_outgoing()`
+`src/ffi.rs` exposes the sans-io client and nothing else: `take_outgoing()`
 hands back encoded frames, `recv()` takes them, and the caller owns the
 transport. React Native then does what a browser does in `transport/web.rs`,
 for the same reason it did there — the platform already has a WebSocket.
@@ -214,11 +214,21 @@ on the build rather than a property of a package. Removing it made the native
 rebuild *faster* — 8.2s to 3.9s — because it is one less crate to build, and the
 loop is unchanged at ~0.35s.
 
-`crates/ffi` was not an adapter and did not disappear; it moved. A UniFFI
-library is the native half of the Expo client, the way `clients/iced/src` is the
-whole of the desktop one, so it lives at `clients/expo/rust`. What is left under
-`crates/` is the domain and the server, which is what the repository actually
-contains.
+`crates/ffi` went too, one step later and for a better reason: nearly everything
+it exported was already defined in the domain crate. `add_song`, `favorite`,
+`library`, `favorites` and `Song` all existed there; the FFI crate re-declared
+them so UniFFI could see them. It is `src/ffi.rs` behind a feature now, and
+`ubrn.config.yaml` asks for that feature with `cargoExtras`. Off by default, so
+`cargo tree -e normal` finds no uniffi and no wasmi in the iced client, the
+server or the module.
+
+One duplicate survives. `ffi::FfiSong` is a near-copy of `Song` because
+`Song.id` is a `petros::Id`, and carrying a foreign type across UniFFI needs
+`impl FfiConverter for Id` — a foreign trait on a foreign type, which the orphan
+rule refuses; `uniffi::custom_type!` expands to exactly that impl and does not
+compile. `#[uniffi::remote]` re-declares a shape rather than mapping one, so it
+does not help. What is left is one `From` impl the compiler checks, which is a
+cheaper thing to maintain than a package.
 
 ## One script, three callers
 

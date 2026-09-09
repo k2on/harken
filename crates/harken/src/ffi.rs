@@ -26,21 +26,26 @@
 
 use std::sync::Mutex;
 
-pub mod app;
+pub use crate::wasm_app::WasmHarken;
 
-use app::WasmHarken;
-
-use harken::{favorites, library};
+use crate::{favorites, library, Song};
 use petros::{decode, encode, AutoCtx, Client, MutationError, ServerMsg};
 
-uniffi::setup_scaffolding!();
-
-/// One song, and whether it is on the favourites playlist.
+/// One song, as it crosses to JavaScript.
+///
+/// A near-copy of [`crate::Song`], which is not ideal and is not avoidable:
+/// `Song.id` is a `petros::Id`, and teaching UniFFI to carry a foreign type
+/// needs `impl FfiConverter for Id` — a foreign trait on a foreign type, which
+/// the orphan rule refuses. `#[uniffi::remote]` re-declares a shape rather than
+/// mapping one, so it does not help either.
+///
+/// What that costs is one `From` impl, checked by the compiler: add a field to
+/// `crate::Song` and this stops compiling until it is carried across.
 #[derive(Debug, Clone, uniffi::Record)]
-pub struct Song {
-    /// The canonical 8-4-4-4-12 form. Sixteen bytes on the wire and in SQLite;
-    /// a string here because that is what a foreign caller can hold, compare
-    /// and use as a list key.
+pub struct FfiSong {
+    /// The canonical 8-4-4-4-12 form. Sixteen bytes in SQLite and in the log; a
+    /// string here because that is what a foreign caller can hold, compare and
+    /// use as a list key.
     pub id: String,
     pub title: String,
     pub artist: String,
@@ -52,14 +57,14 @@ pub struct Song {
     pub actor: String,
     pub favorited: bool,
     /// Its place in the favourites playlist, or -1 when it is not on it.
-    /// Positions start at 1, so the sentinel is unambiguous and the record
-    /// stays flat across the boundary.
+    /// Positions start at 1, so the sentinel is unambiguous and the record stays
+    /// flat across the boundary.
     pub favorite_pos: i64,
 }
 
-impl From<harken::Song> for Song {
-    fn from(song: harken::Song) -> Self {
-        Song {
+impl From<Song> for FfiSong {
+    fn from(song: Song) -> Self {
+        FfiSong {
             favorited: song.favorited(),
             favorite_pos: song.favorite_pos.unwrap_or(-1),
             id: song.id.to_string(),
@@ -167,10 +172,10 @@ impl HarkenClient {
     /// mutate("SetDone", r#"{"id": "67e55084-...", "done": true}"#)
     /// ```
     pub fn mutate(&self, kind: String, args: String) -> Result<(), HarkenError> {
-        let payload = app::from_json(&kind, &args)
+        let payload = crate::from_json(&kind, &args)
             .map_err(|message| HarkenError::Refused { reason: message })?;
         self.with(|c| {
-            c.mutate(payload)?;
+            c.mutate(payload.into())?;
             Ok(())
         })
     }
@@ -219,13 +224,18 @@ impl HarkenClient {
 
     /// The whole library: confirmed replayed, then this peer's pending
     /// mutations on top. Always ordered explicitly.
-    pub fn library(&self) -> Result<Vec<Song>, HarkenError> {
-        self.with(|c| Ok(library(c.conn())?.into_iter().map(Song::from).collect()))
+    pub fn library(&self) -> Result<Vec<FfiSong>, HarkenError> {
+        self.with(|c| Ok(library(c.conn())?.into_iter().map(FfiSong::from).collect()))
     }
 
     /// Just the favourites, in playlist order.
-    pub fn favorites(&self) -> Result<Vec<Song>, HarkenError> {
-        self.with(|c| Ok(favorites(c.conn())?.into_iter().map(Song::from).collect()))
+    pub fn favorites(&self) -> Result<Vec<FfiSong>, HarkenError> {
+        self.with(|c| {
+            Ok(favorites(c.conn())?
+                .into_iter()
+                .map(FfiSong::from)
+                .collect())
+        })
     }
 
     /// How much of the server's log has been applied.
@@ -285,7 +295,7 @@ impl HarkenClient {
 
     /// Hand one frame from the server to the engine.
     pub fn recv(&self, frame: Vec<u8>) -> Result<(), HarkenError> {
-        let msg: ServerMsg<app::Payload> = decode(&frame)?;
+        let msg: ServerMsg<crate::wasm_app::Payload> = decode(&frame)?;
         self.with(|c| Ok(c.recv(msg)?))
     }
 

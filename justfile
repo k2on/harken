@@ -90,14 +90,14 @@ web: web-build
 
 # ---------------------------------------------------------------- the Expo peer
 #
-# The domain is defined once, in `crates/harken`. `clients/expo/rust` wraps it for
+# The domain is defined once, in `crates/harken`, whose `ffi` feature wraps it for
 # foreign callers with uniffi, and everything TypeScript sees is generated from
 # that — so there is no second `apply` to keep in step. See docs/decisions.md.
 
 expo-dir := "clients/expo"
 # bun hoists a workspace's binaries to the app, not to the library itself.
 ubrn := justfile_directory() / "clients/expo/node_modules/.bin/ubrn"
-ffi-lib := if os() == "macos" { "libharken_ffi.dylib" } else { "libharken_ffi.so" }
+ffi-lib := if os() == "macos" { "libharken.dylib" } else { "libharken.so" }
 
 # ------------------------------------------------------------- hot mutators
 #
@@ -113,7 +113,7 @@ mutators:
 # Where the time goes in one mutation. Ignored by `just test` because it is a
 # measurement and it is slow; run it when a number is in question.
 latency:
-    cargo test -p harken-ffi --release --test latency -- --ignored --nocapture --test-threads=1
+    cargo test -p harken --all-features --release --test ffi_latency -- --ignored --nocapture --test-threads=1
 
 # The loop. Leave this running beside `bun start`, then edit the domain.
 mutators-watch:
@@ -135,14 +135,14 @@ expo-install:
 # the workspace root; `generate turbo-module` reads the library's package.json
 # so it runs there. Hence the two directories.
 
-# Regenerate the client's TypeScript and C++ from `clients/expo/rust`.
+# Regenerate the client's TypeScript and C++ from `crates/harken --features ffi`.
 ffi-bindings: expo-install
-    cargo build -p harken-ffi
+    cargo build -p harken --features ffi
     {{ubrn}} generate jsi bindings target/debug/{{ffi-lib}} --library --no-format \
         --ts-dir {{expo-dir}}/modules/harken-native/src/generated \
         --cpp-dir {{expo-dir}}/modules/harken-native/cpp/generated
     cd {{expo-dir}}/modules/harken-native && {{ubrn}} generate jsi turbo-module \
-        --config ubrn.config.yaml --native-bindings harken_ffi
+        --config ubrn.config.yaml --native-bindings harken
     cd {{expo-dir}} && ./node_modules/.bin/tsc --noEmit
 
 # Needs the SDK and the NDK, which the default shell deliberately does not

@@ -1566,18 +1566,6 @@ dependencies = [
  "petros-wasm-host",
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "harken-ffi"
-version = "0.1.0"
-dependencies = [
- "ciborium",
- "harken",
- "petros",
- "petros-wasm-host",
- "serde",
- "serde_json",
  "thiserror 1.0.69",
  "uniffi",
 ]

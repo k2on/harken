@@ -10,7 +10,7 @@
 
 import { useState } from 'react';
 import { Stack, useLocalSearchParams } from 'expo-router';
-import type { Song } from 'harken-native';
+import type { FfiSong as Song } from 'harken-native';
 import {
   FlatList,
   KeyboardAvoidingView,

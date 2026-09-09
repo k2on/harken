@@ -2,9 +2,9 @@
 //! the module, the module writes the row, and swapping the module mid-session
 //! changes what the next mutation does without disturbing the database.
 
-use harken_ffi::HarkenClient;
+use harken::ffi::HarkenClient;
 
-const MODULE: &[u8] = harken_ffi::app::BUNDLED;
+const MODULE: &[u8] = harken::wasm_app::BUNDLED;
 
 /// The point of all of it: a mutation made through the public client runs the
 /// module, not a linked `apply` — and swapping the module changes what the very

@@ -23,6 +23,20 @@ mod storage;
 #[cfg(feature = "storage")]
 pub use storage::*;
 
+// The phone's client: the same domain, reached over UniFFI, with `apply`
+// arriving as a module rather than linked. Behind a feature because nothing
+// else wants uniffi in its graph — and off by default, so the desktop client
+// and the server never build it.
+// At the crate root because that is where it defines `UniFfiTag`, which every
+// `#[derive(uniffi::…)]` in this crate resolves against.
+#[cfg(feature = "ffi")]
+uniffi::setup_scaffolding!();
+
+#[cfg(feature = "ffi")]
+pub mod ffi;
+#[cfg(feature = "ffi")]
+pub mod wasm_app;
+
 // The wasm ABI: `apply` and `fill_auto` behind the entry points the interpreter
 // calls, and a store made of imported functions.
 //
