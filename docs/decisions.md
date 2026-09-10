@@ -362,3 +362,23 @@ think of it is a view that is wrong on the call sites that do not.
 `reset` set — because a rollback reports nothing and no sequence of patches
 describes it. `src/peer.ts` splices; the array copy it then makes for React is
 copying references, not decoding rows, and that is the half that is cheap.
+
+## The phone, measured on the phone
+
+Every number above this line was taken on a laptop. The one that decides whether
+any of it worked is a mutation on an Android device, and it is **under ten
+milliseconds, and stays there however many are made in a row**.
+
+It was 200–300ms when this started, then 390ms once about forty were pending.
+Three causes, fixed separately and recorded in `../petros/docs/decisions.md`:
+`synchronous` defaulting to FULL, a thread and a wasm instantiation per apply,
+and the optimistic view being rolled back and replayed on every mutation.
+
+The last one is why "stays there" is the interesting half. A fast first tap only
+needs the first two. A four-hundredth tap that costs what the first did needs
+the cost to stop depending on the backlog, which is what moving intents into
+their own file and applying forward into an open savepoint bought.
+
+What is still not measured on a device: the JavaScript side of the bridge. What
+crosses it is measured and is seventy bytes a tap rather than seventy kilobytes,
+but what React Native does with those values is not.

@@ -178,13 +178,37 @@ is ready — a module's writes report what they changed — but the bridge has n
 been measured on a device, and designing for it unmeasured is how the desktop's
 O(n) decode was missed the first time.
 
+## Verified on a device: sub-10ms mutations, held under spamming
+
+Android builds end to end and a mutation stays under ten milliseconds however
+many are made in a row. That is the number every performance decision in
+`../petros/docs/decisions.md` was aiming at, and it is worth writing down where
+it came from, because it was three separate problems:
+
+- **200–300ms** was `synchronous` defaulting to FULL. Every local write commits
+  its intent durably on its own, and in WAL mode that fsynced on each one.
+- **390ms at forty pending** was a thread spawned and a wasm module instantiated
+  per apply. One worker thread and one instance for the module's life now.
+- **Growing with the backlog** was the optimistic view being rolled back and
+  replayed on every mutation. Intents live in their own file and a mutation
+  applies forward into an open savepoint, so the cost stopped depending on how
+  much is pending — which is what "fast offline indefinitely" actually requires.
+
+Holding under spamming is the part that matters. A fast first tap is easy; a
+tap that costs the same as the four hundredth is the property.
+
 ## Not verified
 
-Android and iOS have never been built end to end from this repository — no
-machine here can run either toolchain — so `.github/workflows/expo.yml` is
-written but has not had a green run. What *is* verified is everything up to that
-line: the Rust builds, the bindings generate, and the app typechecks.
+iOS has never been built from this repository — no machine here can run the
+toolchain — so the `ios` job in `.github/workflows/expo.yml` is written but has
+not had a green run. It runs on `macos-15`, which has Xcode; nothing suggests it
+fails, only that nobody has watched it pass.
 
-Verified another way too, because the local `.cargo/config.toml` hides it: with
-the patch moved aside, the whole suite builds and passes against the *pinned*
-engine from git, which is what CI and EAS actually resolve.
+The JavaScript half of the bridge is unmeasured too. What crosses is measured —
+`just latency` prints it, and `docs/decisions.md` explains why it is seventy
+bytes rather than seventy kilobytes — but what React Native then does with those
+values on a device is not.
+
+Verified another way, because the local `.cargo/config.toml` hides it: with the
+patch moved aside, the whole suite builds and passes against the *pinned* engine
+from git, which is what CI and EAS actually resolve.
