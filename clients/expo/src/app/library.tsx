@@ -22,13 +22,25 @@ import {
   View,
 } from 'react-native';
 
+import { recallServer } from '@petros/client';
+
 import { usePeer } from '@/peer';
+import { storage } from '@/storage';
 import { useTheme } from '@/theme';
 
 export default function Library() {
   const params = useLocalSearchParams<{ user?: string; server?: string }>();
   const user = params.user ?? 'phone';
-  const server = params.server ?? 'ws://localhost:8787';
+  // An empty server is a peer working alone, which is a choice and not a
+  // missing parameter — so it is `null` rather than a URL nothing answers on.
+  // Arriving with no parameter at all (a deep link, a restored screen) asks
+  // what this peer chose last time.
+  const server =
+    params.server === undefined
+      ? (recallServer(storage, user) ?? null)
+      : params.server === ''
+        ? null
+        : params.server;
 
   const theme = useTheme();
   const peer = usePeer(user, server);

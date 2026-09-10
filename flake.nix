@@ -432,9 +432,14 @@
             # gnu` — for the machine it installs on. `--cpu=x64` does not
             # override that, because `bun.lock` was written on one platform and
             # `--frozen-lockfile` means the lock wins.
+            #
+            # Both move whenever `package.json` or `bun.lock` does, and each can
+            # only be computed on the machine it belongs to. This one was last
+            # refreshed on x86_64; if an ARM build fails on the hash, nix prints
+            # the right one and it goes here.
             outputHash = {
               aarch64-linux = "sha256-usHdiS9E96QuhIj38q8xi5jPn9nLKZ57KN1jJGdWpOA=";
-              x86_64-linux = "sha256-Ptax1KgQw50L/mccB2Pw0e5N3ewZZgTAxVkW3oWtKDs=";
+              x86_64-linux = "sha256-LT4+CWAMYQIZugNYsJHAMv7GYXg7zD/Sl3regffiYLY=";
             }.${system} or (throw "no node_modules hash recorded for ${system}");
           };
 

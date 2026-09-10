@@ -10,9 +10,10 @@
  * diverge silently, so there is only ever one and it is in Rust.
  */
 
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo } from 'react';
 import { AppState } from 'react-native';
 import { Paths } from 'expo-file-system';
+import { held } from '@petros/client';
 import { usePeer as usePetrosPeer } from '@petros/client/react';
 // Aliased: this file's own `Peer` is the hook's return type, and the native
 // one is the object it drives.
@@ -45,12 +46,16 @@ export type Peer = {
   note: string;
   mutators: number;
   lastMutationMs: number | null;
+  /** Where this peer is pointed, or null when it is working alone. */
+  server: string | null;
   addSong: (title: string, artist: string) => void;
   /** The heart. `true` puts the song on the favourites playlist. */
   setFavorite: (id: string, favorited: boolean) => void;
   removeSong: (id: string) => void;
   mutate: <K extends Verb>(kind: K, ...args: ArgsFor<K>) => void;
   toggleLink: () => void;
+  /** Point it somewhere else, or nowhere, without leaving the screen. */
+  setServer: (next: string | null) => void;
 };
 
 /** Where this peer's database lives. One file per actor, so two names on one
@@ -60,7 +65,7 @@ function databasePath(actor: string): string {
   return `${dir}/harken-${actor.replace(/[^a-zA-Z0-9._-]/g, '_')}.db`;
 }
 
-export function usePeer(actor: string, server: string): Peer {
+export function usePeer(actor: string, server: string | null): Peer {
   // The list, held here and spliced from what the peer sends. `library()` would
   // hand back every song on every change — at a thousand songs that is a
   // thousand rows and about seventy kilobytes across the bridge for one added
@@ -74,23 +79,31 @@ export function usePeer(actor: string, server: string): Peer {
   // The copy below is a copy of references, so React sees a new array without
   // anything being decoded twice. That is the part still proportional to the
   // library, and it is the cheap part.
-  const held = useRef<Song[]>([]);
   const peer = usePetrosPeer<PeerLike, Song[]>({
     key: actor,
     server,
     open: () => NativePeer.open(databasePath(actor), actor),
-    query: (client) => {
+    query: (client, scratch) => {
+      // The list lives in the session's scratch, not in a ref. `libraryUpdate`
+      // reports what moved *since it was last asked*, and it is asked once per
+      // session — so a list held for the life of a component starts empty on
+      // the second mount and then receives patches against a list that is not
+      // there. Everything is in the database and the screen shows nothing,
+      // which reads exactly like "it saves nothing".
+      const list = held(scratch, 'library', (): Song[] => []);
       const update = client.libraryUpdate();
       if (update.reset) {
-        held.current = update.songs;
-        return held.current.slice();
+        // In place, because the identity is what the scratch is holding.
+        list.length = 0;
+        for (const song of update.songs) list.push(song);
+        return list.slice();
       }
       for (const patch of update.patches) {
-        if (patch.op === PatchOp.Insert) held.current.splice(patch.at, 0, patch.song!);
-        else if (patch.op === PatchOp.Remove) held.current.splice(patch.at, 1);
-        else held.current[patch.at] = patch.song!;
+        if (patch.op === PatchOp.Insert) list.splice(patch.at, 0, patch.song!);
+        else if (patch.op === PatchOp.Remove) list.splice(patch.at, 1);
+        else list[patch.at] = patch.song!;
       }
-      return held.current.slice();
+      return list.slice();
     },
     install,
     watch,
@@ -116,6 +129,7 @@ export function usePeer(actor: string, server: string): Peer {
       note: peer.note,
       mutators: peer.mutators,
       lastMutationMs: peer.lastMutationMs,
+      server: peer.server,
       addSong: (title: string, artist: string) => peer.run((c) => void c.addSong(title, artist)),
       setFavorite: (id: string, favorited: boolean) =>
         peer.run((c) => (favorited ? c.favorite(id) : c.unfavorite(id))),
@@ -123,6 +137,7 @@ export function usePeer(actor: string, server: string): Peer {
       mutate: <K extends Verb>(kind: K, ...args: ArgsFor<K>) =>
         peer.run((c) => c.mutate(kind, JSON.stringify(args[0] ?? {}))),
       toggleLink: peer.toggleLink,
+      setServer: peer.setServer,
     }),
     [peer],
   );
