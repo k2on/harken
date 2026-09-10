@@ -45,6 +45,13 @@ jobs:
   apk:
     runs-on: ubuntu-latest
 
+    # `actions: write` is what lets the cache purge below delete anything. Run
+    # 14 tried and logged "Failed to delete the cache", so the store caches were
+    # accumulating while the one being kept was the wrong one.
+    permissions:
+      contents: read
+      actions: write
+
     # The button decides when it is pressed, a `v*` tag decides by existing, and
     # everything else is the development build — which is what a branch push
     # wants and what every run before this one made.
@@ -66,17 +73,23 @@ jobs:
       # and the crates and npm packages are thousands of small fetches. Caching
       # it turns a cold twenty-minute setup into a warm one.
       #
-      # Restore and save are separate steps on purpose. The combined action
-      # saves from a post step declared `post-if: success()`, and every run of
-      # this workflow so far has failed — so nothing was ever written and every
-      # run started cold, including the ones whose failure had nothing to do
-      # with the store. `if: always()` saves what the run downloaded whatever
-      # the build did with it, which is exactly the run that needs it next time.
+      # Restore and save are separate steps because the combined action saves
+      # from a post step declared `post-if: success()` — and a run that fails in
+      # the APK step has still done the downloading this exists to keep.
+      #
+      # The run id is in the key because a GitHub cache key is immutable:
+      # whoever writes it first owns it until it expires. A run cancelled ninety
+      # seconds in wrote an 89MB empty store under the shared key, and every run
+      # after it "restored" that and none could replace it. A key per run cannot
+      # be squatted; the prefixes are what make it reusable, preferring the
+      # newest run with this lockfile and falling back to any run at all.
       - uses: nix-community/cache-nix-action/restore@v6
         id: nix-store-cache
         with:
-          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'Cargo.lock', 'clients/expo/bun.lock') }}
-          restore-prefixes-first-match: nix-${{ runner.os }}-
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'Cargo.lock', 'clients/expo/bun.lock') }}-${{ github.run_id }}
+          restore-prefixes-first-match: |
+            nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'Cargo.lock', 'clients/expo/bun.lock') }}-
+            nix-${{ runner.os }}-
 
       # Cargo's own incremental state, which the nix cache above does *not*
       # cover and cannot: nix caches derivation outputs, keyed on their inputs,
@@ -113,15 +126,16 @@ jobs:
 
       # The key the *restore* computed, not a fresh one. `hashFiles` gives a
       # different answer at the end of this job than at the start: `just` runs
-      # cargo, CI has no `.cargo/config.toml` to patch the engine to a sibling
-      # checkout, and so cargo re-resolves the git dependency and rewrites
-      # `Cargo.lock`. Saving under the post-build hash means the next run's
-      # restore — which hashes the committed lockfile — can never match it, and
-      # falls back to whatever the prefix finds. The combined action did not
-      # have this problem because it evaluated the key once and reused it;
-      # splitting restore from save is what introduced it.
+      # cargo, CI has no `.cargo/config.toml` patching the engine to a sibling
+      # checkout, so cargo re-resolves the git dependency and rewrites
+      # `Cargo.lock`. A key describing a lockfile that exists nowhere in git is
+      # one the next run cannot ask for.
+      #
+      # `!cancelled()` rather than `always()`: a failed run's store is worth
+      # keeping, a killed run's store is whatever it managed in the seconds it
+      # had — and saving that is how the key got squatted.
       - uses: nix-community/cache-nix-action/save@v6
-        if: always()
+        if: ${{ !cancelled() }}
         with:
           primary-key: ${{ steps.nix-store-cache.outputs.primary-key }}
           gc-max-store-size-linux: 8G
