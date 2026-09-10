@@ -438,7 +438,7 @@
             }.${system} or (throw "no node_modules hash recorded for ${system}");
           };
 
-          # The Android development build.
+          # The Android build, in two variants — see `apk-release` below.
           #
           # Everything Google publishes for Android is a `linux-x86_64` binary
           # — the NDK's clang, aapt2, d8, CMake — so on an ARM machine this
@@ -461,9 +461,16 @@
           # Everything it needs from the network is fetched by a derivation that
           # *is* — `expoModules` and `gradleDeps` — and the build itself runs
           # offline.
-          apk = pkgs.stdenv.mkDerivation {
+          apk-debug = pkgs.stdenv.mkDerivation {
             name = "harken-debug-apk";
             src = workspace;
+
+            # `debug` or `release`. A derivation attribute, so the builder gets
+            # it as a shell variable: it is gradle's build type, the directory
+            # the APK lands in, and — capitalised — half the name of the task
+            # that builds it. `apk-release` overrides this one attribute and
+            # nothing else.
+            variant = "debug";
 
             nativeBuildInputs = [
               toolchain
@@ -580,7 +587,7 @@
               # its caches somewhere it cannot write however that is set.
               export GRADLE_USER_HOME=$TMPDIR/gradle
               cd android
-              gradle assembleDebug --no-daemon --console=plain \
+              gradle "assemble''${variant^}" --no-daemon --console=plain \
                 -Dorg.gradle.java.home=${pkgs.jdk17}
               cd ../../..
 
@@ -590,10 +597,31 @@
             installPhase = ''
               runHook preInstall
               mkdir -p $out
-              cp clients/expo/android/app/build/outputs/apk/debug/*.apk $out/
+              cp clients/expo/android/app/build/outputs/apk/$variant/*.apk $out/
               runHook postInstall
             '';
           };
+
+          # The same build, gradle's release type: the JavaScript compiled to
+          # Hermes bytecode and bundled into the APK rather than fetched from a
+          # dev server, resources crunched, no debuggable flag. Minification
+          # stays off, which is the template's default.
+          #
+          # Signed with the debug keystore Expo's template ships — its
+          # `release` block says `signingConfig signingConfigs.debug` under a
+          # comment telling you to generate your own. So this installs and runs
+          # anywhere, and is not something to put on Play: the key is public.
+          # A real key is a different job than building, because a nix store is
+          # world-readable and a signing key cannot live in one — it would mean
+          # producing an unsigned APK here and signing it outside.
+          apk-release = apk-debug.overrideAttrs (_: {
+            name = "harken-release-apk";
+            variant = "release";
+          });
+
+          # `nix build .#apk` has always meant the development build. It still
+          # does; the variants are named for anything that has to choose.
+          apk = apk-debug;
 
           # The sync server. `HARKEN_WEB` points it at a browser client; the
           # NixOS module sets it to `harken-web` so both are on one port.

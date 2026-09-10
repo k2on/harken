@@ -1,4 +1,7 @@
-# The Android development build, built by nix.
+# The Android build, built by nix.
+#
+# A branch push builds the development APK. The `Run workflow` button and a
+# `v*` tag build the release one, which differs by a single gradle task.
 #
 # One job, on an x86_64 runner, which is worth saying plainly: everything Google
 # publishes for Android is a `linux-x86_64` binary. Building this on the ARM
@@ -17,8 +20,17 @@ name: android
 on:
   push:
     branches: ["**"]
+    # A version tag is a release build. Nothing else about the job changes:
+    # same expression, same toolchain, one different gradle task.
+    tags: ["v*"]
   pull_request:
   workflow_dispatch:
+    inputs:
+      variant:
+        description: Which build to make
+        type: choice
+        options: [debug, release]
+        default: debug
 
 concurrency:
   group: android-${{ github.ref }}
@@ -27,6 +39,13 @@ concurrency:
 jobs:
   apk:
     runs-on: ubuntu-latest
+
+    # The button decides when it is pressed, a `v*` tag decides by existing, and
+    # everything else is the development build — which is what a branch push
+    # wants and what every run before this one made.
+    env:
+      VARIANT: ${{ inputs.variant || (startsWith(github.ref, 'refs/tags/v') && 'release') || 'debug' }}
+
     steps:
       - uses: actions/checkout@v4
 
@@ -78,11 +97,11 @@ jobs:
         run: nix develop --command just
 
       - name: Build the APK
-        run: nix build .#apk --print-build-logs
+        run: nix build .#apk-$VARIANT --print-build-logs
 
       - uses: actions/upload-artifact@v4
         with:
-          name: harken-android
+          name: harken-android-${{ env.VARIANT }}
           path: result/*.apk
           if-no-files-found: error
 
