@@ -183,7 +183,33 @@ so the Expo screen just writes `♥`.
   ```
   CC_aarch64_unknown_linux_gnu=gcc AR_aarch64_unknown_linux_gnu=ar
   ```
-- **nix does not supply the Android SDK**, on purpose: gradle installs missing
+- **Everything in the SDK must come from nixpkgs, and the SDK must be
+  writable.** Two separate problems that look like one. AGP resolves the
+  versions a project asks for against the SDK directory and *installs* what is
+  missing, which a store path can never allow — so the build copies the SDK
+  somewhere writable. But letting AGP install is not a fix either: what it
+  downloads is a raw Google binary wanting `/lib64/ld-linux-x86-64.so.2`, which
+  NixOS does not have. nixpkgs' copies are patched to a store interpreter and
+  run; Google's do not. So every component a build touches has to be in
+  `composeAndroidPackages` — here build-tools 35 *and* 36, platform 36, NDK
+  27.1, CMake 3.22.1 — and the writable copy exists only so AGP can write its
+  own metadata beside them.
+- **The SDK's CMake cannot run under emulation, and does not need to.**
+  qemu refuses it with "Unable to find a guest_base to satisfy all guest address
+  mapping requirements" — the same thing it says about bun. CMake is not
+  arch-specific work, though: it only *drives* the compiler. So a native
+  aarch64 cmake and ninja go in a directory of their own and
+  `local.properties` names it:
+
+  ```
+  cmake.dir=/path/to/native/cmake
+  ```
+
+  Then only the NDK's clang is emulated, which is the part that has to be. Use
+  a 3.x cmake: React Native's `CMakeLists.txt` asks for a minimum that CMake 4
+  rejects outright.
+- **nix does not supply the Android SDK** for the *devshell*, on purpose:
+  gradle installs missing
   components into the SDK directory and the store is read-only. Bring your own
   and export `ANDROID_HOME`; `nix develop .#android` adds `cargo-ndk` and a JDK.
 - **Expo Go cannot load this app.** It calls into Rust, so it needs a

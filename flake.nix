@@ -351,6 +351,166 @@
         rec {
           default = harken-server;
 
+          # The Android SDK, pinned to what Expo SDK 57 asks gradle for.
+          #
+          # Google publishes these for `linux-x86_64` and nothing else, so on an
+          # ARM machine they run under qemu — which works, transparently, and
+          # inside a build sandbox, provided `binfmt_misc` is registered for
+          # x86_64. `nix build .#apk` says so plainly when it is not.
+          androidSdk =
+            let
+              x86 = import nixpkgs {
+                system = "x86_64-linux";
+                config = {
+                  allowUnfree = true;
+                  android_sdk.accept_license = true;
+                };
+              };
+            in
+            (x86.androidenv.composeAndroidPackages {
+              # The versions the CI workflow pins, for the same reason: so that
+              # `cargo ndk` and the Android Gradle Plugin look at one NDK rather
+              # than two, and a new image cannot change the build.
+              ndkVersions = [ "27.1.12297006" ];
+              platformVersions = [ "36" ];
+              buildToolsVersions = [ "35.0.0" "36.0.0" ];
+              # The turbo module has an `externalNativeBuild`, so gradle needs
+              # CMake as well as the NDK.
+              cmakeVersions = [ "3.22.1" ];
+              includeNDK = true;
+              includeEmulator = false;
+              includeSystemImages = false;
+            }).androidsdk;
+
+          # Gradle, at the version the wrapper asks for. The wrapper would
+          # download it, which a sandbox cannot do; 25.05 ships 8.14.3 and the
+          # generated project wants 9.3.1.
+          gradle9 = pkgs.stdenv.mkDerivation {
+            pname = "gradle";
+            version = "9.3.1";
+            src = pkgs.fetchzip {
+              url = "https://services.gradle.org/distributions/gradle-9.3.1-bin.zip";
+              hash = "sha256-BrrTDxZWrXyIZ/U4gBclxGLRqHv/cZy94/Wy8DrZ6nE=";
+            };
+            nativeBuildInputs = [ pkgs.makeWrapper ];
+            installPhase = ''
+              mkdir -p $out
+              cp -r . $out/gradle
+              makeWrapper $out/gradle/bin/gradle $out/bin/gradle \
+                --set JAVA_HOME ${pkgs.jdk17}
+            '';
+          };
+
+          # The Expo app's JavaScript dependencies.
+          #
+          # A fixed-output derivation, because `bun install` needs the network.
+          # Built natively rather than under emulation: qemu cannot run bun at
+          # all — it wants an address-space layout qemu will not give it, and
+          # says so with "Unable to find a guest_base".
+          expoModules = pkgs.stdenv.mkDerivation {
+            name = "harken-expo-node-modules";
+            src = pkgs.lib.cleanSourceWith {
+              src = ./clients/expo;
+              filter = path: type:
+                !(builtins.elem (baseNameOf path) [ "node_modules" "android" "ios" ".expo" ]);
+            };
+            nativeBuildInputs = [ pkgs.bun pkgs.cacert ];
+            buildPhase = ''
+              export HOME=$TMPDIR
+              bun install --frozen-lockfile --no-progress
+            '';
+            installPhase = ''
+              mkdir -p $out
+              cp -r node_modules/. $out/
+            '';
+            dontFixup = true;
+            outputHashMode = "recursive";
+            outputHashAlgo = "sha256";
+            outputHash = "sha256-usHdiS9E96QuhIj38q8xi5jPn9nLKZ57KN1jJGdWpOA=";
+          };
+
+          # The Android development build.
+          #
+          # Everything Google publishes for Android is a `linux-x86_64` binary
+          # — the NDK's clang, aapt2, d8, CMake — so on an ARM machine this
+          # depends on `binfmt_misc` being registered for x86_64. That works,
+          # including inside a build sandbox, and it is slow: the emulated
+          # compile of SQLite's amalgamation alone is about a minute per ABI.
+          #
+          # Not a fixed-output derivation, and it cannot be one: an APK is a zip
+          # and a signed one at that, so it is not reproducible byte-for-byte.
+          # Everything it needs from the network is fetched by a derivation that
+          # *is* — `expoModules` and `gradleDeps` — and the build itself runs
+          # offline.
+          apk = pkgs.stdenv.mkDerivation {
+            name = "harken-debug-apk";
+            src = workspace;
+
+            nativeBuildInputs = [
+              toolchain
+              gradle9
+              androidSdk
+              pkgs.cargo-ndk
+              pkgs.jdk17
+              pkgs.nodejs
+              pkgs.python3
+              pkgs.unzip
+              pkgs.which
+            ];
+
+            ANDROID_HOME = "${androidSdk}/libexec/android-sdk";
+            ANDROID_SDK_ROOT = "${androidSdk}/libexec/android-sdk";
+            ANDROID_NDK_HOME = "${androidSdk}/libexec/android-sdk/ndk/27.1.12297006";
+            JAVA_HOME = "${pkgs.jdk17}";
+
+            # `cargo-ndk` sets `CC` for its child, and cc-rs reads it for *host*
+            # artifacts too — and `petros-sql` is a proc macro that links
+            # SQLite, so this build compiles libsqlite3-sys for the host as
+            # well. Without this it does so with the NDK's clang, which has no
+            # glibc sysroot, and fails on a missing `stdio.h`. A
+            # target-qualified variable wins over the bare one.
+            CC_aarch64_unknown_linux_gnu = "gcc";
+            AR_aarch64_unknown_linux_gnu = "ar";
+
+            buildPhase = ''
+              runHook preBuild
+
+              export HOME=$TMPDIR
+              export CARGO_HOME=$TMPDIR/cargo
+
+              if ! ${pkgs.coreutils}/bin/test -e /proc/sys/fs/binfmt_misc/x86_64-linux; then
+                echo "" >&2
+                echo "This needs to run x86_64 binaries: everything Google ships" >&2
+                echo "for Android is linux-x86_64 only. On NixOS:" >&2
+                echo "" >&2
+                echo "  boot.binfmt.emulatedSystems = [ \"x86_64-linux\" ];" >&2
+                echo "" >&2
+                exit 1
+              fi
+
+              echo "--- the mutator module"
+              ./scripts/mutators.sh
+
+              echo "--- node_modules"
+              ln -s ${expoModules} clients/expo/node_modules
+
+              echo "--- the engine, cross-compiled (emulated; this is the slow part)"
+              cd clients/expo/modules/harken-native
+              ../../node_modules/.bin/ubrn build android \
+                --config ubrn.config.yaml --and-generate --release
+              cd ../../../..
+
+              runHook postBuild
+            '';
+
+            installPhase = ''
+              runHook preInstall
+              mkdir -p $out
+              cp -r clients/expo/modules/harken-native/android/src/main/jniLibs $out/ || true
+              runHook postInstall
+            '';
+          };
+
           # The sync server. `HARKEN_WEB` points it at a browser client; the
           # NixOS module sets it to `harken-web` so both are on one port.
           harken-server = rustPlatform.buildRustPackage {
