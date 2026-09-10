@@ -199,6 +199,14 @@
             rustc = toolchain;
           };
 
+          # Building a Petros app for Android is the engine's business, not this
+          # app's: the SDK pinned the way every Petros app needs it, the `ubrn`
+          # command, the `[patch]` that makes this lockfile resolvable, and the
+          # two-layer cross-compile that stops a changed mutation recompiling a
+          # hundred crates. All of it used to be in this file, where the second
+          # Petros app would have had to copy it.
+          android = import "${petros}/nix/android.nix" { inherit pkgs nixpkgs; };
+
           # `cleanSource` filters VCS files, not gitignored ones — so it would
           # happily copy this machine's `.cargo/config.toml`, whose patch points
           # at `/home/max/...`. A build that quietly used a developer's working
@@ -247,17 +255,8 @@
           # The patch `.cargo/config.toml` provides locally, pointing at the
           # pinned engine instead of `../petros`. Without it cargo cannot
           # resolve the lockfile at all, because the lockfile was written with
-          # the patch in place.
-          cargoPatch = pkgs.writeText "petros-patch.toml" ''
-            [patch."https://github.com/k2on/petros"]
-            petros = { path = "${petros}/crates/petros" }
-            petros-wasm-host = { path = "${petros}/crates/petros-wasm-host" }
-            petros-schema = { path = "${petros}/crates/petros-schema" }
-            petros-sql = { path = "${petros}/crates/petros-sql" }
-            petros-testkit = { path = "${petros}/crates/petros-testkit" }
-            petros-wasm-guest = { path = "${petros}/crates/petros-wasm-guest" }
-            petros-axum = { path = "${petros}/crates/petros-axum" }
-          '';
+          # the patch in place. The engine names its own crates.
+          cargoPatch = android.mkCargoPatch petros;
 
           # The tree every package is built from: the sources, plus the patch
           # that makes the lockfile resolvable, plus a check that the two pins
@@ -281,12 +280,21 @@
             install -Dm444 ${cargoPatch} $out/.cargo/config.toml
           '';
 
-          # The same treatment for the narrow tree: cargo cannot resolve the
-          # lockfile without the patch, wherever it is resolving it from.
-          engineWorkspace = pkgs.runCommand "harken-engine-workspace" { } ''
+          # The narrow tree, with the same check the full one gets: the two
+          # pins for one engine have to agree. No `.cargo/config.toml` here —
+          # the engine build writes its own, because it needs the vendored
+          # dependencies in it as well as the patch.
+          engineWorkspace = pkgs.runCommand "harken-engine-workspace"
+            {
+              cargoToml = "${engineSrc}/Cargo.toml";
+            } ''
+            want=$(grep -o 'rev = "[0-9a-f]\{40\}"' "$cargoToml" | head -1 | cut -d'"' -f2)
+            if [ "$want" != "${petros.rev}" ]; then
+              echo "engine pin mismatch: Cargo.toml $want, flake.lock ${petros.rev}" >&2
+              exit 1
+            fi
             cp -r ${engineSrc} $out
             chmod -R u+w $out
-            install -Dm444 ${cargoPatch} $out/.cargo/config.toml
           '';
 
           # The dependencies, vendored by cargo itself.
@@ -393,54 +401,17 @@
         rec {
           default = harken-server;
 
-          # The Android SDK, pinned to what Expo SDK 57 asks gradle for.
-          #
-          # Google publishes these for `linux-x86_64` and nothing else, so on an
-          # ARM machine they run under qemu — which works, transparently, and
-          # inside a build sandbox, provided `binfmt_misc` is registered for
-          # x86_64. `nix build .#apk` says so plainly when it is not.
-          androidSdk =
-            let
-              x86 = import nixpkgs {
-                system = "x86_64-linux";
-                config = {
-                  allowUnfree = true;
-                  android_sdk.accept_license = true;
-                };
-              };
-            in
-            (x86.androidenv.composeAndroidPackages {
-              # The versions the CI workflow pins, for the same reason: so that
-              # `cargo ndk` and the Android Gradle Plugin look at one NDK rather
-              # than two, and a new image cannot change the build.
-              ndkVersions = [ "27.1.12297006" ];
-              platformVersions = [ "36" ];
-              buildToolsVersions = [ "35.0.0" "36.0.0" ];
-              # The turbo module has an `externalNativeBuild`, so gradle needs
-              # CMake as well as the NDK.
-              cmakeVersions = [ "3.22.1" ];
-              includeNDK = true;
-              includeEmulator = false;
-              includeSystemImages = false;
-            }).androidsdk;
+          # The Android SDK, pinned to what Expo SDK 57 asks gradle for. The
+          # versions are this app's; how to compose them without the Gradle
+          # Plugin trying to install its own is the engine's.
+          androidSdk = android.mkSdk { };
 
-          # Gradle, at the version the wrapper asks for. The wrapper would
-          # download it, which a sandbox cannot do; 25.05 ships 8.14.3 and the
-          # generated project wants 9.3.1.
-          gradle9 = pkgs.stdenv.mkDerivation {
-            pname = "gradle";
+          # Gradle, at the version the generated project's wrapper asks for.
+          # The wrapper would download it, which a builder cannot do; 25.05
+          # ships 8.14.3 and the project wants 9.3.1.
+          gradle9 = android.mkGradle {
             version = "9.3.1";
-            src = pkgs.fetchzip {
-              url = "https://services.gradle.org/distributions/gradle-9.3.1-bin.zip";
-              hash = "sha256-BrrTDxZWrXyIZ/U4gBclxGLRqHv/cZy94/Wy8DrZ6nE=";
-            };
-            nativeBuildInputs = [ pkgs.makeWrapper ];
-            installPhase = ''
-              mkdir -p $out
-              cp -r . $out/gradle
-              makeWrapper $out/gradle/bin/gradle $out/bin/gradle \
-                --set JAVA_HOME ${pkgs.jdk17}
-            '';
+            hash = "sha256-BrrTDxZWrXyIZ/U4gBclxGLRqHv/cZy94/Wy8DrZ6nE=";
           };
 
           # The Expo app's JavaScript dependencies.
@@ -485,124 +456,58 @@
             }.${system} or (throw "no node_modules hash recorded for ${system}");
           };
 
-          # The `ubrn` command, built once.
-          #
-          # `node_modules/.bin/ubrn` is a shim: it runs `cargo run` against a
-          # crate *inside* `node_modules`, so the first call in a fresh tree
-          # compiles a CLI from source. In a nix builder every call is the first
-          # call, and it was 156s of every APK build — for a tool whose source
-          # is pinned by `bun.lock` and changes when nothing else does.
-          #
-          # Built here and invoked directly. Warm, the same command answers in
-          # five milliseconds.
-          ubrn = pkgs.stdenv.mkDerivation {
-            name = "ubrn";
-            src = "${expoModules}/uniffi-bindgen-react-native";
-
-            nativeBuildInputs = [ toolchain pkgs.pkg-config ];
-            # cargo fetches this crate's own dependencies.
-            __noChroot = true;
-
-            buildPhase = ''
-              runHook preBuild
-              export HOME=$TMPDIR
-              export CARGO_HOME=$TMPDIR/cargo
-              cargo build --release --manifest-path crates/ubrn_cli/Cargo.toml
-              runHook postBuild
-            '';
-
-            installPhase = ''
-              runHook preInstall
-              install -Dm755 target/release/uniffi-bindgen-react-native $out/bin/ubrn
-              runHook postInstall
-            '';
+          # The `ubrn` command, built once rather than compiled from source by
+          # the shim in `node_modules` on every build.
+          ubrn = android.mkUbrn {
+            inherit toolchain;
+            nodeModules = expoModules;
           };
 
           # The engine cross-compiled for Android, and the bindings generated
           # from the same metadata.
           #
-          # Its own derivation because it is the expensive half and the half
-          # that changes least. Everything it reads is in `engineSrc`, which is
-          # deliberately narrow: an APK built after a screen edit finds this in
-          # the store instead of compiling the workspace once per ABI again.
-          androidEngine = pkgs.stdenv.mkDerivation {
-            name = "harken-android-engine";
+          # Two layers, and the first is why: `androidEngine.thirdParty`
+          # compiles the dependency graph from a tree where this app's crates
+          # *and the engine's* are stubs, and the engine build starts from that
+          # `target/`. Changing a mutation recompiles harken; bumping the engine
+          # recompiles petros; neither recompiles `ciborium` and the hundred
+          # others whose versions are fixed in a lockfile that did not move.
+          #
+          # `engineSrc` is what it is allowed to read, and what is deliberately
+          # missing from it is `clients/expo/src` and `app.json`: a screen is
+          # not an input to a cross-compile.
+          androidEngine = android.mkEngine {
+            name = "harken";
             src = engineWorkspace;
+            inherit toolchain ubrn;
+            sdk = androidSdk;
+            nodeModules = expoModules;
+            petrosSrc = petros;
+            vendor = cargoDeps;
+            moduleDir = "clients/expo/modules/harken-native";
+            appCrates = [ "crates/harken" "crates/server" "clients/iced" ];
 
-            nativeBuildInputs = [
-              toolchain
-              androidSdk
-              pkgs.cargo-ndk
-              pkgs.git
-              pkgs.nodejs
-              pkgs.python3
-              pkgs.which
-            ];
-
-            # cargo fetches crates, and `mutators.sh` installs `petros-codegen`
-            # from git when there is no checkout beside this one — which there
-            # never is inside a builder.
-            __noChroot = true;
-
-            ANDROID_HOME = "${androidSdk}/libexec/android-sdk";
-            ANDROID_SDK_ROOT = "${androidSdk}/libexec/android-sdk";
-            ANDROID_NDK_HOME = "${androidSdk}/libexec/android-sdk/ndk/27.1.12297006";
-
-            # The same trap as the APK: `cargo-ndk` sets `CC` for its child and
-            # cc-rs consults it for *host* artifacts too, which have no NDK
-            # sysroot to be built against.
-            CC_aarch64_unknown_linux_gnu = "gcc";
-            AR_aarch64_unknown_linux_gnu = "ar";
-
-            buildPhase = ''
-              runHook preBuild
-
-              export HOME=$TMPDIR
-              export CARGO_HOME=$TMPDIR/cargo
-
-              # `foreign_peer!` does `include_bytes!` of the module, so the
-              # crate does not compile until this exists — which is why the
-              # module is built here rather than beside the APK.
+            # `foreign_peer!` does `include_bytes!` of the module, so the crate
+            # does not compile until it exists.
+            preEngine = ''
               echo "--- the mutator module"
               mkdir -p clients/expo/src
               ./scripts/mutators.sh
 
-              # For the `ubrn` CLI, which is a shim that builds itself from
-              # source out of `node_modules` on first use.
+              # The generator resolves react-native's headers through this.
               echo "--- node_modules"
               cp -a ${expoModules} clients/expo/node_modules
               chmod -R u+w clients/expo/node_modules
-
-              # `${ubrn}/bin/ubrn`, not the shim in `node_modules/.bin`, which
-              # would compile the CLI from source first. `node_modules` is still
-              # here because the generator resolves react-native's headers
-              # through it.
-              echo "--- the engine, cross-compiled"
-              cd clients/expo/modules/harken-native
-              ${ubrn}/bin/ubrn build android \
-                --config ubrn.config.yaml --and-generate --release
-
-              runHook postBuild
             '';
 
-            # The whole module, not a selection from it.
-            #
-            # `--and-generate` writes far more than the libraries: the module's
-            # `build.gradle` and `CMakeLists.txt`, its manifest, its
-            # `cpp-adapter.cpp`, its `index.tsx`, the podspec. Exporting the
-            # parts that looked important left a module directory with no
-            # `build.gradle` in it, and Expo's autolinking — which runs during
-            # *settings* evaluation, before any real task — failed with nothing
-            # more specific than `command 'node' finished with non-zero exit
-            # value 1`.
-            installPhase = ''
-              runHook preInstall
-              mkdir -p $out
-              cp -r . $out/module
-              install -Dm444 ../../src/mutators.gen.ts $out/mutators.gen.ts
-              runHook postInstall
+            extraInstall = ''
+              install -Dm444 clients/expo/src/mutators.gen.ts $out/mutators.gen.ts
             '';
           };
+
+          # The first layer on its own, for when the question is whether it is
+          # the dependencies or this app that is slow.
+          androidDeps = androidEngine.thirdParty;
 
           # The Android build, in two variants — see `apk-release` below.
           #
