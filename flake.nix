@@ -512,15 +512,21 @@
               export HOME=$TMPDIR
               export CARGO_HOME=$TMPDIR/cargo
 
-              if ! ${pkgs.coreutils}/bin/test -e /proc/sys/fs/binfmt_misc/x86_64-linux; then
-                echo "" >&2
-                echo "This needs to run x86_64 binaries: everything Google ships" >&2
-                echo "for Android is linux-x86_64 only. On NixOS:" >&2
-                echo "" >&2
-                echo "  boot.binfmt.emulatedSystems = [ \"x86_64-linux\" ];" >&2
-                echo "" >&2
-                exit 1
-              fi
+              # Only where emulation is actually involved. A native x86_64
+              # builder has no `binfmt_misc` entry for its own architecture and
+              # does not want one, so asking for it there fails a build that
+              # would otherwise run — which is what CI hit.
+              ${pkgs.lib.optionalString (system != "x86_64-linux") ''
+                if ! ${pkgs.coreutils}/bin/test -e /proc/sys/fs/binfmt_misc/x86_64-linux; then
+                  echo "" >&2
+                  echo "This needs to run x86_64 binaries: everything Google ships" >&2
+                  echo "for Android is linux-x86_64 only. On NixOS:" >&2
+                  echo "" >&2
+                  echo "  boot.binfmt.emulatedSystems = [ \"x86_64-linux\" ];" >&2
+                  echo "" >&2
+                  exit 1
+                fi
+              ''}
 
               echo "--- the mutator module"
               ./scripts/mutators.sh
