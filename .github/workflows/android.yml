@@ -32,8 +32,13 @@ on:
         options: [debug, release]
         default: debug
 
+# A push supersedes the push before it, and a release build supersedes the
+# release build before it — but a release build and a branch build are not the
+# same work and must not cancel each other, which they did when the group was
+# the ref alone: pressing the button killed the branch's build. `inputs.variant`
+# is empty for anything that is not the button, so a push groups by event alone.
 concurrency:
-  group: android-${{ github.ref }}
+  group: android-${{ github.ref }}-${{ github.event_name }}-${{ inputs.variant }}
   cancel-in-progress: true
 
 jobs:
