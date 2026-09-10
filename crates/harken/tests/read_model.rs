@@ -79,9 +79,11 @@ fn the_maintained_library_agrees_with_the_read_one() {
     .unwrap();
 
     let mut view = harken::library_view();
+    let mut favorites = harken::favorite_count();
     {
         let mut store = client.store();
         view.hydrate(&mut store);
+        favorites.hydrate(&mut store);
     }
     let _ = client.take_changes();
     // The rendered list, decoded once and spliced from then on.
@@ -96,11 +98,13 @@ fn the_maintained_library_agrees_with_the_read_one() {
 
     let settle = |client: &mut petros::Client<harken::HarkenApp>,
                   view: &mut harken::LibraryView,
+                  favorites: &mut harken::FavoriteCount,
                   rendered: &mut Vec<harken::Song>| {
         match client.take_changes() {
             Changes::Applied(changes) => {
                 let patches = {
                     let mut store = client.store();
+                    favorites.apply(&mut store, &changes);
                     view.apply(&mut store, &changes)
                 };
                 harken::patch(rendered, &patches);
@@ -109,6 +113,7 @@ fn the_maintained_library_agrees_with_the_read_one() {
                 {
                     let mut store = client.store();
                     view.hydrate(&mut store);
+                    favorites.hydrate(&mut store);
                 }
                 *rendered = harken::songs_of(view);
             }
@@ -116,13 +121,19 @@ fn the_maintained_library_agrees_with_the_read_one() {
         let read = harken::library(&mut client.store()).unwrap();
         assert_eq!(shown(rendered), shown(&harken::songs_of(view)), "spliced");
         assert_eq!(shown(rendered), shown(&read), "against a re-read");
+        // The status line's number, against the list it used to count.
+        assert_eq!(
+            favorites.get(),
+            read.iter().filter(|s| s.favorited()).count(),
+            "the tally against a count of the rows"
+        );
     };
 
     for title in ["Glue", "Apricots", "Opal"] {
         client
             .mutate(harken::add_song(title.into(), "Bicep".into()))
             .unwrap();
-        settle(&mut client, &mut view, &mut rendered);
+        settle(&mut client, &mut view, &mut favorites, &mut rendered);
     }
 
     let opal = harken::library(&mut client.store()).unwrap()[2]
@@ -131,18 +142,18 @@ fn the_maintained_library_agrees_with_the_read_one() {
         .as_bytes()
         .to_vec();
     client.mutate(harken::favorite(opal.clone())).unwrap();
-    settle(&mut client, &mut view, &mut rendered);
+    settle(&mut client, &mut view, &mut favorites, &mut rendered);
     assert!(
         rendered[2].favorited(),
         "hearting reached the rendered list"
     );
 
     client.mutate(harken::unfavorite(opal)).unwrap();
-    settle(&mut client, &mut view, &mut rendered);
+    settle(&mut client, &mut view, &mut favorites, &mut rendered);
     assert!(!rendered[2].favorited());
 
     client.mutate(harken::favorite_all()).unwrap();
-    settle(&mut client, &mut view, &mut rendered);
+    settle(&mut client, &mut view, &mut favorites, &mut rendered);
     assert!(rendered.iter().all(|s| s.favorited()));
 
     let glue = harken::library(&mut client.store()).unwrap()[0]
@@ -151,6 +162,6 @@ fn the_maintained_library_agrees_with_the_read_one() {
         .as_bytes()
         .to_vec();
     client.mutate(harken::remove_song(glue)).unwrap();
-    settle(&mut client, &mut view, &mut rendered);
+    settle(&mut client, &mut view, &mut favorites, &mut rendered);
     assert_eq!(rendered.len(), 2);
 }

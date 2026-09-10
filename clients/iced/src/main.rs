@@ -116,6 +116,9 @@ struct App {
     /// What `view` draws. iced's `view` takes `&self` and decoding needs
     /// nothing mutable, but doing it once per change beats once per frame.
     songs: Vec<Song>,
+    /// The playlist's size, maintained. The status line showed it by counting
+    /// the list on every frame — twenty times a second, over every song.
+    favorites: harken::FavoriteCount,
     pending: usize,
     title: String,
     artist: String,
@@ -137,6 +140,7 @@ impl App {
             server,
             user,
             library: harken::library_view(),
+            favorites: harken::favorite_count(),
             songs: Vec::new(),
             pending: 0,
             title: String::new(),
@@ -148,6 +152,7 @@ impl App {
         {
             let mut store = app.client.store();
             app.library.hydrate(&mut store);
+            app.favorites.hydrate(&mut store);
         }
         app.songs = harken::songs_of(&app.library);
         let _ = app.client.take_changes();
@@ -181,6 +186,7 @@ impl App {
             Changes::Applied(changes) => {
                 let patches = {
                     let mut store = self.client.store();
+                    self.favorites.apply(&mut store, &changes);
                     self.library.apply(&mut store, &changes)
                 };
                 // Splice rather than rebuild: the query is maintained, and so
@@ -188,8 +194,11 @@ impl App {
                 harken::patch(&mut self.songs, &patches);
             }
             Changes::Rebuilt => {
-                let mut store = self.client.store();
-                self.library.hydrate(&mut store);
+                {
+                    let mut store = self.client.store();
+                    self.library.hydrate(&mut store);
+                    self.favorites.hydrate(&mut store);
+                }
                 self.songs = harken::songs_of(&self.library);
             }
         }
@@ -357,7 +366,7 @@ impl App {
         // The engine showing through: `cursor` is how much of the server's log
         // has been applied, `pending` is what this peer has done that no server
         // has confirmed yet.
-        let favorites = self.songs.iter().filter(|s| s.favorited()).count();
+        let favorites = self.favorites.get();
         let status = text(format!(
             "{} · {} · {} songs, {favorites} favourited · cursor {} · {} pending{}",
             self.user,

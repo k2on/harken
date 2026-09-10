@@ -214,6 +214,20 @@ pub fn songs_of(view: &LibraryView) -> Vec<Song> {
     view.with::<Favorite>().iter().map(song_of).collect()
 }
 
+/// How many songs are on the playlist, maintained.
+///
+/// A screen shows this beside the list and would otherwise recount it on every
+/// frame. A tally holds the number rather than the rows, so it costs nothing at
+/// any library size — and it is the *favourites* that are counted, so it reads
+/// the playlist table rather than filtering songs.
+#[cfg(feature = "storage")]
+pub type FavoriteCount = petros::ivm::Tally;
+
+#[cfg(feature = "storage")]
+pub fn favorite_count() -> FavoriteCount {
+    petros::ivm::Tally::of(Favorite::all())
+}
+
 /// Bring a list a screen holds up to date with what a view just did.
 ///
 /// Maintaining the query and then decoding every row again is still O(n), and
