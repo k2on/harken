@@ -210,6 +210,40 @@
                 !(builtins.elem base [ ".cargo" "target" "node_modules" "result" ]);
           };
 
+          # What the Android engine build reads, and nothing else.
+          #
+          # The point is what is *missing*: `clients/expo/src`, `app.json`, the
+          # assets. Editing a screen must not be an input to a cross-compile.
+          # Measured on run 21 the engine half is 529s of every APK build — the
+          # `ubrn` CLI compiled from source, then the workspace compiled twice,
+          # once per Android ABI — and it was being paid again for a changed
+          # `.tsx`, because the derivation's source was the whole repository.
+          #
+          # `clients/iced` is here only because it is a workspace member and
+          # cargo will not parse the workspace without it.
+          engineSrc = pkgs.lib.cleanSourceWith {
+            src = ./.;
+            name = "harken-engine-src";
+            filter = path: type:
+              let
+                rel = pkgs.lib.removePrefix (toString ./. + "/") (toString path);
+                wanted = [
+                  "Cargo.toml"
+                  "Cargo.lock"
+                  "rust-toolchain.toml"
+                  "scripts"
+                  "crates"
+                  "clients/iced"
+                  "clients/expo/modules/harken-native"
+                ];
+              in
+              # Either the path is inside something wanted, or it is a directory
+              # on the way to one.
+              pkgs.lib.any
+                (w: pkgs.lib.hasPrefix w rel || pkgs.lib.hasPrefix rel w)
+                wanted;
+          };
+
           # The patch `.cargo/config.toml` provides locally, pointing at the
           # pinned engine instead of `../petros`. Without it cargo cannot
           # resolve the lockfile at all, because the lockfile was written with
@@ -243,6 +277,14 @@
               exit 1
             fi
             cp -r ${src} $out
+            chmod -R u+w $out
+            install -Dm444 ${cargoPatch} $out/.cargo/config.toml
+          '';
+
+          # The same treatment for the narrow tree: cargo cannot resolve the
+          # lockfile without the patch, wherever it is resolving it from.
+          engineWorkspace = pkgs.runCommand "harken-engine-workspace" { } ''
+            cp -r ${engineSrc} $out
             chmod -R u+w $out
             install -Dm444 ${cargoPatch} $out/.cargo/config.toml
           '';
@@ -443,6 +485,81 @@
             }.${system} or (throw "no node_modules hash recorded for ${system}");
           };
 
+          # The engine cross-compiled for Android, and the bindings generated
+          # from the same metadata.
+          #
+          # Its own derivation because it is the expensive half and the half
+          # that changes least. Everything it reads is in `engineSrc`, which is
+          # deliberately narrow: an APK built after a screen edit finds this in
+          # the store instead of compiling the workspace once per ABI again.
+          androidEngine = pkgs.stdenv.mkDerivation {
+            name = "harken-android-engine";
+            src = engineWorkspace;
+
+            nativeBuildInputs = [
+              toolchain
+              androidSdk
+              pkgs.cargo-ndk
+              pkgs.git
+              pkgs.nodejs
+              pkgs.python3
+              pkgs.which
+            ];
+
+            # cargo fetches crates, and `mutators.sh` installs `petros-codegen`
+            # from git when there is no checkout beside this one — which there
+            # never is inside a builder.
+            __noChroot = true;
+
+            ANDROID_HOME = "${androidSdk}/libexec/android-sdk";
+            ANDROID_SDK_ROOT = "${androidSdk}/libexec/android-sdk";
+            ANDROID_NDK_HOME = "${androidSdk}/libexec/android-sdk/ndk/27.1.12297006";
+
+            # The same trap as the APK: `cargo-ndk` sets `CC` for its child and
+            # cc-rs consults it for *host* artifacts too, which have no NDK
+            # sysroot to be built against.
+            CC_aarch64_unknown_linux_gnu = "gcc";
+            AR_aarch64_unknown_linux_gnu = "ar";
+
+            buildPhase = ''
+              runHook preBuild
+
+              export HOME=$TMPDIR
+              export CARGO_HOME=$TMPDIR/cargo
+
+              # `foreign_peer!` does `include_bytes!` of the module, so the
+              # crate does not compile until this exists — which is why the
+              # module is built here rather than beside the APK.
+              echo "--- the mutator module"
+              mkdir -p clients/expo/src
+              ./scripts/mutators.sh
+
+              # For the `ubrn` CLI, which is a shim that builds itself from
+              # source out of `node_modules` on first use.
+              echo "--- node_modules"
+              cp -a ${expoModules} clients/expo/node_modules
+              chmod -R u+w clients/expo/node_modules
+
+              echo "--- the engine, cross-compiled"
+              cd clients/expo/modules/harken-native
+              ../../node_modules/.bin/ubrn build android \
+                --config ubrn.config.yaml --and-generate --release
+
+              runHook postBuild
+            '';
+
+            installPhase = ''
+              runHook preInstall
+              mkdir -p $out
+              cp -r android/src/main/jniLibs $out/jniLibs
+              cp -r android/src/main/java $out/java
+              cp -r src/generated $out/ts
+              cp -r cpp/generated $out/cpp
+              install -Dm444 ../../src/mutators.gen.ts $out/mutators.gen.ts
+              runHook postInstall
+            '';
+          };
+
           # The Android build, in two variants — see `apk-release` below.
           #
           # Everything Google publishes for Android is a `linux-x86_64` binary
@@ -540,28 +657,54 @@
                 fi
               ''}
 
-              echo "--- the mutator module"
-              ./scripts/mutators.sh
-
               echo "--- node_modules"
-              # A writable copy rather than a symlink into the store. `ubrn`
-              # builds its own bindgen command from source out of
-              # `node_modules/uniffi-bindgen-react-native`, and cargo writes a
-              # lockfile beside it — which a store path refuses. The tools that
-              # follow write there too, so copying once is cheaper than
-              # discovering each of them a CI round at a time.
+              # A writable copy rather than a symlink into the store. `expo
+              # prebuild`, gradle and Metro all write into `node_modules`, and a
+              # store path refuses.
               cp -a ${expoModules} clients/expo/node_modules
               chmod -R u+w clients/expo/node_modules
 
-              echo "--- the engine, cross-compiled"
-              cd clients/expo/modules/harken-native
-              ../../node_modules/.bin/ubrn build android \
-                --config ubrn.config.yaml --and-generate --release
-              cd ../../../..
+              # The engine and its bindings, already built. This used to be
+              # `mutators.sh` and `ubrn build android` inline, which is 529s of
+              # compiling the workspace once per ABI — paid again whenever any
+              # file in the repository changed, because that was this
+              # derivation's source. It is `androidEngine` now, whose source is
+              # the Rust and nothing else.
+              echo "--- the engine, prebuilt"
+              m=clients/expo/modules/harken-native
+              mkdir -p $m/android/src/main $m/src $m/cpp
+              cp -r ${androidEngine}/jniLibs $m/android/src/main/jniLibs
+              cp -r ${androidEngine}/java $m/android/src/main/java
+              cp -r ${androidEngine}/ts $m/src/generated
+              cp -r ${androidEngine}/cpp $m/cpp/generated
+              cp ${androidEngine}/mutators.gen.ts clients/expo/src/mutators.gen.ts
+              chmod -R u+w $m clients/expo/src
 
               echo "--- the native project"
               cd clients/expo
               ./node_modules/.bin/expo prebuild --platform android --no-install
+
+              # The ABIs gradle compiles C++ for, which the template sets to all
+              # four. Two of them are dead weight here: `ubrn.config.yaml` builds
+              # the Rust for arm64-v8a and x86_64 only, so an armeabi-v7a or x86
+              # APK would carry a JNI library with no engine in it. Measured on
+              # run 21, the first ABI costs about 5m50s of CMake and each one
+              # after it about 85s — so the two that cannot work were costing
+              # nearly three minutes to be unusable.
+              #
+              # These two lists have to agree. If you add a target there, add it
+              # here.
+              echo 'reactNativeArchitectures=arm64-v8a,x86_64' >> android/gradle.properties
+
+              # A properties file keeps the last value for a key, so these
+              # replace the template's. It ships `-Xmx2048m` and no parallelism,
+              # which is a laptop's answer; a runner has four cores and 16GB,
+              # and the Android build guide's own advice is a bigger heap and
+              # the parallel collector when GC is a visible share of the build.
+              cat >> android/gradle.properties <<'PROPS'
+              org.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g -XX:+UseParallelGC
+              org.gradle.parallel=true
+              PROPS
 
               # AGP resolves the versions a project asks for against the SDK
               # directory and installs whatever is missing, which a store path
