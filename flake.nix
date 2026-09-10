@@ -568,8 +568,19 @@
               sdk.dir=$TMPDIR/sdk
               EOF
 
+              # `gradle`, not `./gradlew`. The wrapper downloads its own copy
+              # of 9.3.1 from services.gradle.org — the same version pinned
+              # above and fetched by hash, so the download buys nothing and
+              # costs the one thing this derivation is trying to keep.
+              #
+              # And `GRADLE_USER_HOME` explicitly, because the JVM does not read
+              # `$HOME`: `user.home` comes from the passwd entry, which for a
+              # nix build user is `/var/empty`. The `export HOME=$TMPDIR` above
+              # is invisible to anything running on the JVM, so gradle would put
+              # its caches somewhere it cannot write however that is set.
+              export GRADLE_USER_HOME=$TMPDIR/gradle
               cd android
-              ./gradlew assembleDebug --no-daemon --console=plain \
+              gradle assembleDebug --no-daemon --console=plain \
                 -Dorg.gradle.java.home=${pkgs.jdk17}
               cd ../../..
 
