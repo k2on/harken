@@ -58,6 +58,7 @@ just iced bob     # …and another, to watch them sync
 just web          # …a browser peer, at localhost:8080
 just bindings     # regenerate the Expo client's TS from crates/harken
 just expo-android # …and a phone. Needs `nix develop .#android`.
+nix build .#apk   # …or the whole APK, toolchain and all
 ```
 
 `just mutators` runs the generator out of `../petros`, so that repository has to
@@ -256,9 +257,10 @@ tap that costs the same as the four hundredth is the property.
 ## Not verified
 
 iOS has never been built from this repository — no machine here can run the
-toolchain — so the `ios` job in `.github/workflows/expo.yml` is written but has
-not had a green run. It runs on `macos-15`, which has Xcode; nothing suggests it
-fails, only that nobody has watched it pass.
+toolchain — and there is no longer a workflow that tries. `ubrn.config.yaml`
+still describes the iOS targets and `HarkenNative.podspec` is still generated,
+so the path exists; nobody has walked it. Adding a `macos-15` job back is the
+whole of what it would take.
 
 The JavaScript half of the bridge is unmeasured too. What crosses is measured —
 `just latency` prints it, and `docs/decisions.md` explains why it is seventy

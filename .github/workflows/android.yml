@@ -1,0 +1,67 @@
+# The Android development build, built by nix.
+#
+# One job, on an x86_64 runner, which is worth saying plainly: everything Google
+# publishes for Android is a `linux-x86_64` binary. Building this on the ARM
+# machine it is developed on works — `binfmt_misc` and qemu see to that, and
+# `CLAUDE.md` records what it costs — but here none of that applies and the
+# toolchain simply runs.
+#
+# `nix build .#apk` rather than a sequence of steps, so that what CI builds and
+# what a laptop builds are the same expression rather than two descriptions of
+# one intention. The derivation is impure — gradle resolves its own dependency
+# graph from Maven and there is no lockfile to vendor it from — so the sandbox
+# is relaxed for it. Everything else is pinned: the Rust toolchain, every crate,
+# every npm package, the SDK, the NDK, CMake and gradle.
+name: android
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: DeterminateSystems/nix-installer-action@main
+        with:
+          # The APK derivation needs the network. `relaxed` lets a derivation
+          # that asks for it — `__noChroot` — have it, and leaves every other
+          # derivation sandboxed as usual.
+          extra-conf: |
+            sandbox = relaxed
+
+      # The store is the expensive thing here: the NDK alone is over a gigabyte,
+      # and the crates and npm packages are thousands of small fetches. Caching
+      # it turns a cold twenty-minute setup into a warm one.
+      - uses: nix-community/cache-nix-action@v6
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'Cargo.lock', 'clients/expo/bun.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          gc-max-store-size-linux: 8G
+          purge: true
+          purge-prefixes: nix-${{ runner.os }}-
+          purge-created: 0
+          purge-primary-key: never
+
+      # The cheap check first, so a Rust mistake fails in a minute rather than
+      # after the Android toolchain has had its say. It is `just` — fmt, clippy
+      # and the suite — which is what a contributor runs.
+      - name: fmt, clippy and the suite
+        run: nix develop --command just
+
+      - name: Build the APK
+        run: nix build .#apk --print-build-logs
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: harken-android
+          path: result/*.apk
+          if-no-files-found: error

@@ -429,6 +429,24 @@
             outputHash = "sha256-usHdiS9E96QuhIj38q8xi5jPn9nLKZ57KN1jJGdWpOA=";
           };
 
+          # CMake, at the version React Native's `CMakeLists.txt` expects.
+          #
+          # 25.05 ships 3.31, which does not find `ReactAndroid` where the
+          # prefab puts it, and 4.x rejects the minimum React Native declares.
+          # `--no-system-cppdap` is a flag the newer expression passes and
+          # 3.22.1 does not know.
+          cmake322 = pkgs.cmake.overrideAttrs (old: {
+            version = "3.22.1";
+            src = pkgs.fetchurl {
+              url = "https://github.com/Kitware/CMake/releases/download/v3.22.1/cmake-3.22.1.tar.gz";
+              hash = "sha256-DpmCKVSdez82hwPSDiSOfuH4U5ENQnBKqHkYwhPqgsA=";
+            };
+            patches = [ ];
+            doCheck = false;
+            configureFlags =
+              builtins.filter (f: f != "--no-system-cppdap") old.configureFlags;
+          });
+
           # The Android development build.
           #
           # Everything Google publishes for Android is a `linux-x86_64` binary
@@ -450,13 +468,29 @@
               toolchain
               gradle9
               androidSdk
+              cmake322
+              pkgs.cacert
               pkgs.cargo-ndk
+              pkgs.git
               pkgs.jdk17
+              pkgs.ninja
               pkgs.nodejs
               pkgs.python3
               pkgs.unzip
               pkgs.which
             ];
+
+            # Gradle resolves its dependencies from Maven Central and Google's
+            # repository at build time, and there is no lockfile to vendor them
+            # from — so this derivation is deliberately impure rather than
+            # pretending otherwise. Everything that *can* be pinned is: the
+            # toolchain, the SDK, the NDK, CMake, gradle itself and every crate
+            # and npm package. What is left is gradle's own graph.
+            #
+            # Needs `sandbox = relaxed` on the builder, which the CI workflow
+            # sets. Turning it into a fixed-output derivation is not available:
+            # an APK is a signed zip and is not reproducible byte-for-byte.
+            __noChroot = true;
 
             ANDROID_HOME = "${androidSdk}/libexec/android-sdk";
             ANDROID_SDK_ROOT = "${androidSdk}/libexec/android-sdk";
@@ -494,11 +528,45 @@
               echo "--- node_modules"
               ln -s ${expoModules} clients/expo/node_modules
 
-              echo "--- the engine, cross-compiled (emulated; this is the slow part)"
+              echo "--- the engine, cross-compiled"
               cd clients/expo/modules/harken-native
               ../../node_modules/.bin/ubrn build android \
                 --config ubrn.config.yaml --and-generate --release
               cd ../../../..
+
+              echo "--- the native project"
+              cd clients/expo
+              ./node_modules/.bin/expo prebuild --platform android --no-install
+
+              # AGP resolves the versions a project asks for against the SDK
+              # directory and installs whatever is missing, which a store path
+              # can never allow. A copy it can write to is the only way through
+              # — and every component it could want is pinned above, so it never
+              # actually installs anything.
+              cp -r $ANDROID_HOME $TMPDIR/sdk
+              chmod -R u+w $TMPDIR/sdk
+              # nixpkgs puts the NDK in two places and AGP complains about the
+              # second one on every task.
+              rm -rf $TMPDIR/sdk/ndk-bundle
+              export ANDROID_HOME=$TMPDIR/sdk ANDROID_SDK_ROOT=$TMPDIR/sdk
+              export ANDROID_NDK_HOME=$TMPDIR/sdk/ndk/27.1.12297006
+
+              # `cmake.dir` names a CMake outside the SDK. The SDK's own is a
+              # Google binary and will not run under emulation at all — qemu
+              # answers "Unable to find a guest_base to satisfy all guest
+              # address mapping requirements" — and CMake only *drives* the
+              # compiler, so it may as well be the host's. It has to be 3.22.x:
+              # React Native asks for a minimum CMake 4 rejects, and 3.31 does
+              # not find `ReactAndroid` where the prefab puts it.
+              cat > android/local.properties <<EOF
+              sdk.dir=$TMPDIR/sdk
+              cmake.dir=${cmake322}
+              EOF
+
+              cd android
+              ./gradlew assembleDebug --no-daemon --console=plain \
+                -Dorg.gradle.java.home=${pkgs.jdk17}
+              cd ../../..
 
               runHook postBuild
             '';
@@ -506,7 +574,7 @@
             installPhase = ''
               runHook preInstall
               mkdir -p $out
-              cp -r clients/expo/modules/harken-native/android/src/main/jniLibs $out/ || true
+              cp clients/expo/android/app/build/outputs/apk/debug/*.apk $out/
               runHook postInstall
             '';
           };
