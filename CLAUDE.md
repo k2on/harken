@@ -224,6 +224,19 @@ so the Expo screen just writes `♥`.
   Gradle Plugin, whose prefab support depends on exactly that re-rooting. An
   unpatched CMake is required. On x86_64 that is the SDK's own, which is why
   none of this arises there.
+- **AGP brings its own aapt2, and it is not the SDK's.** It resolves
+  `com.android.tools.build:aapt2` from Maven and unpacks a raw Google binary,
+  which fails on NixOS with "Daemon startup failed" for the same reason
+  everything else Google ships does. The SDK's copy *is* patched and does run,
+  and AGP takes an override for exactly this:
+
+  ```
+  android.aapt2FromMavenOverride=<sdk>/build-tools/36.0.0/aapt2
+  ```
+
+  The pattern is worth stating once: **anything Google's build downloads for
+  itself is unpatched and will not run; anything nixpkgs packaged is patched and
+  will.** Every such component has to be pinned and pointed at.
 - **nix does not supply the Android SDK** for the *devshell*, on purpose:
   gradle installs missing
   components into the SDK directory and the store is read-only. Bring your own
