@@ -12,7 +12,14 @@ test: mutators
     cargo test --workspace --all-features --doc
 
 # Clippy over everything, warnings are errors.
-lint:
+#
+# `mutators` for the same reason `test` needs it, which is easy to miss because
+# a tree that has ever run `test` has the module lying around: `foreign_peer!`
+# does `include_bytes!` of it, so *compiling* the crate needs it and not merely
+# testing it. Without this, `just` on a fresh clone fails in `lint` — and the
+# error names a missing file in `target/`, which reads like a broken checkout
+# rather than a missing build step.
+lint: mutators
     cargo clippy --workspace --all-features --all-targets -- -D warnings
     cargo fmt --all --check
 
