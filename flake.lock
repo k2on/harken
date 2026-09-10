@@ -19,7 +19,7 @@
     "petros": {
       "flake": false,
       "locked": {
-        "lastModified": 1789076000,
+        "lastModified": 1789074653,
         "narHash": "sha256-5Zx2j0AhIcZdM2VK8A/lDO8tvaoq9E7/dnnv7Zr5sYc=",
         "owner": "k2on",
         "repo": "petros",
