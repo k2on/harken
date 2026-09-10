@@ -10,9 +10,21 @@
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    # The engine, for building. `Cargo.toml` names it by git and
+    # `.cargo/config.toml` patches it to the checkout next door for local work
+    # — and that patch is what shaped the committed `Cargo.lock`, which records
+    # petros as a path with no revision at all. So a hermetic build has to
+    # supply the same patch, pointing at a pinned copy instead of a sibling
+    # directory. This is that copy; `flake.lock` pins it, and the packages check
+    # it against the revision in `Cargo.toml` rather than trusting two pins to
+    # stay equal on their own.
+    petros = {
+      url = "github:k2on/petros";
+      flake = false;
+    };
   };
 
-  outputs = { self, nixpkgs, rust-overlay }:
+  outputs = { self, nixpkgs, rust-overlay, petros }:
     let
       systems = [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
       forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f system);
@@ -74,7 +86,7 @@
               pkg-config
               # For the audio server's transcoding (phase 3).
               ffmpeg
-              
+
               python3
               eas-cli
             ]) ++ icedLibs;
@@ -171,6 +183,352 @@
             '';
           };
         });
+
+      packages = forAllSystems (system:
+        let
+          pkgs = import nixpkgs {
+            inherit system;
+            overlays = [ (import rust-overlay) ];
+          };
+
+          # The same toolchain the devshell uses, from the same file, so a
+          # package and a `cargo build` inside `nix develop` are the same build.
+          toolchain = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
+          rustPlatform = pkgs.makeRustPlatform {
+            cargo = toolchain;
+            rustc = toolchain;
+          };
+
+          # `cleanSource` filters VCS files, not gitignored ones — so it would
+          # happily copy this machine's `.cargo/config.toml`, whose patch points
+          # at `/home/max/...`. A build that quietly used a developer's working
+          # copy would be the worst possible kind of reproducible.
+          src = pkgs.lib.cleanSourceWith {
+            src = ./.;
+            filter = path: type:
+              let base = baseNameOf path; in
+                !(builtins.elem base [ ".cargo" "target" "node_modules" "result" ]);
+          };
+
+          # The patch `.cargo/config.toml` provides locally, pointing at the
+          # pinned engine instead of `../petros`. Without it cargo cannot
+          # resolve the lockfile at all, because the lockfile was written with
+          # the patch in place.
+          cargoPatch = pkgs.writeText "petros-patch.toml" ''
+            [patch."https://github.com/k2on/petros"]
+            petros = { path = "${petros}/crates/petros" }
+            petros-wasm-host = { path = "${petros}/crates/petros-wasm-host" }
+            petros-schema = { path = "${petros}/crates/petros-schema" }
+            petros-sql = { path = "${petros}/crates/petros-sql" }
+            petros-testkit = { path = "${petros}/crates/petros-testkit" }
+            petros-wasm-guest = { path = "${petros}/crates/petros-wasm-guest" }
+            petros-axum = { path = "${petros}/crates/petros-axum" }
+          '';
+
+          # The tree every package is built from: the sources, plus the patch
+          # that makes the lockfile resolvable, plus a check that the two pins
+          # for one engine agree. Done here rather than in each package so that
+          # *vendoring* sees the patch too — cargo cannot resolve the lock
+          # without it, and vendoring resolves the lock.
+          workspace = pkgs.runCommand "harken-workspace"
+            {
+              cargoToml = "${src}/Cargo.toml";
+            } ''
+            want=$(grep -o 'rev = "[0-9a-f]\{40\}"' "$cargoToml" | head -1 | cut -d'"' -f2)
+            if [ "$want" != "${petros.rev}" ]; then
+              echo "engine pin mismatch:" >&2
+              echo "  Cargo.toml: $want" >&2
+              echo "  flake.lock: ${petros.rev}" >&2
+              echo "Run: nix flake update petros" >&2
+              exit 1
+            fi
+            cp -r ${src} $out
+            chmod -R u+w $out
+            install -Dm444 ${cargoPatch} $out/.cargo/config.toml
+          '';
+
+          # The dependencies, vendored by cargo itself.
+          #
+          # Not `importCargoLock` and not `fetchCargoVendor`, both of which
+          # download from `crates.io/api/v1/…/download` with whatever
+          # User-Agent their fetcher happens to send — and crates.io now
+          # answers 403 to the default ones. It is not rate limiting, though it
+          # looks like it: a different crate fails each run because the requests
+          # are parallel, and every one of them would fail alone.
+          #
+          #     curl        …/api/v1/crates/atomic-waker/1.1.2/download  -> 403
+          #     curl -A …   the same URL                                 -> 200
+          #
+          # Patching that would mean vendoring nixpkgs' fetcher, which is
+          # written inline in `fetch-cargo-vendor.nix` and not an overridable
+          # attribute. `cargo vendor` needs no patching: it is the tool whose
+          # job this is, it uses the sparse index, and it identifies itself.
+          #
+          # A fixed-output derivation, so the network is allowed and the result
+          # is pinned by hash like any other fetch.
+          cargoDeps = pkgs.stdenv.mkDerivation {
+            name = "harken-cargo-vendor";
+            src = workspace;
+
+            nativeBuildInputs = [ toolchain pkgs.cacert pkgs.git ];
+
+            buildPhase = ''
+              export CARGO_HOME=$PWD/.cargo-home
+              mkdir -p $out
+              cargo vendor --locked --versioned-dirs $out > $out/config.toml
+              # The setup hook diffs this against the workspace's, to catch a
+              # vendor directory that has drifted from the lock it was made
+              # from. Worth keeping: it is the check that a stale `outputHash`
+              # would otherwise slip past.
+              cp Cargo.lock $out/Cargo.lock
+            '';
+            dontInstall = true;
+            dontFixup = true;
+
+            outputHashMode = "recursive";
+            outputHashAlgo = "sha256";
+            outputHash = "sha256-z3c9ZDiu29FuDF6JOY7pseb7FXEmppvaYSPRXa2k+bI=";
+          };
+
+          icedLibs = with pkgs; [
+            wayland
+            libxkbcommon
+            libGL
+            vulkan-loader
+            fontconfig
+          ];
+
+          # wasm-bindgen's generated glue and the module it generates for carry
+          # a schema version that must match *exactly*, so the CLI has to be the
+          # version in Cargo.lock and not whatever a channel happens to ship —
+          # nixos-25.05 has 0.2.100 and 0.2.104, and the lock wants 0.2.128.
+          # Reading the version out of the lockfile keeps the two in step: bump
+          # the crate and this follows, and only the hashes need a human.
+          wasmBindgenVersion =
+            let
+              lock = builtins.readFile ./Cargo.lock;
+              after = pkgs.lib.strings.removePrefix
+                "name = \"wasm-bindgen\"\nversion = \""
+                (builtins.elemAt (builtins.split "name = \"wasm-bindgen\"\nversion = \"" lock) 2);
+            in
+            builtins.head (builtins.split "\"" after);
+
+          # From static.crates.io rather than `fetchCrate`, for the same reason
+          # the vendor directory is built by cargo: the `api/v1/…/download`
+          # endpoint answers 403 to the User-Agent nixpkgs' fetchers send. This
+          # host serves the identical tarball and has no such opinion.
+          wasmBindgenSrc = pkgs.fetchzip {
+            url = "https://static.crates.io/crates/wasm-bindgen-cli/wasm-bindgen-cli-${wasmBindgenVersion}.crate";
+            hash = "sha256-a7lcXJnnZkYReja+iUO7NqqrWyv3toxnUgQb8s4IS5s=";
+            extension = "tar.gz";
+          };
+
+          wasm-bindgen-cli = rustPlatform.buildRustPackage {
+            pname = "wasm-bindgen-cli";
+            version = wasmBindgenVersion;
+            src = wasmBindgenSrc;
+            cargoDeps = pkgs.stdenv.mkDerivation {
+              name = "wasm-bindgen-cli-vendor";
+              src = wasmBindgenSrc;
+              nativeBuildInputs = [ toolchain pkgs.cacert pkgs.git ];
+              buildPhase = ''
+                export CARGO_HOME=$PWD/.cargo-home
+                mkdir -p $out
+                cargo vendor --versioned-dirs $out > $out/config.toml
+                cp Cargo.lock $out/Cargo.lock
+              '';
+              dontInstall = true;
+              dontFixup = true;
+              outputHashMode = "recursive";
+              outputHashAlgo = "sha256";
+              outputHash = "sha256-xhQmH6oqGIEKdnovKaEwnwg6zMUkSyD6P9PPKjDx2ns=";
+            };
+            nativeBuildInputs = [ pkgs.pkg-config ];
+            buildInputs = [ pkgs.openssl ];
+            doCheck = false;
+          };
+        in
+        rec {
+          default = harken-server;
+
+          # The sync server. `HARKEN_WEB` points it at a browser client; the
+          # NixOS module sets it to `harken-web` so both are on one port.
+          harken-server = rustPlatform.buildRustPackage {
+            pname = "harken-server";
+            version = "0.1.0";
+            src = workspace;
+            inherit cargoDeps;
+            cargoBuildFlags = [ "-p" "harken-server" ];
+            # The workspace's tests need the mutator module, which is a wasm
+            # build with its own toolchain. `nix flake check` is not the place
+            # for that; `just` is, and CI runs it.
+            doCheck = false;
+            meta.mainProgram = "harken-server";
+          };
+
+          # The desktop client. iced dlopens its graphics stack, so the runtime
+          # libraries go on the RPATH rather than being hoped for.
+          harken-iced = rustPlatform.buildRustPackage {
+            pname = "harken-iced";
+            version = "0.1.0";
+            src = workspace;
+            inherit cargoDeps;
+            cargoBuildFlags = [ "-p" "harken-iced" ];
+            doCheck = false;
+            nativeBuildInputs = [ pkgs.makeWrapper ];
+            buildInputs = icedLibs;
+            postInstall = ''
+              wrapProgram $out/bin/harken-iced \
+                --prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath icedLibs}
+            '';
+            meta.mainProgram = "harken-iced";
+          };
+
+          # The same client, compiled to wasm, plus the shell that loads it.
+          # `just web-build` does this too; the difference is that this one
+          # cannot reach the network, so every version is pinned rather than
+          # fetched when it turns out not to match.
+          harken-web = rustPlatform.buildRustPackage {
+            pname = "harken-web";
+            version = "0.1.0";
+            src = workspace;
+            inherit cargoDeps;
+            doCheck = false;
+
+            nativeBuildInputs = [ wasm-bindgen-cli pkgs.llvmPackages.clang-unwrapped pkgs.llvmPackages.bintools ];
+
+            buildPhase = ''
+              runHook preBuild
+
+              # SQLite's C is not compiled here: the browser peer keeps its
+              # database in the page, so the crate needs the symbols to link
+              # and never calls them. An empty archive satisfies the linker.
+              mkdir -p sqlite-stub
+              printf '!<arch>\n' > sqlite-stub/libsqlite3.a
+
+              export CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS='--cfg getrandom_backend="wasm_js"'
+              export CC_wasm32_unknown_unknown=clang
+              export AR_wasm32_unknown_unknown=llvm-ar
+              export CFLAGS_wasm32_unknown_unknown="-resource-dir ${pkgs.lib.getLib pkgs.llvmPackages.clang-unwrapped}/lib/clang/${pkgs.lib.versions.major pkgs.llvmPackages.clang-unwrapped.version}"
+              export SQLITE3_LIB_DIR="$PWD/sqlite-stub"
+              export SQLITE3_STATIC=1
+
+              cargo build -p harken-iced --target wasm32-unknown-unknown --release --offline
+
+              runHook postBuild
+            '';
+
+            installPhase = ''
+              runHook preInstall
+              mkdir -p $out
+              cp clients/iced/web/index.html $out/
+              wasm-bindgen --target web --no-typescript --out-dir $out/pkg \
+                target/wasm32-unknown-unknown/release/harken-iced.wasm
+              runHook postInstall
+            '';
+          };
+        });
+
+      # `services.harken.enable = true` and there is a music system on a port:
+      # the sync socket and the browser client that talks to it, together,
+      # because they are one deployment and splitting them across two ports
+      # buys an origin to configure and nothing else.
+      nixosModules.default = { config, lib, pkgs, ... }:
+        let
+          cfg = config.services.harken;
+          harken = self.packages.${pkgs.stdenv.hostPlatform.system};
+        in
+        {
+          options.services.harken = {
+            enable = lib.mkEnableOption "the Harken sync server and its browser client";
+
+            port = lib.mkOption {
+              type = lib.types.port;
+              default = 8787;
+              description = "Port for both the sync socket and the browser client.";
+            };
+
+            address = lib.mkOption {
+              type = lib.types.str;
+              default = "127.0.0.1";
+              example = "0.0.0.0";
+              description = ''
+                Address to bind. The default is loopback, so reaching this from
+                a phone means either setting this and opening the firewall, or
+                — better — putting a reverse proxy in front, since the engine
+                does no authentication of its own.
+              '';
+            };
+
+            web = lib.mkOption {
+              type = lib.types.nullOr lib.types.package;
+              default = harken.harken-web;
+              defaultText = lib.literalExpression "harken.packages.\${system}.harken-web";
+              description = ''
+                The browser client to serve at `/`. Null serves the socket
+                alone, for a deployment that only wants the phone.
+              '';
+            };
+
+            package = lib.mkOption {
+              type = lib.types.package;
+              default = harken.harken-server;
+              defaultText = lib.literalExpression "harken.packages.\${system}.harken-server";
+              description = "The server to run.";
+            };
+
+            openFirewall = lib.mkOption {
+              type = lib.types.bool;
+              default = false;
+              description = "Open {option}`services.harken.port` in the firewall.";
+            };
+          };
+
+          config = lib.mkIf cfg.enable {
+            systemd.services.harken = {
+              description = "Harken sync server";
+              wantedBy = [ "multi-user.target" ];
+              after = [ "network.target" ];
+
+              environment = lib.optionalAttrs (cfg.web != null) {
+                HARKEN_WEB = "${cfg.web}";
+              };
+
+              serviceConfig = {
+                ExecStart = "${lib.getExe cfg.package} ${cfg.address}:${toString cfg.port}";
+                Restart = "on-failure";
+
+                # The log is the whole of the state, so it wants a real place
+                # rather than the temp dir the demo uses. `TMPDIR` is what the
+                # server reads for it, which is why this is set rather than a
+                # flag: the same binary serves `just serve` and this.
+                DynamicUser = true;
+                StateDirectory = "harken";
+                Environment = [ "TMPDIR=%S/harken" ];
+
+                # Nothing here needs any of it.
+                NoNewPrivileges = true;
+                PrivateDevices = true;
+                PrivateTmp = true;
+                ProtectClock = true;
+                ProtectControlGroups = true;
+                ProtectHome = true;
+                ProtectHostname = true;
+                ProtectKernelLogs = true;
+                ProtectKernelModules = true;
+                ProtectKernelTunables = true;
+                ProtectSystem = "strict";
+                RestrictAddressFamilies = [ "AF_INET" "AF_INET6" ];
+                RestrictNamespaces = true;
+                RestrictRealtime = true;
+                SystemCallArchitectures = "native";
+                SystemCallFilter = [ "@system-service" "~@privileged" ];
+              };
+            };
+
+            networking.firewall.allowedTCPPorts = lib.mkIf cfg.openFirewall [ cfg.port ];
+          };
+        };
 
       formatter = forAllSystems (system: nixpkgs.legacyPackages.${system}.nixpkgs-fmt);
     };

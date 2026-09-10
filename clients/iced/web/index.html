@@ -14,7 +14,7 @@
   <body>
     <p id="boot">loading petros…</p>
     <script type="module">
-      import init from "./pkg/iced.js";
+      import init from "./pkg/harken-iced.js";
       // The wasm module's `start` runs the app; drop the placeholder once it has.
       await init();
       document.getElementById("boot")?.remove();

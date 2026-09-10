@@ -16,9 +16,26 @@
         "type": "github"
       }
     },
+    "petros": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1789011320,
+        "narHash": "sha256-mRecXtVEyhlNdDl12gYkyGVoc3Z+iQyjAlTMZ3khm9w=",
+        "owner": "k2on",
+        "repo": "petros",
+        "rev": "823b661258a644d0ca0aaee224ebb4363e6a8910",
+        "type": "github"
+      },
+      "original": {
+        "owner": "k2on",
+        "repo": "petros",
+        "type": "github"
+      }
+    },
     "root": {
       "inputs": {
         "nixpkgs": "nixpkgs",
+        "petros": "petros",
         "rust-overlay": "rust-overlay"
       }
     },

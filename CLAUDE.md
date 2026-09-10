@@ -48,6 +48,7 @@ macro — are in `../petros/docs/decisions.md`. Read that first.
 
 ```
 just              # fmt, lint, test
+nix build .#harken-server   # …and .#harken-iced, .#harken-web
 just latency      # the measurements: fsync, the sandbox, the maintained view
 just mutators     # rebuild the domain module and hand it to Metro (~0.35s)
 just mutators-watch # …on every save. Leave it running beside `bun start`.

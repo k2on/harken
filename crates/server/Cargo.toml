@@ -12,3 +12,7 @@ harken = { workspace = true, features = ["storage"] }
 petros.workspace = true
 petros-axum.workspace = true
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal"] }
+# Static files, for serving the browser client from the same port as the socket.
+# `fs` only: no compression, no tracing, no cors — the point is a handler beside
+# the sync one, not a web framework.
+tower-http = { version = "0.6", features = ["fs"] }
