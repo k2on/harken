@@ -117,6 +117,27 @@ jobs:
       - name: fmt, clippy and the suite
         run: nix develop --command just
 
+      # …and then put `Cargo.lock` back, because running cargo changed it.
+      #
+      # The committed lockfile records the engine as a *path*, which is what the
+      # gitignored `.cargo/config.toml` patch shapes it into. CI has no such
+      # patch, so `just` resolves the engine from git and rewrites those seven
+      # entries into git sources. `nix build` below reads the working tree —
+      # dirty file and all — and installs the patch over it, and cargo cannot
+      # satisfy a git-source lock through a path patch: it wants to re-resolve,
+      # and `cargo vendor --locked` refuses to let it.
+      #
+      #   the lock file …/harken-workspace/Cargo.lock needs to be updated
+      #   but --locked was passed to prevent this
+      #
+      # Runs 22-26 only reached this because the vendor derivation is
+      # fixed-output: while its hash was unchanged the store cache answered for
+      # it and cargo never ran. The rewrite is not new, and neither is knowing
+      # about it — the cache key below is computed at *restore* time for exactly
+      # this reason. It just also has to not reach the build.
+      - name: Put the lockfile back
+        run: git checkout -- Cargo.lock
+
       - name: Build the APK
         run: nix build .#apk-$VARIANT --print-build-logs
 
@@ -126,12 +147,12 @@ jobs:
           path: result/*.apk
           if-no-files-found: error
 
-      # The key the *restore* computed, not a fresh one. `hashFiles` gives a
-      # different answer at the end of this job than at the start: `just` runs
-      # cargo, CI has no `.cargo/config.toml` patching the engine to a sibling
-      # checkout, so cargo re-resolves the git dependency and rewrites
-      # `Cargo.lock`. A key describing a lockfile that exists nowhere in git is
-      # one the next run cannot ask for.
+      # The key the *restore* computed, not a fresh one. `hashFiles` reads the
+      # working tree, and cargo rewrites `Cargo.lock` in it — the step above
+      # puts the file back, but only when `just` got that far. Taking the key
+      # from the restore is true whatever happened in between; recomputing it
+      # describes a lockfile that may exist nowhere in git, which is a key the
+      # next run cannot ask for.
       #
       # `!cancelled()` rather than `always()`: a failed run's store is worth
       # keeping, a killed run's store is whatever it managed in the seconds it

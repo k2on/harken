@@ -277,6 +277,14 @@
             fi
             cp -r ${src} $out
             chmod -R u+w $out
+            if grep -q 'source = "git+https://github.com/k2on/petros' $out/Cargo.lock; then
+              echo "Cargo.lock records the engine as a git source." >&2
+              echo "The patch installed here shapes it into a path, so cargo" >&2
+              echo "would have to re-resolve — and every build below passes" >&2
+              echo "--locked. Something ran cargo without .cargo/config.toml." >&2
+              echo "Run: git checkout -- Cargo.lock" >&2
+              exit 1
+            fi
             install -Dm444 ${cargoPatch} $out/.cargo/config.toml
           '';
 
@@ -295,6 +303,11 @@
             fi
             cp -r ${engineSrc} $out
             chmod -R u+w $out
+            if grep -q 'source = "git+https://github.com/k2on/petros' $out/Cargo.lock; then
+              echo "Cargo.lock records the engine as a git source." >&2
+              echo "Run: git checkout -- Cargo.lock" >&2
+              exit 1
+            fi
           '';
 
           # The dependencies, vendored by cargo itself.
