@@ -51,6 +51,20 @@ jobs:
           purge-created: 0
           purge-primary-key: never
 
+      # Cargo's own incremental state, which the nix cache above does *not*
+      # cover and cannot: nix caches derivation outputs, keyed on their inputs,
+      # all or nothing. `just` runs cargo inside a devshell rather than inside a
+      # derivation, so nix never sees it — and wrapping it in one would not help
+      # either, because the source changes on every commit and the derivation
+      # would rebuild every time. What makes clippy and the tests fast is
+      # `target/` surviving between runs, which is this.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+          # The engine is a git dependency, so it lands in the cargo registry
+          # rather than the workspace and is worth keeping too.
+          cache-all-crates: true
+
       # The cheap check first, so a Rust mistake fails in a minute rather than
       # after the Android toolchain has had its say. It is `just` — fmt, clippy
       # and the suite — which is what a contributor runs.
