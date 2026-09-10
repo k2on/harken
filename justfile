@@ -145,6 +145,16 @@ expo-install:
 # Regenerate the client's TypeScript and C++ from `crates/harken --features foreign`.
 bindings: expo-install
     cargo build -p harken --features foreign
+    # Wipe what was generated before regenerating it. ubrn writes new files and
+    # never removes old ones, so a working copy that has outlived a rename ends
+    # up with several generations side by side — `exo_todo_ffi-ffi.ts` beside
+    # `harken.ts`, `ExoTodoPackage.kt` beside `HarkenNativePackage.kt`. Both
+    # directories are gitignored, so a fresh clone is fine and only a long-lived
+    # checkout rots; the symptom is Expo's autolinking generating a
+    # `PackageList.java` that names a class nothing defines any more.
+    rm -rf {{expo-dir}}/modules/harken-native/src/generated \
+           {{expo-dir}}/modules/harken-native/cpp/generated \
+           {{expo-dir}}/modules/harken-native/android/src/main/java
     {{ubrn}} generate jsi bindings target/debug/{{native-lib}} --library --no-format \
         --ts-dir {{expo-dir}}/modules/harken-native/src/generated \
         --cpp-dir {{expo-dir}}/modules/harken-native/cpp/generated

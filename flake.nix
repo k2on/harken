@@ -426,7 +426,16 @@
             dontFixup = true;
             outputHashMode = "recursive";
             outputHashAlgo = "sha256";
-            outputHash = "sha256-usHdiS9E96QuhIj38q8xi5jPn9nLKZ57KN1jJGdWpOA=";
+            # One hash per platform, because the content really is different:
+            # bun resolves the optional dependencies that carry native binaries
+            # — `lightningcss-linux-arm64-gnu` against `lightningcss-linux-x64-
+            # gnu` — for the machine it installs on. `--cpu=x64` does not
+            # override that, because `bun.lock` was written on one platform and
+            # `--frozen-lockfile` means the lock wins.
+            outputHash = {
+              aarch64-linux = "sha256-usHdiS9E96QuhIj38q8xi5jPn9nLKZ57KN1jJGdWpOA=";
+              x86_64-linux = "sha256-Ptax1KgQw50L/mccB2Pw0e5N3ewZZgTAxVkW3oWtKDs=";
+            }.${system} or (throw "no node_modules hash recorded for ${system}");
           };
 
           # The Android development build.
