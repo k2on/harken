@@ -532,7 +532,14 @@
               ./scripts/mutators.sh
 
               echo "--- node_modules"
-              ln -s ${expoModules} clients/expo/node_modules
+              # A writable copy rather than a symlink into the store. `ubrn`
+              # builds its own bindgen command from source out of
+              # `node_modules/uniffi-bindgen-react-native`, and cargo writes a
+              # lockfile beside it — which a store path refuses. The tools that
+              # follow write there too, so copying once is cheaper than
+              # discovering each of them a CI round at a time.
+              cp -a ${expoModules} clients/expo/node_modules
+              chmod -R u+w clients/expo/node_modules
 
               echo "--- the engine, cross-compiled"
               cd clients/expo/modules/harken-native
