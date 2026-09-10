@@ -671,7 +671,10 @@
               # autolinking plugin hands to `JSON.parse`, and the ABI list is
               # never set at all. Gradle reports the first half as
               #
-              #   Process 'command 'node'' finished with non-zero exit value 1
+              #   Process 'command 'node''' finished with non-zero exit value 1
+              #
+              # (the third quote is nix's escape for the pair before it,
+              # which would otherwise end this string)
               #
               # with node's own message nowhere in the log, which is what runs
               # 22, 23 and 27 died of.
