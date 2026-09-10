@@ -151,9 +151,38 @@ so the Expo screen just writes `♥`.
 
 ## Traps in the client toolchain
 
-- **The NDK is x86_64-only.** Google publishes no aarch64-linux host toolchain,
-  so on an ARM Linux box the NDK's `clang` cannot execute. Build Android on
-  x86_64 or in CI; iOS needs Xcode, so a macOS runner.
+- **The NDK is x86_64-only**, but that is not the same as unusable on ARM.
+  Google publishes no aarch64-linux host toolchain, so the NDK's `clang` is an
+  x86_64 binary — and with `binfmt_misc` registered for x86_64 and qemu-user
+  installed, an ARM Linux box runs it anyway, transparently, including inside a
+  nix build sandbox. This file said it "cannot execute", which was true of a
+  machine without that and is what `.#apk` now depends on:
+
+  ```
+  cat /proc/sys/fs/binfmt_misc/x86_64-linux   # should say "enabled"
+  ```
+
+  On NixOS: `boot.binfmt.emulatedSystems = [ "x86_64-linux" ];` and nix's
+  `extra-platforms`. iOS still needs Xcode, so a macOS runner.
+- **`nix develop .#android` cannot run the NDK's clang, and a plain shell can.**
+  Under emulation the same command fails inside the devshell with
+  `undefined symbol: ceil, version GLIBC_2.2.5` and succeeds outside it — and
+  *replaying the devshell's entire environment* in a plain shell also succeeds,
+  so it is not a variable. Something about the process `nix develop` creates
+  upsets qemu's loader. Not chased further, because a `nix build` runs in a
+  builder sandbox rather than a devshell, and the sandbox is fine; noted so the
+  next person does not spend the afternoon on it. Use `nix build .#apk`, or a
+  plain shell with the toolchain on `PATH`.
+- **A host build can pick up the NDK's compiler by accident.** `cargo-ndk` sets
+  `CC` for its child, which cc-rs also consults for *host* artifacts — and
+  `petros-sql` is a proc macro that links SQLite, so an Android build compiles
+  libsqlite3-sys for the host too. It then fails on a missing `stdio.h`, because
+  the NDK has no glibc sysroot. Setting the target-qualified variable fixes it,
+  since cc-rs prefers that over the bare one:
+
+  ```
+  CC_aarch64_unknown_linux_gnu=gcc AR_aarch64_unknown_linux_gnu=ar
+  ```
 - **nix does not supply the Android SDK**, on purpose: gradle installs missing
   components into the SDK directory and the store is read-only. Bring your own
   and export `ANDROID_HOME`; `nix develop .#android` adds `cargo-ndk` and a JDK.
