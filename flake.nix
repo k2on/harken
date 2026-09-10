@@ -485,6 +485,39 @@
             }.${system} or (throw "no node_modules hash recorded for ${system}");
           };
 
+          # The `ubrn` command, built once.
+          #
+          # `node_modules/.bin/ubrn` is a shim: it runs `cargo run` against a
+          # crate *inside* `node_modules`, so the first call in a fresh tree
+          # compiles a CLI from source. In a nix builder every call is the first
+          # call, and it was 156s of every APK build — for a tool whose source
+          # is pinned by `bun.lock` and changes when nothing else does.
+          #
+          # Built here and invoked directly. Warm, the same command answers in
+          # five milliseconds.
+          ubrn = pkgs.stdenv.mkDerivation {
+            name = "ubrn";
+            src = "${expoModules}/uniffi-bindgen-react-native";
+
+            nativeBuildInputs = [ toolchain pkgs.pkg-config ];
+            # cargo fetches this crate's own dependencies.
+            __noChroot = true;
+
+            buildPhase = ''
+              runHook preBuild
+              export HOME=$TMPDIR
+              export CARGO_HOME=$TMPDIR/cargo
+              cargo build --release --manifest-path crates/ubrn_cli/Cargo.toml
+              runHook postBuild
+            '';
+
+            installPhase = ''
+              runHook preInstall
+              install -Dm755 target/release/uniffi-bindgen-react-native $out/bin/ubrn
+              runHook postInstall
+            '';
+          };
+
           # The engine cross-compiled for Android, and the bindings generated
           # from the same metadata.
           #
@@ -540,21 +573,32 @@
               cp -a ${expoModules} clients/expo/node_modules
               chmod -R u+w clients/expo/node_modules
 
+              # `${ubrn}/bin/ubrn`, not the shim in `node_modules/.bin`, which
+              # would compile the CLI from source first. `node_modules` is still
+              # here because the generator resolves react-native's headers
+              # through it.
               echo "--- the engine, cross-compiled"
               cd clients/expo/modules/harken-native
-              ../../node_modules/.bin/ubrn build android \
+              ${ubrn}/bin/ubrn build android \
                 --config ubrn.config.yaml --and-generate --release
 
               runHook postBuild
             '';
 
+            # The whole module, not a selection from it.
+            #
+            # `--and-generate` writes far more than the libraries: the module's
+            # `build.gradle` and `CMakeLists.txt`, its manifest, its
+            # `cpp-adapter.cpp`, its `index.tsx`, the podspec. Exporting the
+            # parts that looked important left a module directory with no
+            # `build.gradle` in it, and Expo's autolinking — which runs during
+            # *settings* evaluation, before any real task — failed with nothing
+            # more specific than `command 'node' finished with non-zero exit
+            # value 1`.
             installPhase = ''
               runHook preInstall
               mkdir -p $out
-              cp -r android/src/main/jniLibs $out/jniLibs
-              cp -r android/src/main/java $out/java
-              cp -r src/generated $out/ts
-              cp -r cpp/generated $out/cpp
+              cp -r . $out/module
               install -Dm444 ../../src/mutators.gen.ts $out/mutators.gen.ts
               runHook postInstall
             '';
@@ -672,11 +716,8 @@
               # the Rust and nothing else.
               echo "--- the engine, prebuilt"
               m=clients/expo/modules/harken-native
-              mkdir -p $m/android/src/main $m/src $m/cpp
-              cp -r ${androidEngine}/jniLibs $m/android/src/main/jniLibs
-              cp -r ${androidEngine}/java $m/android/src/main/java
-              cp -r ${androidEngine}/ts $m/src/generated
-              cp -r ${androidEngine}/cpp $m/cpp/generated
+              rm -rf $m
+              cp -r ${androidEngine}/module $m
               cp ${androidEngine}/mutators.gen.ts clients/expo/src/mutators.gen.ts
               chmod -R u+w $m clients/expo/src
 
