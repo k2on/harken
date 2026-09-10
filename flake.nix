@@ -429,24 +429,6 @@
             outputHash = "sha256-usHdiS9E96QuhIj38q8xi5jPn9nLKZ57KN1jJGdWpOA=";
           };
 
-          # CMake, at the version React Native's `CMakeLists.txt` expects.
-          #
-          # 25.05 ships 3.31, which does not find `ReactAndroid` where the
-          # prefab puts it, and 4.x rejects the minimum React Native declares.
-          # `--no-system-cppdap` is a flag the newer expression passes and
-          # 3.22.1 does not know.
-          cmake322 = pkgs.cmake.overrideAttrs (old: {
-            version = "3.22.1";
-            src = pkgs.fetchurl {
-              url = "https://github.com/Kitware/CMake/releases/download/v3.22.1/cmake-3.22.1.tar.gz";
-              hash = "sha256-DpmCKVSdez82hwPSDiSOfuH4U5ENQnBKqHkYwhPqgsA=";
-            };
-            patches = [ ];
-            doCheck = false;
-            configureFlags =
-              builtins.filter (f: f != "--no-system-cppdap") old.configureFlags;
-          });
-
           # The Android development build.
           #
           # Everything Google publishes for Android is a `linux-x86_64` binary
@@ -454,6 +436,16 @@
           # depends on `binfmt_misc` being registered for x86_64. That works,
           # including inside a build sandbox, and it is slow: the emulated
           # compile of SQLite's amalgamation alone is about a minute per ABI.
+          #
+          # One thing does *not* work under emulation: the SDK's CMake, which
+          # qemu refuses with "Unable to find a guest_base to satisfy all guest
+          # address mapping requirements". On x86_64 it runs and nothing is
+          # needed. On ARM, `local.properties` has to name a native CMake with
+          # `cmake.dir` — and it must be 3.22.x, because React Native declares a
+          # minimum that 4.x rejects and 3.31 does not find `ReactAndroid` where
+          # the prefab puts it. 25.05 ships neither, and 3.22.1 does not compile
+          # against its curl, so that is unfinished: `.#apk` is x86_64 for now,
+          # which is what CI is.
           #
           # Not a fixed-output derivation, and it cannot be one: an APK is a zip
           # and a signed one at that, so it is not reproducible byte-for-byte.
@@ -468,7 +460,6 @@
               toolchain
               gradle9
               androidSdk
-              cmake322
               pkgs.cacert
               pkgs.cargo-ndk
               pkgs.git
@@ -551,16 +542,8 @@
               export ANDROID_HOME=$TMPDIR/sdk ANDROID_SDK_ROOT=$TMPDIR/sdk
               export ANDROID_NDK_HOME=$TMPDIR/sdk/ndk/27.1.12297006
 
-              # `cmake.dir` names a CMake outside the SDK. The SDK's own is a
-              # Google binary and will not run under emulation at all — qemu
-              # answers "Unable to find a guest_base to satisfy all guest
-              # address mapping requirements" — and CMake only *drives* the
-              # compiler, so it may as well be the host's. It has to be 3.22.x:
-              # React Native asks for a minimum CMake 4 rejects, and 3.31 does
-              # not find `ReactAndroid` where the prefab puts it.
               cat > android/local.properties <<EOF
               sdk.dir=$TMPDIR/sdk
-              cmake.dir=${cmake322}
               EOF
 
               cd android
