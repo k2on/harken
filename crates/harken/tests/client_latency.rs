@@ -282,3 +282,89 @@ fn maintained_against_re_read_on_the_client_path() {
         );
     }
 }
+
+/// What crosses the boundary, in bytes and in rows.
+///
+/// The phone's cost is not the query — it is the list crossing UniFFI on every
+/// change. This is the half that can be measured from here: what the peer hands
+/// over. What React Native then does with it is not measured, and the numbers
+/// below are a floor rather than the whole story.
+///
+/// The rows are the honest column. Bytes are counted by encoding the same
+/// values with ciborium, which is not UniFFI's format — it is a stand-in with
+/// the same shape, and what matters is how it scales rather than its constant.
+#[test]
+#[ignore = "a measurement, not an assertion: run it with `just latency`"]
+fn what_crosses_the_boundary() {
+    use harken::Peer;
+
+    println!("\n  one tap, then what the peer hands the phone:");
+    println!(
+        "    {:>7}  {:>20}  {:>20}",
+        "songs", "library()", "library_update()"
+    );
+
+    for n in [10usize, 100, 1_000] {
+        let dir = std::env::temp_dir().join(format!("petros-cross-{n}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let peer = Peer::open(
+            dir.join("peer.db").to_string_lossy().into_owned(),
+            "alice".into(),
+        )
+        .unwrap();
+        peer.load_mutators(harken::BUNDLED.to_vec()).unwrap();
+
+        for i in 0..n {
+            peer.add_song(format!("song {i}"), "Bicep".into()).unwrap();
+        }
+        let _ = peer.library_update().unwrap();
+
+        let (mut whole, mut moved) = (0usize, 0usize);
+        let (mut whole_rows, mut moved_rows) = (0usize, 0usize);
+        for i in 0..20 {
+            peer.add_song(format!("tap {i}"), "Bicep".into()).unwrap();
+
+            let update = peer.library_update().unwrap();
+            moved_rows += update.patches.len();
+            moved += size_of_songs(update.patches.iter().filter_map(|p| p.song.as_ref()));
+
+            let all = peer.library().unwrap();
+            whole_rows += all.len();
+            whole += size_of_songs(all.iter());
+        }
+        println!(
+            "    {:>7}  {:>6} rows {:>8} B  {:>6} rows {:>8} B",
+            n,
+            whole_rows / 20,
+            whole / 20,
+            moved_rows / 20,
+            moved / 20,
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+/// A stand-in for what the boundary charges: the same values, encoded.
+fn size_of_songs<'a>(songs: impl Iterator<Item = &'a harken::foreign::Song>) -> usize {
+    songs
+        .map(|s| {
+            let mut out = Vec::new();
+            ciborium::into_writer(
+                &(
+                    &s.id,
+                    &s.title,
+                    &s.artist,
+                    s.pos,
+                    s.added_ms,
+                    &s.actor,
+                    s.favorite_pos,
+                    s.favorited,
+                ),
+                &mut out,
+            )
+            .unwrap();
+            out.len()
+        })
+        .sum()
+}

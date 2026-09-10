@@ -137,3 +137,91 @@ fn a_verb_the_client_never_heard_of() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The peer maintains the library and hands back only what moved.
+///
+/// The list used to cross the boundary whole on every change. This checks the
+/// two agree — patch by patch, against `library()` through the same peer — and
+/// that the peer settles on its own, because an app that has to remember to
+/// update a view will forget on exactly the path nobody tested.
+#[test]
+fn the_peer_maintains_its_library() {
+    use harken::PatchOp;
+
+    let dir = std::env::temp_dir().join(format!("petros-update-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let client = Peer::open(
+        dir.join("peer.db").to_string_lossy().into_owned(),
+        "alice".into(),
+    )
+    .expect("open");
+    client.load_mutators(MODULE.to_vec()).expect("install");
+
+    // The list a caller holds, built only from what the peer sends.
+    let mut held: Vec<harken::foreign::Song> = Vec::new();
+    let settle = |client: &Peer, held: &mut Vec<harken::foreign::Song>| {
+        let update = client.library_update().expect("update");
+        if update.reset {
+            *held = update.songs;
+        } else {
+            for patch in update.patches {
+                match patch.op {
+                    PatchOp::Insert => held.insert(patch.at as usize, patch.song.unwrap()),
+                    PatchOp::Remove => {
+                        held.remove(patch.at as usize);
+                    }
+                    PatchOp::Update => held[patch.at as usize] = patch.song.unwrap(),
+                }
+            }
+        }
+        let read = client.library().expect("library");
+        let seen: Vec<(&str, bool)> = held
+            .iter()
+            .map(|s| (s.title.as_str(), s.favorited))
+            .collect();
+        let want: Vec<(&str, bool)> = read
+            .iter()
+            .map(|s| (s.title.as_str(), s.favorited))
+            .collect();
+        assert_eq!(seen, want);
+        assert_eq!(
+            update.favorites as usize,
+            read.iter().filter(|s| s.favorited).count(),
+            "the maintained count"
+        );
+    };
+
+    // The first call is the reset: the peer hydrated at open and has never been
+    // collected from.
+    settle(&client, &mut held);
+    assert!(held.is_empty());
+
+    for title in ["Glue", "Apricots", "Opal"] {
+        client.add_song(title.into(), "Bicep".into()).unwrap();
+        settle(&client, &mut held);
+    }
+    assert_eq!(held.len(), 3);
+
+    let opal = held[2].id.clone();
+    client.favorite(opal.clone()).unwrap();
+    settle(&client, &mut held);
+    assert!(held[2].favorited, "hearting reached the held list");
+
+    client.favorite_all().unwrap();
+    settle(&client, &mut held);
+    assert!(held.iter().all(|s| s.favorited));
+
+    client.remove_song(opal).unwrap();
+    settle(&client, &mut held);
+    assert_eq!(held.len(), 2);
+
+    // Nothing happened, so nothing crosses. This is the common case while a
+    // socket is polled and it has to cost nothing.
+    let idle = client.library_update().unwrap();
+    assert!(!idle.reset);
+    assert!(idle.patches.is_empty(), "an idle poll carries no rows");
+    assert!(idle.songs.is_empty());
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

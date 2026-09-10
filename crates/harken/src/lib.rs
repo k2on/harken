@@ -60,4 +60,8 @@ uniffi::setup_scaffolding!();
 petros::foreign_peer!(Peer {
     schema: crate::schema::SCHEMA,
     module: include_bytes!("../../../target/wasm32-unknown-unknown/mutators/harken.wasm"),
+    // The peer maintains the library rather than re-reading it, and settles it
+    // after every mutation and every frame from the server. `library_update`
+    // then carries only what moved.
+    views: crate::functions::Views,
 });

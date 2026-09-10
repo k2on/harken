@@ -299,3 +299,165 @@ fn song_of(row: &With<SongRow, Favorite>) -> Song {
 }
 
 peer!(add_song, favorite, unfavorite, favorite_all, remove_song);
+
+// ---------------------------------------------------------- what a peer keeps
+
+/// What the peer maintains beside its client.
+///
+/// `petros::foreign_peer!` hydrates this at open and settles it after every
+/// mutation and every message from the server, so nothing here depends on a
+/// caller remembering to ask.
+#[cfg(feature = "storage")]
+pub struct Views {
+    library: LibraryView,
+    favorites: FavoriteCount,
+    /// What the library did since the caller last collected. A foreign caller
+    /// polls rather than being pushed to, so this has to accumulate.
+    pending: Vec<petros::ivm::Patch>,
+    /// Set by a rebase, which no sequence of patches describes. The caller
+    /// takes the whole list again and starts over.
+    reset: bool,
+}
+
+#[cfg(feature = "storage")]
+impl petros::Views for Views {
+    fn build() -> Self {
+        Views {
+            library: library_view(),
+            favorites: favorite_count(),
+            pending: Vec::new(),
+            reset: true,
+        }
+    }
+
+    fn hydrate(&mut self, store: &mut petros::backend::SqliteStore<'_>) {
+        self.library.hydrate(store);
+        self.favorites.hydrate(store);
+        // Anything already collected describes a database that no longer
+        // exists, and anything not yet collected describes one the caller never
+        // saw. Both are wrong; the whole list is not.
+        self.pending.clear();
+        self.reset = true;
+    }
+
+    fn apply(
+        &mut self,
+        store: &mut petros::backend::SqliteStore<'_>,
+        changes: &[petros_schema::Change],
+    ) {
+        self.favorites.apply(store, changes);
+        let patches = self.library.apply(store, changes);
+        self.pending.extend(patches);
+    }
+}
+
+// ------------------------------------------------------- across the boundary
+
+/// What the library did, as a foreign caller hears it.
+///
+/// The list used to cross whole on every change, which is the expensive half on
+/// a phone: maintaining the query saves the SQL and the bridge charges for the
+/// rows regardless. This carries the rows that moved.
+///
+/// `reset` is the rebase, and it is not a failure — it is the case no sequence
+/// of patches can describe, because the optimistic view was rolled back and a
+/// rollback reports nothing. Then `songs` is the whole list and `patches` is
+/// empty; otherwise `songs` is empty and `patches` is what to splice.
+#[cfg(feature = "foreign")]
+#[derive(uniffi::Record)]
+pub struct LibraryUpdate {
+    pub reset: bool,
+    pub songs: Vec<crate::schema::foreign::Song>,
+    pub patches: Vec<SongPatch>,
+    /// The playlist's size, maintained rather than counted on the far side.
+    pub favorites: u32,
+}
+
+/// One entry of the list moving. Positions are valid in sequence: apply them in
+/// order to a list that started equal and it ends equal.
+#[cfg(feature = "foreign")]
+#[derive(uniffi::Record)]
+pub struct SongPatch {
+    pub op: PatchOp,
+    pub at: u32,
+    /// Absent for a removal, which needs only the position.
+    pub song: Option<crate::schema::foreign::Song>,
+}
+
+#[cfg(feature = "foreign")]
+#[derive(uniffi::Enum)]
+pub enum PatchOp {
+    Insert,
+    Remove,
+    Update,
+}
+
+#[cfg(feature = "foreign")]
+impl Views {
+    /// Collect what has happened since the last call, and start accumulating
+    /// again.
+    ///
+    /// `foreign` rather than `storage`, so it builds the boundary record
+    /// directly. It was a tuple of four things and a mapping step, because the
+    /// storage build has no boundary types — but `foreign` implies `storage`,
+    /// so the split bought nothing and cost a shape clippy was right to dislike.
+    fn take_update(&mut self) -> LibraryUpdate {
+        let favorites = self.favorites.get() as u32;
+        if std::mem::take(&mut self.reset) {
+            self.pending.clear();
+            return LibraryUpdate {
+                reset: true,
+                songs: songs_of(&self.library)
+                    .into_iter()
+                    .map(Into::into)
+                    .collect(),
+                patches: Vec::new(),
+                favorites,
+            };
+        }
+        let song_of_node = |node: &petros_schema::Tree| {
+            node.decode::<SongRow, Favorite>()
+                .as_ref()
+                .map(song_of)
+                .map(Into::into)
+        };
+        LibraryUpdate {
+            reset: false,
+            songs: Vec::new(),
+            patches: std::mem::take(&mut self.pending)
+                .into_iter()
+                .map(|patch| match patch {
+                    petros::ivm::Patch::Insert { at, node } => SongPatch {
+                        op: PatchOp::Insert,
+                        at: at as u32,
+                        song: song_of_node(&node),
+                    },
+                    petros::ivm::Patch::Remove { at } => SongPatch {
+                        op: PatchOp::Remove,
+                        at: at as u32,
+                        song: None,
+                    },
+                    petros::ivm::Patch::Update { at, node } => SongPatch {
+                        op: PatchOp::Update,
+                        at: at as u32,
+                        song: song_of_node(&node),
+                    },
+                })
+                .collect(),
+            favorites,
+        }
+    }
+}
+
+#[cfg(feature = "foreign")]
+#[uniffi::export]
+impl Peer {
+    /// What the library did since you last asked.
+    ///
+    /// Poll this after a mutation or a frame from the server. The peer keeps the
+    /// view up to date on its own, so an empty answer means nothing moved and
+    /// the screen need not redraw.
+    pub fn library_update(&self) -> ::core::result::Result<LibraryUpdate, crate::PeerError> {
+        self.views(|views| ::core::result::Result::Ok(views.take_update()))
+    }
+}

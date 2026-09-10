@@ -330,10 +330,35 @@ splices instead of rebuilding:
 Flat. That is the property, not the ratio — the cost is the rows that moved,
 and a thousand songs is the same tap as ten.
 
-The same patches are what the phone will want, for a stronger reason: there the
-whole list crosses the UniFFI bridge on every change, so a maintained query
-alone would save the SQL and leave the expensive half. The engine side is ready
-— a module's writes report what they changed now, collected across the whole
-apply rather than lost when each host request's store was dropped — but the
-bridge has not been measured on a device, and designing for it before measuring
-is how the O(n) decode got missed the first time.
+## The phone gets the patches, not the list
+
+The same reasoning applies to the phone with more force. There the whole list
+crossed the UniFFI bridge on every change, so maintaining the query alone would
+have saved the cheap half.
+
+I had put this off for wanting a measurement I could not take — the bridge, on a
+device. That was half right. What React Native does with the values is still
+unmeasured, but *what crosses* is measurable from here, and it is the thing that
+scales:
+
+```
+  one tap, then what the peer hands the phone:
+      songs             library()      library_update()
+         10      20 rows     1428 B       1 rows       69 B
+        100     110 rows     7904 B       1 rows       70 B
+       1000    1010 rows    74360 B       1 rows       71 B
+```
+
+Seventy bytes, flat, where it was seventy-four kilobytes and growing. (The bytes
+are a stand-in — the same values encoded with ciborium rather than UniFFI's own
+format — so the constant is approximate and the shape is not.)
+
+`Peer` holds the views now, and `petros::foreign_peer!` settles them after every
+mutation and every frame from the server rather than leaving it to the app. That
+is the part worth insisting on: a view updated by the call sites that happen to
+think of it is a view that is wrong on the call sites that do not.
+
+`libraryUpdate()` returns either patches or, after a rebase, the whole list with
+`reset` set — because a rollback reports nothing and no sequence of patches
+describes it. `src/peer.ts` splices; the array copy it then makes for React is
+copying references, not decoding rows, and that is the half that is cheap.

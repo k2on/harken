@@ -10,13 +10,13 @@
  * diverge silently, so there is only ever one and it is in Rust.
  */
 
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { AppState } from 'react-native';
 import { Paths } from 'expo-file-system';
 import { usePeer as usePetrosPeer } from '@petros/client/react';
 // Aliased: this file's own `Peer` is the hook's return type, and the native
 // one is the object it drives.
-import { Peer as NativePeer, type PeerLike, type Song } from 'harken-native';
+import { Peer as NativePeer, PatchOp, type PeerLike, type Song } from 'harken-native';
 
 import { install, watch } from './mutators';
 // Generated from the module's own schema section by `just mutators`. A call
@@ -61,11 +61,37 @@ function databasePath(actor: string): string {
 }
 
 export function usePeer(actor: string, server: string): Peer {
+  // The list, held here and spliced from what the peer sends. `library()` would
+  // hand back every song on every change — at a thousand songs that is a
+  // thousand rows and about seventy kilobytes across the bridge for one added
+  // title, and the bridge is the expensive part on a phone. `libraryUpdate()`
+  // sends what moved: one row, seventy bytes, whatever the library's size.
+  //
+  // `reset` is not an error. A rebase rolls the optimistic view back and a
+  // rollback reports nothing, so no sequence of patches describes it and the
+  // peer says to take the whole list again.
+  //
+  // The copy below is a copy of references, so React sees a new array without
+  // anything being decoded twice. That is the part still proportional to the
+  // library, and it is the cheap part.
+  const held = useRef<Song[]>([]);
   const peer = usePetrosPeer<PeerLike, Song[]>({
     key: actor,
     server,
     open: () => NativePeer.open(databasePath(actor), actor),
-    query: (client) => client.library(),
+    query: (client) => {
+      const update = client.libraryUpdate();
+      if (update.reset) {
+        held.current = update.songs;
+        return held.current.slice();
+      }
+      for (const patch of update.patches) {
+        if (patch.op === PatchOp.Insert) held.current.splice(patch.at, 0, patch.song!);
+        else if (patch.op === PatchOp.Remove) held.current.splice(patch.at, 1);
+        else held.current[patch.at] = patch.song!;
+      }
+      return held.current.slice();
+    },
     install,
     watch,
   });
