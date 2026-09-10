@@ -206,9 +206,24 @@ so the Expo screen just writes `♥`.
   cmake.dir=/path/to/native/cmake
   ```
 
-  Then only the NDK's clang is emulated, which is the part that has to be. Use
-  a 3.x cmake: React Native's `CMakeLists.txt` asks for a minimum that CMake 4
-  rejects outright.
+  Then only the NDK's clang is emulated, which is the part that has to be.
+- **nixpkgs' CMake cannot build React Native, and the version is a red
+  herring.** `find_package(ReactAndroid REQUIRED CONFIG)` fails under it even
+  though the config file is exactly where `CMAKE_FIND_ROOT_PATH` points. Two
+  CMake versions were built chasing that before asking the right question —
+  `cmake --debug-find` shows it searching the NDK sysroot and *never trying the
+  prefab path at all*. The cause is not the version:
+
+  ```
+  000-nixpkgs-cmake-prefix-path.diff
+  001-search-path.diff
+  ```
+
+  nixpkgs patches CMake's prefix and search-path handling so it does not wander
+  outside the store — which is right for nixpkgs and fatal for the Android
+  Gradle Plugin, whose prefab support depends on exactly that re-rooting. An
+  unpatched CMake is required. On x86_64 that is the SDK's own, which is why
+  none of this arises there.
 - **nix does not supply the Android SDK** for the *devshell*, on purpose:
   gradle installs missing
   components into the SDK directory and the store is read-only. Bring your own
