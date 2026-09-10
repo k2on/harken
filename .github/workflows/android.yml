@@ -73,6 +73,7 @@ jobs:
       # with the store. `if: always()` saves what the run downloaded whatever
       # the build did with it, which is exactly the run that needs it next time.
       - uses: nix-community/cache-nix-action/restore@v6
+        id: nix-store-cache
         with:
           primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'Cargo.lock', 'clients/expo/bun.lock') }}
           restore-prefixes-first-match: nix-${{ runner.os }}-
@@ -110,10 +111,19 @@ jobs:
           path: result/*.apk
           if-no-files-found: error
 
+      # The key the *restore* computed, not a fresh one. `hashFiles` gives a
+      # different answer at the end of this job than at the start: `just` runs
+      # cargo, CI has no `.cargo/config.toml` to patch the engine to a sibling
+      # checkout, and so cargo re-resolves the git dependency and rewrites
+      # `Cargo.lock`. Saving under the post-build hash means the next run's
+      # restore — which hashes the committed lockfile — can never match it, and
+      # falls back to whatever the prefix finds. The combined action did not
+      # have this problem because it evaluated the key once and reused it;
+      # splitting restore from save is what introduced it.
       - uses: nix-community/cache-nix-action/save@v6
         if: always()
         with:
-          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'Cargo.lock', 'clients/expo/bun.lock') }}
+          primary-key: ${{ steps.nix-store-cache.outputs.primary-key }}
           gc-max-store-size-linux: 8G
           purge: true
           purge-prefixes: nix-${{ runner.os }}-
