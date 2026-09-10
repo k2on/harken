@@ -653,14 +653,31 @@
               #
               # These two lists have to agree. If you add a target there, add it
               # here.
-              echo 'reactNativeArchitectures=arm64-v8a,x86_64' >> android/gradle.properties
-
-              # A properties file keeps the last value for a key, so these
-              # replace the template's. It ships `-Xmx2048m` and no parallelism,
-              # which is a laptop's answer; a runner has four cores and 16GB,
-              # and the Android build guide's own advice is a bigger heap and
-              # the parallel collector when GC is a visible share of the build.
+              #
+              # A properties file keeps the last value for a key, so appending
+              # replaces the template's — including its `-Xmx2048m` and no
+              # parallelism, which is a laptop's answer where a runner has four
+              # cores and 16GB, and the Android build guide's own advice is a
+              # bigger heap and the parallel collector when GC is a visible
+              # share of the build.
+              #
+              # The leading newline is not cosmetic. `expo prebuild` writes this
+              # file with no trailing one, and its last line is
+              #
+              #   expo.inlineModules.watchedDirectories=[]
+              #
+              # so an appended line lands on the *end* of it. That gives the
+              # property the value `[]reactNativeArchitectures=…`, which Expo's
+              # autolinking plugin hands to `JSON.parse`, and the ABI list is
+              # never set at all. Gradle reports the first half as
+              #
+              #   Process 'command 'node'' finished with non-zero exit value 1
+              #
+              # with node's own message nowhere in the log, which is what runs
+              # 22, 23 and 27 died of.
+              printf '\n' >> android/gradle.properties
               cat >> android/gradle.properties <<'PROPS'
+              reactNativeArchitectures=arm64-v8a,x86_64
               org.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g -XX:+UseParallelGC
               org.gradle.parallel=true
               PROPS
