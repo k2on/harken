@@ -825,17 +825,26 @@
             # Hermes and the release toolchain too, not just the debug half.
             gradleUpdateTask = "assembleDebug assembleRelease";
 
-            # No `__noChroot`. Nothing here reaches the network any more: the
-            # Maven graph is replayed from the recording above, the engine's
-            # module is a derivation, and `ubrn` is pinned by a lockfile.
+            # Sandboxed, except where the NDK has to be emulated.
             #
-            # Which also buys a stable path. A sandboxed build runs at `/build`
-            # everywhere; an impure one runs somewhere ending in a pid and a
-            # random number. Gradle's task history and ninja's `.cxx` record
-            # absolute paths, so carrying native build state between
-            # derivations needs this — and that state is worth carrying:
-            # measured on one module, a second assemble with it restored is 35s
-            # against 3m30s.
+            # Nothing here reaches the network: the Maven graph is replayed from
+            # the recording above, the engine's module is a derivation, and
+            # `ubrn` is pinned by a lockfile. On x86_64 that makes this an
+            # ordinary sandboxed build.
+            #
+            # On ARM the NDK's clang is an x86_64 binary under qemu, and in a
+            # sandbox it cannot resolve its own libc — `undefined symbol:
+            # ceilf, version GLIBC_2.2.5`, the failure `CLAUDE.md` records for
+            # `nix develop` and assumed a builder did not have. Nothing had ever
+            # been sandboxed to check.
+            #
+            # It costs the stable path: `/build` everywhere versus something
+            # ending in a pid and a random number. Gradle's task history and
+            # ninja's `.cxx` record absolute paths, so carrying native build
+            # state between derivations works on x86_64 and not on ARM — and
+            # that state is worth carrying: measured on one module, a second
+            # assemble with it restored is 35s against 3m30s.
+            __noChroot = pkgs.stdenv.buildPlatform.system != "x86_64-linux";
 
             ANDROID_HOME = "${androidSdk}/libexec/android-sdk";
             ANDROID_SDK_ROOT = "${androidSdk}/libexec/android-sdk";
