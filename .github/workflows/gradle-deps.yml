@@ -1,0 +1,57 @@
+# Re-record gradle's Maven graph.
+#
+# `gradle-deps.json` is the lockfile the APK build replays instead of reaching
+# Maven, and it has to be regenerated whenever the build's dependencies move —
+# an Expo or React Native bump, a new config plugin, a gradle or AGP change.
+# Recording means running the build once behind a proxy that keeps what came
+# back, so it costs roughly a full build and needs real network access.
+#
+# It lives here rather than on a laptop for two reasons. The obvious one is
+# that whoever bumps a dependency should not also need an Android toolchain.
+# The other is disk: the recording runs both assembles, and a store plus two
+# Android builds is around twenty gigabytes.
+#
+# The result is an artifact rather than a commit. Recording is not a decision —
+# what it produces depends on what the build asked for on the day — so a person
+# downloads it, drops it in, and pushes it as an ordinary change.
+name: gradle-deps
+
+on:
+  workflow_dispatch:
+
+jobs:
+  record:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: DeterminateSystems/nix-installer-action@main
+        with:
+          extra-conf: |
+            sandbox = relaxed
+
+      # The runner ships with a lot this build does not need, and the recording
+      # wants the room: the store, two Android builds and the SDK together run
+      # to about twenty gigabytes.
+      - name: Make room
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
+          df -h /
+
+      - name: Record
+        run: ./scripts/gradle-deps.sh
+
+      - name: What changed
+        run: |
+          wc -c gradle-deps.json
+          git diff --stat -- gradle-deps.json || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gradle-deps
+          path: gradle-deps.json
+          if-no-files-found: error
