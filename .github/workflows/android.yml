@@ -188,12 +188,19 @@ jobs:
       # bundled inside gradle's `native-platform` jars, which needs ncurses'
       # `dev` output — and Hydra never pushed that one, so the default and
       # `man` outputs being cached buys nothing. Substitution is per-output and
-      # building is per-derivation. An `--out-link` registers an indirect gc root, which is all
+      # building is per-derivation.
+      #
+      # The three checks are here for a different reason: their outputs are
+      # empty directories, so what gets cached is the fact that they passed —
+      # which is the whole mechanism by which `nix flake check` skips them. An
+      # unrooted empty output is unreachable and the collection takes it,
+      # leaving the checks to run again on a commit that changed no Rust. An `--out-link` registers an indirect gc root, which is all
       # it takes for the collection to walk around them.
       - name: Keep the layers worth caching
         if: ${{ !cancelled() }}
         run: |
-          for a in androidSdk expoModules ubrn androidDeps androidEngine gradle9; do
+          for a in androidSdk expoModules ubrn androidDeps androidEngine \
+                   gradle9 check-fmt check-clippy check-tests; do
             nix build -o "$RUNNER_TEMP/gcroot-$a" ".#$a" || true
           done
 
