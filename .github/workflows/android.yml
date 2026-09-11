@@ -203,6 +203,10 @@ jobs:
                    gradle9 check-fmt check-clippy check-tests; do
             nix build -o "$RUNNER_TEMP/gcroot-$a" ".#$a" || true
           done
+          # The vendored Maven mirror, which is not a package: it hangs off the
+          # APK derivation as `mitmCache`, and 1642 artifacts is a lot to
+          # re-materialise for want of one symlink.
+          nix build -o "$RUNNER_TEMP/gcroot-maven" ".#apk-debug.mitmCache" || true
 
       - uses: nix-community/cache-nix-action/save@v7
         if: ${{ !cancelled() }}
