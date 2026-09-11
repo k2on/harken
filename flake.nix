@@ -642,12 +642,13 @@
             # override that, because `bun.lock` was written on one platform and
             # `--frozen-lockfile` means the lock wins.
             #
-            # Both move whenever `package.json` or `bun.lock` does, and each can
-            # only be computed on the machine it belongs to. This one was last
-            # refreshed on x86_64; if an ARM build fails on the hash, nix prints
-            # the right one and it goes here.
+            # Both move whenever `package.json` or `bun.lock` does, and each
+            # can only be computed on the machine it belongs to — so one of them
+            # is always being taken on trust from whoever ran the other. Both
+            # are current as of the `expo-build-properties` addition. When one
+            # goes stale, nix prints the right one and it goes here.
             outputHash = {
-              aarch64-linux = "sha256-usHdiS9E96QuhIj38q8xi5jPn9nLKZ57KN1jJGdWpOA=";
+              aarch64-linux = "sha256-Lo8p11fynW14olU8Sz5HAPQFrwtEe/xS/4t5v9qj5Hc=";
               x86_64-linux = "sha256-nVY9X+FkNSvMlDy8oi/7AebhqpXiCc6V/aSLytq/RgQ=";
             }.${system} or (throw "no node_modules hash recorded for ${system}");
           };
