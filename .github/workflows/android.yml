@@ -198,11 +198,35 @@ jobs:
             build to try, not one to distribute. Anyone can re-sign it as this
             app, and Play will not take it. See `CLAUDE.md`.
 
+      # Root the layers worth caching, or the save step throws them away.
+      #
+      # It garbage-collects the store down to the cap before saving, and an
+      # unrooted `nix store gc` keeps only what is reachable. The one root a
+      # build leaves is `result` — the APK — whose runtime closure contains no
+      # SDK, no NDK and no Rust at all. So run 36 restored a cache and then
+      # rebuilt `androidsdk`, `harken-android-deps` and `harken-android-engine`
+      # anyway, because the save before it had done this:
+      #
+      #   Current store size in bytes: 19686642592.
+      #   Maximum allowed store size in bytes: 8589934592 (8G).
+      #   nix store gc --max 11096708000
+      #   1236 store paths deleted, 10.5 GiB freed
+      #
+      # These are the expensive halves of a build and the ones whose inputs
+      # move least. An `--out-link` registers an indirect gc root, which is all
+      # it takes for the collection to walk around them.
+      - name: Keep the layers worth caching
+        if: ${{ !cancelled() }}
+        run: |
+          for a in androidSdk expoModules ubrn androidDeps androidEngine; do
+            nix build -o "$RUNNER_TEMP/gcroot-$a" ".#$a" || true
+          done
+
       - uses: nix-community/cache-nix-action/save@v7
         if: ${{ !cancelled() }}
         with:
           primary-key: ${{ steps.nix-store-cache.outputs.primary-key }}
-          gc-max-store-size-linux: 8G
+          gc-max-store-size-linux: 12G
           purge: true
           purge-prefixes: nix-${{ runner.os }}-
           purge-created: 0
