@@ -79,13 +79,32 @@ jobs:
       # from a post step declared `post-if: success()` — and a run that fails in
       # the APK step has still done the downloading this exists to keep.
       #
+      # `@v7` rather than `@v6`, because under v6 this cache has never once been
+      # restored. Every run downloaded three gigabytes and then failed to unpack
+      # it — runs 29, 32 and 33 all end the same way:
+      #
+      #   Cache Size: ~3092 MB (3242205417 B)
+      #   tar: /nix/nix-installer: Cannot open: File exists
+      #   tar: /nix/store/…-gnumake-4.4.1.drv: Cannot open: Permission denied
+      #   tar: /nix/store: Cannot utime: Operation not permitted
+      #   tar: Exiting with failure status due to previous errors
+      #   Failed to restore the cache.
+      #
+      # The installer above creates `/nix` as root before this step runs, and
+      # tar then extracts over it as `runner`. So every build paid about ten
+      # minutes rebuilding the SDK, the NDK, the vendored crates and both engine
+      # layers, and another minute uploading a cache nothing could ever read.
+      # v7 carries the fix for restoring over existing store paths, along with
+      # checkpointing the store database before it is copied — which is the
+      # other way a restore silently buys nothing.
+      #
       # The run id is in the key because a GitHub cache key is immutable:
       # whoever writes it first owns it until it expires. A run cancelled ninety
       # seconds in wrote an 89MB empty store under the shared key, and every run
       # after it "restored" that and none could replace it. A key per run cannot
       # be squatted; the prefixes are what make it reusable, preferring the
       # newest run with this lockfile and falling back to any run at all.
-      - uses: nix-community/cache-nix-action/restore@v6
+      - uses: nix-community/cache-nix-action/restore@v7
         id: nix-store-cache
         with:
           primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'Cargo.lock', 'clients/expo/bun.lock') }}-${{ github.run_id }}
@@ -179,7 +198,7 @@ jobs:
             build to try, not one to distribute. Anyone can re-sign it as this
             app, and Play will not take it. See `CLAUDE.md`.
 
-      - uses: nix-community/cache-nix-action/save@v6
+      - uses: nix-community/cache-nix-action/save@v7
         if: ${{ !cancelled() }}
         with:
           primary-key: ${{ steps.nix-store-cache.outputs.primary-key }}
