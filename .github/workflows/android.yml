@@ -79,13 +79,32 @@ jobs:
       # from a post step declared `post-if: success()` — and a run that fails in
       # the APK step has still done the downloading this exists to keep.
       #
+      # `@v7` rather than `@v6`, because under v6 this cache has never once been
+      # restored. Every run downloaded three gigabytes and then failed to unpack
+      # it — runs 29, 32 and 33 all end the same way:
+      #
+      #   Cache Size: ~3092 MB (3242205417 B)
+      #   tar: /nix/nix-installer: Cannot open: File exists
+      #   tar: /nix/store/…-gnumake-4.4.1.drv: Cannot open: Permission denied
+      #   tar: /nix/store: Cannot utime: Operation not permitted
+      #   tar: Exiting with failure status due to previous errors
+      #   Failed to restore the cache.
+      #
+      # The installer above creates `/nix` as root before this step runs, and
+      # tar then extracts over it as `runner`. So every build paid about ten
+      # minutes rebuilding the SDK, the NDK, the vendored crates and both engine
+      # layers, and another minute uploading a cache nothing could ever read.
+      # v7 carries the fix for restoring over existing store paths, along with
+      # checkpointing the store database before it is copied — which is the
+      # other way a restore silently buys nothing.
+      #
       # The run id is in the key because a GitHub cache key is immutable:
       # whoever writes it first owns it until it expires. A run cancelled ninety
       # seconds in wrote an 89MB empty store under the shared key, and every run
       # after it "restored" that and none could replace it. A key per run cannot
       # be squatted; the prefixes are what make it reusable, preferring the
       # newest run with this lockfile and falling back to any run at all.
-      - uses: nix-community/cache-nix-action/restore@v6
+      - uses: nix-community/cache-nix-action/restore@v7
         id: nix-store-cache
         with:
           primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'Cargo.lock', 'clients/expo/bun.lock') }}-${{ github.run_id }}
@@ -93,50 +112,22 @@ jobs:
             nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'Cargo.lock', 'clients/expo/bun.lock') }}-
             nix-${{ runner.os }}-
 
-      # Cargo's own incremental state, which the nix cache above does *not*
-      # cover and cannot: nix caches derivation outputs, keyed on their inputs,
-      # all or nothing. `just` runs cargo inside a devshell rather than inside a
-      # derivation, so nix never sees it — and wrapping it in one would not help
-      # either, because the source changes on every commit and the derivation
-      # would rebuild every time. What makes clippy and the tests fast is
-      # `target/` surviving between runs, which is this.
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: ". -> target"
-          # Same reason: its post step is `success() || CACHE_ON_FAILURE`, and
-          # a run that fails in the APK step has still done the compiling this
-          # is here to keep.
-          cache-on-failure: true
-          # The engine is a git dependency, so it lands in the cargo registry
-          # rather than the workspace and is worth keeping too.
-          cache-all-crates: true
-
-      # The cheap check first, so a Rust mistake fails in a minute rather than
-      # after the Android toolchain has had its say. It is `just` — fmt, clippy
-      # and the suite — which is what a contributor runs.
+      # The cheap check first, so a Rust mistake fails before the Android
+      # toolchain has had its say — and as a derivation rather than a command
+      # in a devshell, so it is the same expression here and on a laptop.
+      #
+      # `just` ran cargo against a `target/` that `Swatinem/rust-cache` kept
+      # between runs, which is how run 37 failed on a pruned build script while
+      # the identical command passed locally. A check keyed on its inputs
+      # cannot drift like that, and when the inputs have not moved it does not
+      # run at all: seventeen of the last twenty commits on main touched no
+      # Rust at all.
+      #
+      # It also actually checks formatting. `just` runs `fmt` before `lint`, so
+      # `cargo fmt --all` rewrote the tree and `cargo fmt --all --check` then
+      # measured what it had just written.
       - name: fmt, clippy and the suite
-        run: nix develop --command just
-
-      # …and then put `Cargo.lock` back, because running cargo changed it.
-      #
-      # The committed lockfile records the engine as a *path*, which is what the
-      # gitignored `.cargo/config.toml` patch shapes it into. CI has no such
-      # patch, so `just` resolves the engine from git and rewrites those seven
-      # entries into git sources. `nix build` below reads the working tree —
-      # dirty file and all — and installs the patch over it, and cargo cannot
-      # satisfy a git-source lock through a path patch: it wants to re-resolve,
-      # and `cargo vendor --locked` refuses to let it.
-      #
-      #   the lock file …/harken-workspace/Cargo.lock needs to be updated
-      #   but --locked was passed to prevent this
-      #
-      # Runs 22-26 only reached this because the vendor derivation is
-      # fixed-output: while its hash was unchanged the store cache answered for
-      # it and cargo never ran. The rewrite is not new, and neither is knowing
-      # about it — the cache key below is computed at *restore* time for exactly
-      # this reason. It just also has to not reach the build.
-      - name: Put the lockfile back
-        run: git checkout -- Cargo.lock
+        run: nix flake check --print-build-logs
 
       - name: Build the APK
         run: nix build .#apk-$VARIANT --print-build-logs
@@ -147,12 +138,10 @@ jobs:
           path: result/*.apk
           if-no-files-found: error
 
-      # The key the *restore* computed, not a fresh one. `hashFiles` reads the
-      # working tree, and cargo rewrites `Cargo.lock` in it — the step above
-      # puts the file back, but only when `just` got that far. Taking the key
-      # from the restore is true whatever happened in between; recomputing it
-      # describes a lockfile that may exist nowhere in git, which is a key the
-      # next run cannot ask for.
+      # The key the *restore* computed, not a fresh one. Nothing in this job
+      # runs cargo in the working tree any more, so `Cargo.lock` no longer
+      # moves under it — but taking the key from the restore is true whatever
+      # happens in between, and costs nothing.
       #
       # `!cancelled()` rather than `always()`: a failed run's store is worth
       # keeping, a killed run's store is whatever it managed in the seconds it
@@ -179,11 +168,47 @@ jobs:
             build to try, not one to distribute. Anyone can re-sign it as this
             app, and Play will not take it. See `CLAUDE.md`.
 
-      - uses: nix-community/cache-nix-action/save@v6
+      # Root the layers worth caching, or the save step throws them away.
+      #
+      # It garbage-collects the store down to the cap before saving, and an
+      # unrooted `nix store gc` keeps only what is reachable. The one root a
+      # build leaves is `result` — the APK — whose runtime closure contains no
+      # SDK, no NDK and no Rust at all. So run 36 restored a cache and then
+      # rebuilt `androidsdk`, `harken-android-deps` and `harken-android-engine`
+      # anyway, because the save before it had done this:
+      #
+      #   Current store size in bytes: 19686642592.
+      #   Maximum allowed store size in bytes: 8589934592 (8G).
+      #   nix store gc --max 11096708000
+      #   1236 store paths deleted, 10.5 GiB freed
+      #
+      # These are the expensive halves of a build and the ones whose inputs
+      # move least. `gradle9` is here because building it means building
+      # ncurses from source: nixpkgs patchelfs the ncurses-linked libraries
+      # bundled inside gradle's `native-platform` jars, which needs ncurses'
+      # `dev` output — and Hydra never pushed that one, so the default and
+      # `man` outputs being cached buys nothing. Substitution is per-output and
+      # building is per-derivation.
+      #
+      # The three checks are here for a different reason: their outputs are
+      # empty directories, so what gets cached is the fact that they passed —
+      # which is the whole mechanism by which `nix flake check` skips them. An
+      # unrooted empty output is unreachable and the collection takes it,
+      # leaving the checks to run again on a commit that changed no Rust. An `--out-link` registers an indirect gc root, which is all
+      # it takes for the collection to walk around them.
+      - name: Keep the layers worth caching
+        if: ${{ !cancelled() }}
+        run: |
+          for a in androidSdk expoModules ubrn androidDeps androidEngine \
+                   gradle9 check-fmt check-clippy check-tests; do
+            nix build -o "$RUNNER_TEMP/gcroot-$a" ".#$a" || true
+          done
+
+      - uses: nix-community/cache-nix-action/save@v7
         if: ${{ !cancelled() }}
         with:
           primary-key: ${{ steps.nix-store-cache.outputs.primary-key }}
-          gc-max-store-size-linux: 8G
+          gc-max-store-size-linux: 12G
           purge: true
           purge-prefixes: nix-${{ runner.os }}-
           purge-created: 0

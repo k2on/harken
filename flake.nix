@@ -5,7 +5,7 @@
     # Pinned to a release branch here; the exact revision lives in flake.lock,
     # which is what actually makes the shell reproducible. Run `nix flake update`
     # deliberately, never as a side effect.
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
     rust-overlay = {
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -218,6 +218,13 @@
                 !(builtins.elem base [ ".cargo" "target" "node_modules" "result" ]);
           };
 
+          # cc-rs looks for a compiler under the target triple with dashes
+          # turned into underscores, and prefers that over the bare `CC`. These
+          # name the *build* machine's triple, so the same expression is right
+          # on an ARM laptop and an x86_64 runner.
+          hostCc = "CC_${builtins.replaceStrings [ "-" ] [ "_" ] pkgs.stdenv.buildPlatform.config}";
+          hostAr = "AR_${builtins.replaceStrings [ "-" ] [ "_" ] pkgs.stdenv.buildPlatform.config}";
+
           # What the Android engine build reads, and nothing else.
           #
           # The point is what is *missing*: `clients/expo/src`, `app.json`, the
@@ -308,6 +315,145 @@
               echo "Run: git checkout -- Cargo.lock" >&2
               exit 1
             fi
+          '';
+
+          # The engine's own dependency graph, vendored, so the code
+          # generator can be built without the network. Petros is not a
+          # workspace member here — `petros-codegen` does not appear in this
+          # repository's lockfile at all — so it brings its own.
+          petrosCargoDeps = pkgs.stdenv.mkDerivation {
+            name = "petros-cargo-vendor";
+            src = petros;
+            nativeBuildInputs = [ toolchain pkgs.cacert pkgs.git ];
+            buildPhase = ''
+              export CARGO_HOME=$PWD/.cargo-home
+              mkdir -p $out
+              cargo vendor --locked --versioned-dirs $out > $out/config.toml
+              cp Cargo.lock $out/Cargo.lock
+            '';
+            dontInstall = true;
+            dontFixup = true;
+            outputHashMode = "recursive";
+            outputHashAlgo = "sha256";
+            outputHash = "sha256-WcgEW07qNxOpjun5jJnxcsYOp8wwzrF0I2lRXGNUcB8=";
+          };
+
+          # The generator that turns the wasm module into TypeScript. A
+          # derivation rather than `cargo install --git`, which is what
+          # `mutators.sh` falls back to when there is no sibling checkout — and
+          # which is the reason the engine build reaches the network.
+          petrosCodegen = rustPlatform.buildRustPackage {
+            pname = "petros-codegen";
+            version = "0.1.0";
+            src = petros;
+            cargoDeps = petrosCargoDeps;
+            cargoBuildFlags = [ "-p" "petros-codegen" ];
+            doCheck = false;
+            meta.mainProgram = "petros-codegen";
+          };
+
+          # The domain compiled to wasm, and the TypeScript generated from
+          # it. This is `scripts/mutators.sh` as a derivation.
+          #
+          # The checks need it and not merely the tests do: `foreign_peer!`
+          # does `include_bytes!` of the module, so *compiling* the crate with
+          # `--all-features` needs the file to exist. That is why `just lint`
+          # depends on `mutators`, and why a check that skipped it would fail
+          # in a way that reads like a broken checkout.
+          mutators = pkgs.stdenv.mkDerivation {
+            name = "harken-mutators";
+            src = checkWorkspace;
+            nativeBuildInputs = [
+              rustPlatform.cargoSetupHook
+              toolchain
+              petrosCodegen
+            ];
+            inherit cargoDeps;
+            buildPhase = ''
+              runHook preBuild
+              cargo build -p harken --no-default-features \
+                --target wasm32-unknown-unknown --profile mutators --offline
+              petros-codegen \
+                target/wasm32-unknown-unknown/mutators/harken.wasm \
+                mutators.gen.ts
+              runHook postBuild
+            '';
+            installPhase = ''
+              runHook preInstall
+              mkdir -p $out
+              cp target/wasm32-unknown-unknown/mutators/harken.wasm $out/
+              cp mutators.gen.ts $out/
+              runHook postInstall
+            '';
+          };
+
+          # What every check starts from: the narrow tree, the vendored
+          # dependencies, and the module staged where `include_bytes!` looks
+          # for it.
+          checkBase = {
+            src = checkWorkspace;
+            inherit cargoDeps;
+            preBuild = ''
+              mkdir -p target/wasm32-unknown-unknown/mutators
+              cp ${mutators}/harken.wasm \
+                target/wasm32-unknown-unknown/mutators/harken.wasm
+            '';
+            installPhase = "mkdir -p $out";
+            dontFixup = true;
+          };
+
+          # Formatting. This is the one the old CI step could not do: `just`
+          # runs `fmt` before `lint`, so `cargo fmt --all` rewrote the tree and
+          # `cargo fmt --all --check` then measured what it had just written. A
+          # badly formatted commit passed.
+          check-fmt = pkgs.stdenv.mkDerivation (checkBase // {
+            name = "harken-check-fmt";
+            nativeBuildInputs = [ rustPlatform.cargoSetupHook toolchain ];
+            buildPhase = "cargo fmt --all --check";
+          });
+
+          check-clippy = pkgs.stdenv.mkDerivation (checkBase // {
+            name = "harken-check-clippy";
+            nativeBuildInputs = [
+              rustPlatform.cargoSetupHook
+              toolchain
+              pkgs.pkg-config
+            ];
+            buildInputs = icedLibs;
+            buildPhase = ''
+              runHook preBuild
+              cargo clippy --workspace --all-features --all-targets --offline \
+                -- -D warnings
+              runHook postBuild
+            '';
+          });
+
+          check-tests = pkgs.stdenv.mkDerivation (checkBase // {
+            name = "harken-check-tests";
+            nativeBuildInputs = [
+              rustPlatform.cargoSetupHook
+              toolchain
+              pkgs.cargo-nextest
+              pkgs.pkg-config
+            ];
+            buildInputs = icedLibs;
+            buildPhase = ''
+              runHook preBuild
+              cargo nextest run --workspace --all-features --offline
+              cargo test --workspace --all-features --doc --offline
+              runHook postBuild
+            '';
+          });
+
+          # The narrow tree with the engine patch installed: what a check
+          # reads. `engineWorkspace` deliberately has no `.cargo/config.toml`,
+          # because the Android build writes its own with the vendored
+          # dependencies in it; a check wants the same narrow source and the
+          # ordinary vendor the setup hook provides.
+          checkWorkspace = pkgs.runCommand "harken-check-workspace" { } ''
+            cp -r ${engineWorkspace} $out
+            chmod -R u+w $out
+            install -Dm444 ${cargoPatch} $out/.cargo/config.toml
           '';
 
           # The dependencies, vendored by cargo itself.
@@ -414,18 +560,55 @@
         rec {
           default = harken-server;
 
+          # The generator, and the wasm module it reads. Exposed because
+          # `nix build .#mutators` is how you find out whether it is the module
+          # or your own code that is broken.
+          inherit petrosCodegen mutators;
+
+          # The three checks, also as packages: `nix flake check` runs them all
+          # and says little, while `nix build .#check-clippy` runs one and shows
+          # what it said.
+          inherit check-fmt check-clippy check-tests;
+
           # The Android SDK, pinned to what Expo SDK 57 asks gradle for. The
           # versions are this app's; how to compose them without the Gradle
           # Plugin trying to install its own is the engine's.
           androidSdk = android.mkSdk { };
 
-          # Gradle, at the version the generated project's wrapper asks for.
-          # The wrapper would download it, which a builder cannot do; 25.05
-          # ships 8.14.3 and the project wants 9.3.1.
-          gradle9 = android.mkGradle {
-            version = "9.3.1";
-            hash = "sha256-BrrTDxZWrXyIZ/U4gBclxGLRqHv/cZy94/Wy8DrZ6nE=";
-          };
+          # Gradle 9.3.1, built with nixpkgs' own machinery rather than
+          # fetched and wrapped by hand.
+          #
+          # The version is not negotiable, and `pkgs.gradle_9` is the wrong one.
+          # 26.05 ships 9.4.1, which carries `kotlin-stdlib-2.3.0`; Expo SDK
+          # 57's gradle plugins are compiled with Kotlin 2.1.0, which reads
+          # metadata up to 2.2.0 and refuses:
+          #
+          #   Class 'kotlin.reflect.KProperty' was compiled with an
+          #   incompatible version of Kotlin. The actual metadata version is
+          #   2.3.0, but the compiler version 2.1.0 can read versions up to
+          #   2.2.0.
+          #
+          # which arrives as `Internal compiler error` against Expo's own
+          # settings plugin. That is what the template's 9.3.1 pin is for.
+          #
+          # `mkGradle` builds that version and `wrapGradle` puts nixpkgs' setup
+          # hook and `passthru.fetchDeps` on it — which is the whole point, and
+          # the thing `mkGradle` in petros could never do: it unpacks the
+          # distribution zip and wraps the launcher, and that is all.
+          #
+          # JDK 17 rather than the 21 nixpkgs defaults to, because that is what
+          # this build already used.
+          gradle9 =
+            let
+              unwrapped = pkgs.gradle-packages.mkGradle {
+                version = "9.3.1";
+                hash = "sha256-smbV/2uQ6tptw7IMsJDjcxMC5VOifF0+TfHw12vq/wY=";
+                defaultJava = pkgs.jdk17;
+              };
+            in
+            pkgs.callPackage pkgs.gradle-packages.wrapGradle {
+              gradle-unwrapped = unwrapped;
+            };
 
           # The Expo app's JavaScript dependencies.
           #
@@ -474,6 +657,17 @@
           ubrn = android.mkUbrn {
             inherit toolchain;
             nodeModules = expoModules;
+            # The generator ships no lockfile — the npm package is the built
+            # CLI and its Rust sources, and cargo is expected to resolve
+            # wherever it runs. So one is committed here, and the vendored
+            # result is pinned by hash. Both move when `bun.lock` moves the
+            # generator's version.
+            #
+            # `clients/expo/node_modules/…/Cargo.lock` is not this file: cargo
+            # writes one there whenever it runs under this tree, and it comes
+            # out carrying the engine's seven crates because `[patch]` applies.
+            lockFile = ./clients/expo/ubrn-Cargo.lock;
+            depsHash = "sha256-YdwO0AOhoQjRbo5psMAxSSCRM7Ok8OsrjcAE13QMXP0=";
           };
 
           # The engine cross-compiled for Android, and the bindings generated
@@ -503,9 +697,23 @@
             # `foreign_peer!` does `include_bytes!` of the module, so the crate
             # does not compile until it exists.
             preEngine = ''
-              echo "--- the mutator module"
-              mkdir -p clients/expo/src
-              ./scripts/mutators.sh
+              # The module, already built, rather than `scripts/mutators.sh`.
+              #
+              # The script reaches the network: with no sibling checkout it
+              # installs `petros-codegen` with `cargo install --git`, which is
+              # one of the two remaining reasons this derivation asks for
+              # `__noChroot`. The derivation builds the same two files from the
+              # pinned engine.
+              #
+              # The wasm goes back where `include_bytes!` expects it, because
+              # compiling `harken` with `--features foreign` reads it — that is
+              # what makes this a build input and not a test fixture.
+              echo "--- the mutator module, prebuilt"
+              mkdir -p clients/expo/src target/wasm32-unknown-unknown/mutators
+              cp ${mutators}/mutators.gen.ts clients/expo/src/mutators.gen.ts
+              cp ${mutators}/harken.wasm \
+                target/wasm32-unknown-unknown/mutators/harken.wasm
+              chmod -R u+w clients/expo/src target/wasm32-unknown-unknown
 
               # The generator resolves react-native's headers through this.
               echo "--- node_modules"
@@ -545,7 +753,7 @@
           # Everything it needs from the network is fetched by a derivation that
           # *is* — `expoModules` and `gradleDeps` — and the build itself runs
           # offline.
-          apk-debug = pkgs.stdenv.mkDerivation {
+          apk-debug = pkgs.stdenv.mkDerivation (finalAttrs: {
             name = "harken-debug-apk";
             src = workspace;
 
@@ -571,16 +779,43 @@
               pkgs.which
             ];
 
-            # Gradle resolves its dependencies from Maven Central and Google's
-            # repository at build time, and there is no lockfile to vendor them
-            # from — so this derivation is deliberately impure rather than
-            # pretending otherwise. Everything that *can* be pinned is: the
-            # toolchain, the SDK, the NDK, CMake, gradle itself and every crate
-            # and npm package. What is left is gradle's own graph.
+            # Gradle's own dependency graph, recorded once and replayed from
+            # the store — the last reason this derivation reached the network.
             #
-            # Needs `sandbox = relaxed` on the builder, which the CI workflow
-            # sets. Turning it into a fixed-output derivation is not available:
-            # an APK is a signed zip and is not reproducible byte-for-byte.
+            # There is no lockfile to vendor a Maven graph from, because working
+            # out what a gradle build fetches is a Turing-complete question; so
+            # nixpkgs answers it by running the build once behind a recording
+            # proxy and keeping what came back. `gradle-deps.json` is that
+            # recording, and `scripts/gradle-deps.sh` regenerates it.
+            #
+            # An APK is a signed zip and is not reproducible byte-for-byte, so
+            # the *APK* can never be a fixed-output derivation. Its dependencies
+            # can, which is the part that matters.
+            mitmCache = gradle9.fetchDeps {
+              pkg = finalAttrs.finalPackage;
+              data = ./gradle-deps.json;
+            };
+
+            # What the recording runs, instead of nixpkgs' `nixDownloadDeps`.
+            #
+            # That task resolves every resolvable configuration, which is right
+            # for a plain JVM project and wrong for an Android one: the variant
+            # metadata is deliberately ambiguous until a build type picks a
+            # side, so it fails on configurations no build ever resolves.
+            #
+            #   Could not resolve project :expo-modules-core.
+            #   … we cannot choose between the following variants:
+            #     - debugApiElements
+            #     - releaseApiElements
+            #
+            # Both assembles, because `apk-release` is this derivation with one
+            # attribute changed and shares this recording — so it has to cover
+            # Hermes and the release toolchain too, not just the debug half.
+            gradleUpdateTask = "assembleDebug assembleRelease";
+
+            # Still impure until the recording exists and the other two
+            # derivations that reach the network — `ubrn` and the engine — stop
+            # doing so. Needs `sandbox = relaxed`, which the CI workflow sets.
             __noChroot = true;
 
             ANDROID_HOME = "${androidSdk}/libexec/android-sdk";
@@ -594,11 +829,21 @@
             # well. Without this it does so with the NDK's clang, which has no
             # glibc sysroot, and fails on a missing `stdio.h`. A
             # target-qualified variable wins over the bare one.
-            CC_aarch64_unknown_linux_gnu = "gcc";
-            AR_aarch64_unknown_linux_gnu = "ar";
+            # …and the triple is the *build* machine's, not a fixed one. It
+            # read `aarch64` here, which is the development box; on the x86_64
+            # runner nothing was set at all, and the only reason that built is
+            # that `__noChroot` let the NDK's clang find the host's
+            # `/usr/include`. Under a real sandbox it fails on `stdio.h`.
+            ${hostCc} = "gcc";
+            ${hostAr} = "ar";
 
-            buildPhase = ''
-              runHook preBuild
+            # Preparing the project is `configurePhase`, not `buildPhase`, and
+            # that is load-bearing rather than tidiness. `fetchDeps`' update
+            # script runs `unpackPhase patchPhase configurePhase` and then
+            # gradle — it never calls `buildPhase`. With the preparation in
+            # `buildPhase` there would be no `android/` for it to record from.
+            configurePhase = ''
+              runHook preConfigure
 
               export HOME=$TMPDIR
               export CARGO_HOME=$TMPDIR/cargo
@@ -702,32 +947,41 @@
               sdk.dir=$TMPDIR/sdk
               EOF
 
-              # `gradle`, not `./gradlew`. The wrapper downloads its own copy
-              # of 9.3.1 from services.gradle.org — the same version pinned
-              # above and fetched by hash, so the download buys nothing and
-              # costs the one thing this derivation is trying to keep.
-              #
-              # And `GRADLE_USER_HOME` explicitly, because the JVM does not read
+              # `GRADLE_USER_HOME` explicitly, because the JVM does not read
               # `$HOME`: `user.home` comes from the passwd entry, which for a
               # nix build user is `/var/empty`. The `export HOME=$TMPDIR` above
               # is invisible to anything running on the JVM, so gradle would put
-              # its caches somewhere it cannot write however that is set.
+              # its caches somewhere it cannot write however that is set. The
+              # setup hook honours it if it is already set.
               export GRADLE_USER_HOME=$TMPDIR/gradle
-              cd android
-              gradle "assemble''${variant^}" --no-daemon --console=plain \
-                -Dorg.gradle.java.home=${pkgs.jdk17}
-              cd ../../..
 
+              # Leave the shell in the gradle project. The update script runs
+              # gradle straight after this phase and does no `cd` of its own.
+              cd android
+
+              runHook postConfigure
+            '';
+
+            # `gradle`, not `./gradlew`: the wrapper downloads its own copy from
+            # services.gradle.org, which buys nothing over the pinned one and
+            # costs the thing this derivation is trying to keep. It is also the
+            # shell function the setup hook defines rather than the binary, so
+            # `--no-daemon`, `--console plain`, the init script and — when the
+            # dependencies are being replayed — the proxy and truststore flags
+            # are all added for us.
+            buildPhase = ''
+              runHook preBuild
+              gradle "assemble''${variant^}"
               runHook postBuild
             '';
 
             installPhase = ''
               runHook preInstall
               mkdir -p $out
-              cp clients/expo/android/app/build/outputs/apk/$variant/*.apk $out/
+              cp app/build/outputs/apk/$variant/*.apk $out/
               runHook postInstall
             '';
-          };
+          });
 
           # The same build, gradle's release type: the JavaScript compiled to
           # Hermes bytecode and bundled into the APK rather than fetched from a
@@ -928,6 +1182,15 @@
             networking.firewall.allowedTCPPorts = lib.mkIf cfg.openFirewall [ cfg.port ];
           };
         };
+
+      # `nix flake check` is what CI runs, and what a contributor runs. The
+      # point is not that it is faster — it is that it is the same expression
+      # on both, pinned the same way. Run 37 failed on a `target/` that
+      # `Swatinem/rust-cache` had pruned before saving, while the identical
+      # `just` passed here; a check keyed on its inputs cannot do that.
+      checks = forAllSystems (system: {
+        inherit (self.packages.${system}) check-fmt check-clippy check-tests;
+      });
 
       formatter = forAllSystems (system: nixpkgs.legacyPackages.${system}.nixpkgs-fmt);
     };
