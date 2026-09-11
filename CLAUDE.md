@@ -253,11 +253,20 @@ so the Expo screen just writes `♥`.
   `petros-sql` is a proc macro that links SQLite, so an Android build compiles
   libsqlite3-sys for the host too. It then fails on a missing `stdio.h`, because
   the NDK has no glibc sysroot. Setting the target-qualified variable fixes it,
-  since cc-rs prefers that over the bare one:
+  since cc-rs prefers that over the bare one — and the triple has to be the
+  *build* machine's, not a fixed one:
 
+  ```nix
+  hostTriple = builtins.replaceStrings [ "-" ] [ "_" ]
+    pkgs.stdenv.buildPlatform.config;
+  "CC_${hostTriple}" = "gcc";
   ```
-  CC_aarch64_unknown_linux_gnu=gcc AR_aarch64_unknown_linux_gnu=ar
-  ```
+
+  This read `aarch64` for a while, which is one development box and nothing at
+  all on an x86_64 runner — where the build worked anyway, because `__noChroot`
+  let the NDK's clang reach the host's `/usr/include`. It surfaced the first
+  time a layer was built in a real sandbox, which is the general lesson: an
+  impure build hides the environment it depends on.
 - **Everything in the SDK must come from nixpkgs, and the SDK must be
   writable.** Two separate problems that look like one. AGP resolves the
   versions a project asks for against the SDK directory and *installs* what is
