@@ -5,7 +5,7 @@
     # Pinned to a release branch here; the exact revision lives in flake.lock,
     # which is what actually makes the shell reproducible. Run `nix flake update`
     # deliberately, never as a side effect.
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
     rust-overlay = {
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
