@@ -890,6 +890,12 @@
               cp -a ${expoModules} clients/expo/node_modules
               chmod -R u+w clients/expo/node_modules
 
+              # `#!/usr/bin/env node` is not a thing inside a sandbox, and the
+              # `expo` shim starts that way. Both derivations that copy
+              # `node_modules` need this; the engine's copy above is not this
+              # one, which is how it was missed the first time.
+              patchShebangs clients/expo/node_modules
+
               # The engine and its bindings, already built. This used to be
               # `mutators.sh` and `ubrn build android` inline, which is 529s of
               # compiling the workspace once per ABI — paid again whenever any
