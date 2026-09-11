@@ -317,6 +317,52 @@
             fi
           '';
 
+          # The engine's own dependency graph, vendored, so the code
+          # generator can be built without the network. Petros is not a
+          # workspace member here — `petros-codegen` does not appear in this
+          # repository's lockfile at all — so it brings its own.
+          petrosCargoDeps = pkgs.stdenv.mkDerivation {
+            name = "petros-cargo-vendor";
+            src = petros;
+            nativeBuildInputs = [ toolchain pkgs.cacert pkgs.git ];
+            buildPhase = ''
+              export CARGO_HOME=$PWD/.cargo-home
+              mkdir -p $out
+              cargo vendor --locked --versioned-dirs $out > $out/config.toml
+              cp Cargo.lock $out/Cargo.lock
+            '';
+            dontInstall = true;
+            dontFixup = true;
+            outputHashMode = "recursive";
+            outputHashAlgo = "sha256";
+            outputHash = pkgs.lib.fakeHash;
+          };
+
+          # The generator that turns the wasm module into TypeScript. A
+          # derivation rather than `cargo install --git`, which is what
+          # `mutators.sh` falls back to when there is no sibling checkout — and
+          # which is the reason the engine build reaches the network.
+          petrosCodegen = rustPlatform.buildRustPackage {
+            pname = "petros-codegen";
+            version = "0.1.0";
+            src = petros;
+            cargoDeps = petrosCargoDeps;
+            cargoBuildFlags = [ "-p" "petros-codegen" ];
+            doCheck = false;
+            meta.mainProgram = "petros-codegen";
+          };
+
+          # The narrow tree with the engine patch installed: what a check
+          # reads. `engineWorkspace` deliberately has no `.cargo/config.toml`,
+          # because the Android build writes its own with the vendored
+          # dependencies in it; a check wants the same narrow source and the
+          # ordinary vendor the setup hook provides.
+          checkWorkspace = pkgs.runCommand "harken-check-workspace" { } ''
+            cp -r ${engineWorkspace} $out
+            chmod -R u+w $out
+            install -Dm444 ${cargoPatch} $out/.cargo/config.toml
+          '';
+
           # The dependencies, vendored by cargo itself.
           #
           # Not `importCargoLock` and not `fetchCargoVendor`, both of which
@@ -426,19 +472,40 @@
           # Plugin trying to install its own is the engine's.
           androidSdk = android.mkSdk { };
 
-          # Gradle, from nixpkgs rather than fetched and wrapped by hand.
+          # Gradle 9.3.1, built with nixpkgs' own machinery rather than
+          # fetched and wrapped by hand.
           #
-          # The project's wrapper asks for 9.3.1 and 26.05 has 9.4.1, which is
-          # near enough; what matters is what comes attached. `mkGradle` in
-          # petros unpacks the distribution zip and wraps the launcher, and that
-          # is all it can do. nixpkgs' package carries a setup hook and
-          # `passthru.fetchDeps`, which is what lets the Maven graph become a
-          # fixed-output derivation instead of a reason this build needs the
-          # network.
+          # The version is not negotiable, and `pkgs.gradle_9` is the wrong one.
+          # 26.05 ships 9.4.1, which carries `kotlin-stdlib-2.3.0`; Expo SDK
+          # 57's gradle plugins are compiled with Kotlin 2.1.0, which reads
+          # metadata up to 2.2.0 and refuses:
           #
-          # Pinned to JDK 17 rather than the 21 it defaults to, because that is
-          # what this build already used and one change at a time is enough.
-          gradle9 = pkgs.gradle_9.override { java = pkgs.jdk17; };
+          #   Class 'kotlin.reflect.KProperty' was compiled with an
+          #   incompatible version of Kotlin. The actual metadata version is
+          #   2.3.0, but the compiler version 2.1.0 can read versions up to
+          #   2.2.0.
+          #
+          # which arrives as `Internal compiler error` against Expo's own
+          # settings plugin. That is what the template's 9.3.1 pin is for.
+          #
+          # `mkGradle` builds that version and `wrapGradle` puts nixpkgs' setup
+          # hook and `passthru.fetchDeps` on it — which is the whole point, and
+          # the thing `mkGradle` in petros could never do: it unpacks the
+          # distribution zip and wraps the launcher, and that is all.
+          #
+          # JDK 17 rather than the 21 nixpkgs defaults to, because that is what
+          # this build already used.
+          gradle9 =
+            let
+              unwrapped = pkgs.gradle-packages.mkGradle {
+                version = "9.3.1";
+                hash = "sha256-smbV/2uQ6tptw7IMsJDjcxMC5VOifF0+TfHw12vq/wY=";
+                defaultJava = pkgs.jdk17;
+              };
+            in
+            pkgs.callPackage pkgs.gradle-packages.wrapGradle {
+              gradle-unwrapped = unwrapped;
+            };
 
           # The Expo app's JavaScript dependencies.
           #
