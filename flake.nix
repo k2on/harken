@@ -668,6 +668,23 @@
               data = ./gradle-deps.json;
             };
 
+            # What the recording runs, instead of nixpkgs' `nixDownloadDeps`.
+            #
+            # That task resolves every resolvable configuration, which is right
+            # for a plain JVM project and wrong for an Android one: the variant
+            # metadata is deliberately ambiguous until a build type picks a
+            # side, so it fails on configurations no build ever resolves.
+            #
+            #   Could not resolve project :expo-modules-core.
+            #   … we cannot choose between the following variants:
+            #     - debugApiElements
+            #     - releaseApiElements
+            #
+            # Both assembles, because `apk-release` is this derivation with one
+            # attribute changed and shares this recording — so it has to cover
+            # Hermes and the release toolchain too, not just the debug half.
+            gradleUpdateTask = "assembleDebug assembleRelease";
+
             # Still impure until the recording exists and the other two
             # derivations that reach the network — `ubrn` and the engine — stop
             # doing so. Needs `sandbox = relaxed`, which the CI workflow sets.
