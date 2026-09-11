@@ -686,9 +686,23 @@
             # `foreign_peer!` does `include_bytes!` of the module, so the crate
             # does not compile until it exists.
             preEngine = ''
-              echo "--- the mutator module"
-              mkdir -p clients/expo/src
-              ./scripts/mutators.sh
+              # The module, already built, rather than `scripts/mutators.sh`.
+              #
+              # The script reaches the network: with no sibling checkout it
+              # installs `petros-codegen` with `cargo install --git`, which is
+              # one of the two remaining reasons this derivation asks for
+              # `__noChroot`. The derivation builds the same two files from the
+              # pinned engine.
+              #
+              # The wasm goes back where `include_bytes!` expects it, because
+              # compiling `harken` with `--features foreign` reads it — that is
+              # what makes this a build input and not a test fixture.
+              echo "--- the mutator module, prebuilt"
+              mkdir -p clients/expo/src target/wasm32-unknown-unknown/mutators
+              cp ${mutators}/mutators.gen.ts clients/expo/src/mutators.gen.ts
+              cp ${mutators}/harken.wasm \
+                target/wasm32-unknown-unknown/mutators/harken.wasm
+              chmod -R u+w clients/expo/src target/wasm32-unknown-unknown
 
               # The generator resolves react-native's headers through this.
               echo "--- node_modules"
