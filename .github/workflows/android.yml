@@ -112,50 +112,22 @@ jobs:
             nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'Cargo.lock', 'clients/expo/bun.lock') }}-
             nix-${{ runner.os }}-
 
-      # Cargo's own incremental state, which the nix cache above does *not*
-      # cover and cannot: nix caches derivation outputs, keyed on their inputs,
-      # all or nothing. `just` runs cargo inside a devshell rather than inside a
-      # derivation, so nix never sees it — and wrapping it in one would not help
-      # either, because the source changes on every commit and the derivation
-      # would rebuild every time. What makes clippy and the tests fast is
-      # `target/` surviving between runs, which is this.
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: ". -> target"
-          # Same reason: its post step is `success() || CACHE_ON_FAILURE`, and
-          # a run that fails in the APK step has still done the compiling this
-          # is here to keep.
-          cache-on-failure: true
-          # The engine is a git dependency, so it lands in the cargo registry
-          # rather than the workspace and is worth keeping too.
-          cache-all-crates: true
-
-      # The cheap check first, so a Rust mistake fails in a minute rather than
-      # after the Android toolchain has had its say. It is `just` — fmt, clippy
-      # and the suite — which is what a contributor runs.
+      # The cheap check first, so a Rust mistake fails before the Android
+      # toolchain has had its say — and as a derivation rather than a command
+      # in a devshell, so it is the same expression here and on a laptop.
+      #
+      # `just` ran cargo against a `target/` that `Swatinem/rust-cache` kept
+      # between runs, which is how run 37 failed on a pruned build script while
+      # the identical command passed locally. A check keyed on its inputs
+      # cannot drift like that, and when the inputs have not moved it does not
+      # run at all: seventeen of the last twenty commits on main touched no
+      # Rust at all.
+      #
+      # It also actually checks formatting. `just` runs `fmt` before `lint`, so
+      # `cargo fmt --all` rewrote the tree and `cargo fmt --all --check` then
+      # measured what it had just written.
       - name: fmt, clippy and the suite
-        run: nix develop --command just
-
-      # …and then put `Cargo.lock` back, because running cargo changed it.
-      #
-      # The committed lockfile records the engine as a *path*, which is what the
-      # gitignored `.cargo/config.toml` patch shapes it into. CI has no such
-      # patch, so `just` resolves the engine from git and rewrites those seven
-      # entries into git sources. `nix build` below reads the working tree —
-      # dirty file and all — and installs the patch over it, and cargo cannot
-      # satisfy a git-source lock through a path patch: it wants to re-resolve,
-      # and `cargo vendor --locked` refuses to let it.
-      #
-      #   the lock file …/harken-workspace/Cargo.lock needs to be updated
-      #   but --locked was passed to prevent this
-      #
-      # Runs 22-26 only reached this because the vendor derivation is
-      # fixed-output: while its hash was unchanged the store cache answered for
-      # it and cargo never ran. The rewrite is not new, and neither is knowing
-      # about it — the cache key below is computed at *restore* time for exactly
-      # this reason. It just also has to not reach the build.
-      - name: Put the lockfile back
-        run: git checkout -- Cargo.lock
+        run: nix flake check --print-build-logs
 
       - name: Build the APK
         run: nix build .#apk-$VARIANT --print-build-logs
@@ -166,12 +138,10 @@ jobs:
           path: result/*.apk
           if-no-files-found: error
 
-      # The key the *restore* computed, not a fresh one. `hashFiles` reads the
-      # working tree, and cargo rewrites `Cargo.lock` in it — the step above
-      # puts the file back, but only when `just` got that far. Taking the key
-      # from the restore is true whatever happened in between; recomputing it
-      # describes a lockfile that may exist nowhere in git, which is a key the
-      # next run cannot ask for.
+      # The key the *restore* computed, not a fresh one. Nothing in this job
+      # runs cargo in the working tree any more, so `Cargo.lock` no longer
+      # moves under it — but taking the key from the restore is true whatever
+      # happens in between, and costs nothing.
       #
       # `!cancelled()` rather than `always()`: a failed run's store is worth
       # keeping, a killed run's store is whatever it managed in the seconds it

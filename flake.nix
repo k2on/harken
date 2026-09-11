@@ -335,7 +335,7 @@
             dontFixup = true;
             outputHashMode = "recursive";
             outputHashAlgo = "sha256";
-            outputHash = pkgs.lib.fakeHash;
+            outputHash = "sha256-WcgEW07qNxOpjun5jJnxcsYOp8wwzrF0I2lRXGNUcB8=";
           };
 
           # The generator that turns the wasm module into TypeScript. A
@@ -351,6 +351,99 @@
             doCheck = false;
             meta.mainProgram = "petros-codegen";
           };
+
+          # The domain compiled to wasm, and the TypeScript generated from
+          # it. This is `scripts/mutators.sh` as a derivation.
+          #
+          # The checks need it and not merely the tests do: `foreign_peer!`
+          # does `include_bytes!` of the module, so *compiling* the crate with
+          # `--all-features` needs the file to exist. That is why `just lint`
+          # depends on `mutators`, and why a check that skipped it would fail
+          # in a way that reads like a broken checkout.
+          mutators = pkgs.stdenv.mkDerivation {
+            name = "harken-mutators";
+            src = checkWorkspace;
+            nativeBuildInputs = [
+              rustPlatform.cargoSetupHook
+              toolchain
+              petrosCodegen
+            ];
+            inherit cargoDeps;
+            buildPhase = ''
+              runHook preBuild
+              cargo build -p harken --no-default-features \
+                --target wasm32-unknown-unknown --profile mutators --offline
+              petros-codegen \
+                target/wasm32-unknown-unknown/mutators/harken.wasm \
+                mutators.gen.ts
+              runHook postBuild
+            '';
+            installPhase = ''
+              runHook preInstall
+              mkdir -p $out
+              cp target/wasm32-unknown-unknown/mutators/harken.wasm $out/
+              cp mutators.gen.ts $out/
+              runHook postInstall
+            '';
+          };
+
+          # What every check starts from: the narrow tree, the vendored
+          # dependencies, and the module staged where `include_bytes!` looks
+          # for it.
+          checkBase = {
+            src = checkWorkspace;
+            inherit cargoDeps;
+            preBuild = ''
+              mkdir -p target/wasm32-unknown-unknown/mutators
+              cp ${mutators}/harken.wasm \
+                target/wasm32-unknown-unknown/mutators/harken.wasm
+            '';
+            installPhase = "mkdir -p $out";
+            dontFixup = true;
+          };
+
+          # Formatting. This is the one the old CI step could not do: `just`
+          # runs `fmt` before `lint`, so `cargo fmt --all` rewrote the tree and
+          # `cargo fmt --all --check` then measured what it had just written. A
+          # badly formatted commit passed.
+          check-fmt = pkgs.stdenv.mkDerivation (checkBase // {
+            name = "harken-check-fmt";
+            nativeBuildInputs = [ rustPlatform.cargoSetupHook toolchain ];
+            buildPhase = "cargo fmt --all --check";
+          });
+
+          check-clippy = pkgs.stdenv.mkDerivation (checkBase // {
+            name = "harken-check-clippy";
+            nativeBuildInputs = [
+              rustPlatform.cargoSetupHook
+              toolchain
+              pkgs.pkg-config
+            ];
+            buildInputs = icedLibs;
+            buildPhase = ''
+              runHook preBuild
+              cargo clippy --workspace --all-features --all-targets --offline \
+                -- -D warnings
+              runHook postBuild
+            '';
+          });
+
+          check-tests = pkgs.stdenv.mkDerivation (checkBase // {
+            name = "harken-check-tests";
+            nativeBuildInputs = [
+              rustPlatform.cargoSetupHook
+              toolchain
+              pkgs.cargo-nextest
+              pkgs.pkg-config
+            ];
+            buildInputs = icedLibs;
+            buildPhase = ''
+              runHook preBuild
+              cargo nextest run --workspace --all-features --offline
+              cargo test --workspace --all-features --doc --offline
+              runHook postBuild
+            '';
+          });
 
           # The narrow tree with the engine patch installed: what a check
           # reads. `engineWorkspace` deliberately has no `.cargo/config.toml`,
@@ -466,6 +559,16 @@
         in
         rec {
           default = harken-server;
+
+          # The generator, and the wasm module it reads. Exposed because
+          # `nix build .#mutators` is how you find out whether it is the module
+          # or your own code that is broken.
+          inherit petrosCodegen mutators;
+
+          # The three checks, also as packages: `nix flake check` runs them all
+          # and says little, while `nix build .#check-clippy` runs one and shows
+          # what it said.
+          inherit check-fmt check-clippy check-tests;
 
           # The Android SDK, pinned to what Expo SDK 57 asks gradle for. The
           # versions are this app's; how to compose them without the Gradle
@@ -1054,6 +1157,15 @@
             networking.firewall.allowedTCPPorts = lib.mkIf cfg.openFirewall [ cfg.port ];
           };
         };
+
+      # `nix flake check` is what CI runs, and what a contributor runs. The
+      # point is not that it is faster — it is that it is the same expression
+      # on both, pinned the same way. Run 37 failed on a `target/` that
+      # `Swatinem/rust-cache` had pruned before saving, while the identical
+      # `just` passed here; a check keyed on its inputs cannot do that.
+      checks = forAllSystems (system: {
+        inherit (self.packages.${system}) check-fmt check-clippy check-tests;
+      });
 
       formatter = forAllSystems (system: nixpkgs.legacyPackages.${system}.nixpkgs-fmt);
     };
