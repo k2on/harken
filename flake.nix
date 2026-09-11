@@ -575,6 +575,47 @@
           # Plugin trying to install its own is the engine's.
           androidSdk = android.mkSdk { };
 
+          # Does the NDK's compiler run here, sandboxed? Twenty seconds instead
+          # of twenty minutes.
+          #
+          # On x86_64 the answer is uninteresting. Everywhere else the toolchain
+          # is emulated, and the whole of `.#apk` rests on that working inside a
+          # build sandbox — which it did not, under the host's `binfmt_misc`:
+          #
+          #   clang: symbol lookup error: undefined symbol: ceilf,
+          #   version GLIBC_2.2.5
+          #
+          # An ordinary derivation, so it is sandboxed exactly the way the real
+          # build is, and it compiles something rather than only asking for a
+          # version string: `--version` is answered before much of clang is
+          # loaded, and the failure above came from loading the rest of it.
+          ndk-check =
+            let
+              ndk = "${androidSdk}/libexec/android-sdk/ndk/27.1.12297006";
+              prebuilt = "${ndk}/toolchains/llvm/prebuilt/linux-x86_64";
+            in
+            pkgs.runCommand "ndk-check" { } ''
+              # `#include`, so the resource headers have to be found, and a
+              # shared object rather than an object file, so the driver has to
+              # exec `ld.lld`. Both are things a compiler does by knowing where
+              # it lives, which is exactly what emulation takes away — and both
+              # pass happily if the test is a `--version` and a `-c` of a
+              # builtin, which is what this was at first.
+              cat > a.c <<'SRC'
+              #include <math.h>
+              float f(float x) { return ceilf(x); }
+              SRC
+
+              set -x
+              ${prebuilt}/bin/clang --version
+              ${prebuilt}/bin/clang --target=aarch64-linux-android26 \
+                -shared -o a.so a.c
+              ${prebuilt}/bin/llvm-nm -D a.so | grep ' T f'
+              ${prebuilt}/bin/llvm-readelf -h a.so | grep Machine
+              set +x
+              echo "the NDK works here" | tee $out
+            '';
+
           # Gradle 9.3.1, built with nixpkgs' own machinery rather than
           # fetched and wrapped by hand.
           #
@@ -745,10 +786,22 @@
           # The Android build, in two variants — see `apk-release` below.
           #
           # Everything Google publishes for Android is a `linux-x86_64` binary
-          # — the NDK's clang, aapt2, d8, CMake — so on an ARM machine this
-          # depends on `binfmt_misc` being registered for x86_64. That works,
-          # including inside a build sandbox, and it is slow: the emulated
-          # compile of SQLite's amalgamation alone is about a minute per ABI.
+          # — the NDK's clang, aapt2, d8, CMake — so on an ARM machine every
+          # one of them runs under qemu. The emulator comes from `mkSdk`, which
+          # wraps them, rather than from the host's `binfmt_misc`: a sandboxed
+          # build cannot use the kernel's registration, and a derivation should
+          # not depend on how a machine is set up anyway. It is slow either
+          # way — the emulated compile of SQLite's amalgamation alone is about
+          # a minute per ABI.
+          #
+          # Nothing here reaches the network, so with the emulator supplied
+          # this is an ordinary sandboxed build on every architecture: the
+          # Maven graph is replayed from the recording below, the engine's
+          # module is a derivation, and `ubrn` is pinned by a lockfile. Which
+          # also buys the stable path — `/build` everywhere rather than
+          # something ending in a pid and a random number — and gradle's task
+          # history and ninja's `.cxx` both record absolute paths, so native
+          # build state can be carried between derivations.
           #
           # One thing does *not* work under emulation: the SDK's CMake, which
           # qemu refuses with "Unable to find a guest_base to satisfy all guest
@@ -825,27 +878,6 @@
             # Hermes and the release toolchain too, not just the debug half.
             gradleUpdateTask = "assembleDebug assembleRelease";
 
-            # Sandboxed, except where the NDK has to be emulated.
-            #
-            # Nothing here reaches the network: the Maven graph is replayed from
-            # the recording above, the engine's module is a derivation, and
-            # `ubrn` is pinned by a lockfile. On x86_64 that makes this an
-            # ordinary sandboxed build.
-            #
-            # On ARM the NDK's clang is an x86_64 binary under qemu, and in a
-            # sandbox it cannot resolve its own libc — `undefined symbol:
-            # ceilf, version GLIBC_2.2.5`, the failure `CLAUDE.md` records for
-            # `nix develop` and assumed a builder did not have. Nothing had ever
-            # been sandboxed to check.
-            #
-            # It costs the stable path: `/build` everywhere versus something
-            # ending in a pid and a random number. Gradle's task history and
-            # ninja's `.cxx` record absolute paths, so carrying native build
-            # state between derivations works on x86_64 and not on ARM — and
-            # that state is worth carrying: measured on one module, a second
-            # assemble with it restored is 35s against 3m30s.
-            __noChroot = pkgs.stdenv.buildPlatform.system != "x86_64-linux";
-
             ANDROID_HOME = "${androidSdk}/libexec/android-sdk";
             ANDROID_SDK_ROOT = "${androidSdk}/libexec/android-sdk";
             ANDROID_NDK_HOME = "${androidSdk}/libexec/android-sdk/ndk/27.1.12297006";
@@ -875,22 +907,6 @@
 
               export HOME=$TMPDIR
               export CARGO_HOME=$TMPDIR/cargo
-
-              # Only where emulation is actually involved. A native x86_64
-              # builder has no `binfmt_misc` entry for its own architecture and
-              # does not want one, so asking for it there fails a build that
-              # would otherwise run — which is what CI hit.
-              ${pkgs.lib.optionalString (system != "x86_64-linux") ''
-                if ! ${pkgs.coreutils}/bin/test -e /proc/sys/fs/binfmt_misc/x86_64-linux; then
-                  echo "" >&2
-                  echo "This needs to run x86_64 binaries: everything Google ships" >&2
-                  echo "for Android is linux-x86_64 only. On NixOS:" >&2
-                  echo "" >&2
-                  echo "  boot.binfmt.emulatedSystems = [ \"x86_64-linux\" ];" >&2
-                  echo "" >&2
-                  exit 1
-                fi
-              ''}
 
               echo "--- node_modules"
               # A writable copy rather than a symlink into the store. `expo
@@ -980,6 +996,27 @@
               cat > android/local.properties <<EOF
               sdk.dir=$TMPDIR/sdk
               EOF
+
+              # AGP does not use the SDK's `aapt2`. It resolves
+              # `com.android.tools.build:aapt2` from Maven and unpacks a raw
+              # Google binary, which wants `/lib64/ld-linux-x86-64.so.2` and
+              # reports its absence as
+              #
+              #   AAPT2 aapt2-8.12.0-13700139-linux Daemon #0: Daemon startup
+              #   failed
+              #
+              # naming neither the file nor the loader. nixpkgs' copy is
+              # patched to a store interpreter and runs, and AGP takes an
+              # override for exactly this.
+              #
+              # `CLAUDE.md` has described this since the first ARM build and
+              # the property was never actually set, because it never had to
+              # be: an Ubuntu runner *does* have `/lib64/ld-linux`, so under
+              # `__noChroot` Google's binary ran and nobody was any the wiser
+              # about which aapt2 was compiling the resources. Sandboxing the
+              # build is what asked the question.
+              echo "android.aapt2FromMavenOverride=$ANDROID_HOME/build-tools/36.0.0/aapt2" \
+                >> android/gradle.properties
 
               # `GRADLE_USER_HOME` explicitly, because the JVM does not read
               # `$HOME`: `user.home` comes from the passwd entry, which for a

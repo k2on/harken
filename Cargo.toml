@@ -40,13 +40,13 @@ ciborium = "0.2"
 #
 # A branch whose engine changes is broken for everyone but the person who has
 # both checkouts, and the local patch hides that perfectly.
-petros = { git = "https://github.com/k2on/petros", rev = "6afd6723a6ba55ac3853f88298bafed0b50969bb" }
-petros-wasm-host = { git = "https://github.com/k2on/petros", rev = "6afd6723a6ba55ac3853f88298bafed0b50969bb" }
-petros-schema = { git = "https://github.com/k2on/petros", rev = "6afd6723a6ba55ac3853f88298bafed0b50969bb" }
-petros-sql = { git = "https://github.com/k2on/petros", rev = "6afd6723a6ba55ac3853f88298bafed0b50969bb" }
-petros-testkit = { git = "https://github.com/k2on/petros", rev = "6afd6723a6ba55ac3853f88298bafed0b50969bb" }
-petros-wasm-guest = { git = "https://github.com/k2on/petros", rev = "6afd6723a6ba55ac3853f88298bafed0b50969bb" }
-petros-axum = { git = "https://github.com/k2on/petros", rev = "6afd6723a6ba55ac3853f88298bafed0b50969bb" }
+petros = { git = "https://github.com/k2on/petros", rev = "a290390fff8025906f5f1055a98274e3ce80f961" }
+petros-wasm-host = { git = "https://github.com/k2on/petros", rev = "a290390fff8025906f5f1055a98274e3ce80f961" }
+petros-schema = { git = "https://github.com/k2on/petros", rev = "a290390fff8025906f5f1055a98274e3ce80f961" }
+petros-sql = { git = "https://github.com/k2on/petros", rev = "a290390fff8025906f5f1055a98274e3ce80f961" }
+petros-testkit = { git = "https://github.com/k2on/petros", rev = "a290390fff8025906f5f1055a98274e3ce80f961" }
+petros-wasm-guest = { git = "https://github.com/k2on/petros", rev = "a290390fff8025906f5f1055a98274e3ce80f961" }
+petros-axum = { git = "https://github.com/k2on/petros", rev = "a290390fff8025906f5f1055a98274e3ce80f961" }
 harken = { path = "crates/harken", default-features = false }
 # `fira-sans` embeds a default font. Without it iced asks the system for
 # one, which works on a desktop and gets you nothing at all in a browser:
