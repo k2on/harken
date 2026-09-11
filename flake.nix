@@ -719,6 +719,17 @@
               echo "--- node_modules"
               cp -a ${expoModules} clients/expo/node_modules
               chmod -R u+w clients/expo/node_modules
+
+              # `#!/usr/bin/env node` is not a thing inside a sandbox. npm's
+              # shims all start that way, and `__noChroot` was quietly handing
+              # them the runner's `/usr/bin/env`:
+              #
+              #   ./node_modules/.bin/expo: /usr/bin/env: bad interpreter
+              #
+              # Same shape as the compiler triple — a dependency on the host
+              # filesystem that only an impure build can satisfy, and that
+              # nobody notices until a machine is missing it.
+              patchShebangs clients/expo/node_modules
             '';
 
             extraInstall = ''
