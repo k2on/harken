@@ -657,6 +657,17 @@
           ubrn = android.mkUbrn {
             inherit toolchain;
             nodeModules = expoModules;
+            # The generator ships no lockfile — the npm package is the built
+            # CLI and its Rust sources, and cargo is expected to resolve
+            # wherever it runs. So one is committed here, and the vendored
+            # result is pinned by hash. Both move when `bun.lock` moves the
+            # generator's version.
+            #
+            # `clients/expo/node_modules/…/Cargo.lock` is not this file: cargo
+            # writes one there whenever it runs under this tree, and it comes
+            # out carrying the engine's seven crates because `[patch]` applies.
+            lockFile = ./clients/expo/ubrn-Cargo.lock;
+            depsHash = "sha256-YdwO0AOhoQjRbo5psMAxSSCRM7Ok8OsrjcAE13QMXP0=";
           };
 
           # The engine cross-compiled for Android, and the bindings generated
