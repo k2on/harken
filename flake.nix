@@ -218,6 +218,13 @@
                 !(builtins.elem base [ ".cargo" "target" "node_modules" "result" ]);
           };
 
+          # cc-rs looks for a compiler under the target triple with dashes
+          # turned into underscores, and prefers that over the bare `CC`. These
+          # name the *build* machine's triple, so the same expression is right
+          # on an ARM laptop and an x86_64 runner.
+          hostCc = "CC_${builtins.replaceStrings [ "-" ] [ "_" ] pkgs.stdenv.buildPlatform.config}";
+          hostAr = "AR_${builtins.replaceStrings [ "-" ] [ "_" ] pkgs.stdenv.buildPlatform.config}";
+
           # What the Android engine build reads, and nothing else.
           #
           # The point is what is *missing*: `clients/expo/src`, `app.json`, the
@@ -419,13 +426,19 @@
           # Plugin trying to install its own is the engine's.
           androidSdk = android.mkSdk { };
 
-          # Gradle, at the version the generated project's wrapper asks for.
-          # The wrapper would download it, which a builder cannot do; 25.05
-          # ships 8.14.3 and the project wants 9.3.1.
-          gradle9 = android.mkGradle {
-            version = "9.3.1";
-            hash = "sha256-BrrTDxZWrXyIZ/U4gBclxGLRqHv/cZy94/Wy8DrZ6nE=";
-          };
+          # Gradle, from nixpkgs rather than fetched and wrapped by hand.
+          #
+          # The project's wrapper asks for 9.3.1 and 26.05 has 9.4.1, which is
+          # near enough; what matters is what comes attached. `mkGradle` in
+          # petros unpacks the distribution zip and wraps the launcher, and that
+          # is all it can do. nixpkgs' package carries a setup hook and
+          # `passthru.fetchDeps`, which is what lets the Maven graph become a
+          # fixed-output derivation instead of a reason this build needs the
+          # network.
+          #
+          # Pinned to JDK 17 rather than the 21 it defaults to, because that is
+          # what this build already used and one change at a time is enough.
+          gradle9 = pkgs.gradle_9.override { java = pkgs.jdk17; };
 
           # The Expo app's JavaScript dependencies.
           #
@@ -545,7 +558,7 @@
           # Everything it needs from the network is fetched by a derivation that
           # *is* — `expoModules` and `gradleDeps` — and the build itself runs
           # offline.
-          apk-debug = pkgs.stdenv.mkDerivation {
+          apk-debug = pkgs.stdenv.mkDerivation (finalAttrs: {
             name = "harken-debug-apk";
             src = workspace;
 
@@ -571,16 +584,26 @@
               pkgs.which
             ];
 
-            # Gradle resolves its dependencies from Maven Central and Google's
-            # repository at build time, and there is no lockfile to vendor them
-            # from — so this derivation is deliberately impure rather than
-            # pretending otherwise. Everything that *can* be pinned is: the
-            # toolchain, the SDK, the NDK, CMake, gradle itself and every crate
-            # and npm package. What is left is gradle's own graph.
+            # Gradle's own dependency graph, recorded once and replayed from
+            # the store — the last reason this derivation reached the network.
             #
-            # Needs `sandbox = relaxed` on the builder, which the CI workflow
-            # sets. Turning it into a fixed-output derivation is not available:
-            # an APK is a signed zip and is not reproducible byte-for-byte.
+            # There is no lockfile to vendor a Maven graph from, because working
+            # out what a gradle build fetches is a Turing-complete question; so
+            # nixpkgs answers it by running the build once behind a recording
+            # proxy and keeping what came back. `gradle-deps.json` is that
+            # recording, and `scripts/gradle-deps.sh` regenerates it.
+            #
+            # An APK is a signed zip and is not reproducible byte-for-byte, so
+            # the *APK* can never be a fixed-output derivation. Its dependencies
+            # can, which is the part that matters.
+            mitmCache = gradle9.fetchDeps {
+              pkg = finalAttrs.finalPackage;
+              data = ./gradle-deps.json;
+            };
+
+            # Still impure until the recording exists and the other two
+            # derivations that reach the network — `ubrn` and the engine — stop
+            # doing so. Needs `sandbox = relaxed`, which the CI workflow sets.
             __noChroot = true;
 
             ANDROID_HOME = "${androidSdk}/libexec/android-sdk";
@@ -594,11 +617,21 @@
             # well. Without this it does so with the NDK's clang, which has no
             # glibc sysroot, and fails on a missing `stdio.h`. A
             # target-qualified variable wins over the bare one.
-            CC_aarch64_unknown_linux_gnu = "gcc";
-            AR_aarch64_unknown_linux_gnu = "ar";
+            # …and the triple is the *build* machine's, not a fixed one. It
+            # read `aarch64` here, which is the development box; on the x86_64
+            # runner nothing was set at all, and the only reason that built is
+            # that `__noChroot` let the NDK's clang find the host's
+            # `/usr/include`. Under a real sandbox it fails on `stdio.h`.
+            ${hostCc} = "gcc";
+            ${hostAr} = "ar";
 
-            buildPhase = ''
-              runHook preBuild
+            # Preparing the project is `configurePhase`, not `buildPhase`, and
+            # that is load-bearing rather than tidiness. `fetchDeps`' update
+            # script runs `unpackPhase patchPhase configurePhase` and then
+            # gradle — it never calls `buildPhase`. With the preparation in
+            # `buildPhase` there would be no `android/` for it to record from.
+            configurePhase = ''
+              runHook preConfigure
 
               export HOME=$TMPDIR
               export CARGO_HOME=$TMPDIR/cargo
@@ -702,32 +735,41 @@
               sdk.dir=$TMPDIR/sdk
               EOF
 
-              # `gradle`, not `./gradlew`. The wrapper downloads its own copy
-              # of 9.3.1 from services.gradle.org — the same version pinned
-              # above and fetched by hash, so the download buys nothing and
-              # costs the one thing this derivation is trying to keep.
-              #
-              # And `GRADLE_USER_HOME` explicitly, because the JVM does not read
+              # `GRADLE_USER_HOME` explicitly, because the JVM does not read
               # `$HOME`: `user.home` comes from the passwd entry, which for a
               # nix build user is `/var/empty`. The `export HOME=$TMPDIR` above
               # is invisible to anything running on the JVM, so gradle would put
-              # its caches somewhere it cannot write however that is set.
+              # its caches somewhere it cannot write however that is set. The
+              # setup hook honours it if it is already set.
               export GRADLE_USER_HOME=$TMPDIR/gradle
-              cd android
-              gradle "assemble''${variant^}" --no-daemon --console=plain \
-                -Dorg.gradle.java.home=${pkgs.jdk17}
-              cd ../../..
 
+              # Leave the shell in the gradle project. The update script runs
+              # gradle straight after this phase and does no `cd` of its own.
+              cd android
+
+              runHook postConfigure
+            '';
+
+            # `gradle`, not `./gradlew`: the wrapper downloads its own copy from
+            # services.gradle.org, which buys nothing over the pinned one and
+            # costs the thing this derivation is trying to keep. It is also the
+            # shell function the setup hook defines rather than the binary, so
+            # `--no-daemon`, `--console plain`, the init script and — when the
+            # dependencies are being replayed — the proxy and truststore flags
+            # are all added for us.
+            buildPhase = ''
+              runHook preBuild
+              gradle "assemble''${variant^}"
               runHook postBuild
             '';
 
             installPhase = ''
               runHook preInstall
               mkdir -p $out
-              cp clients/expo/android/app/build/outputs/apk/$variant/*.apk $out/
+              cp app/build/outputs/apk/$variant/*.apk $out/
               runHook postInstall
             '';
-          };
+          });
 
           # The same build, gradle's release type: the JavaScript compiled to
           # Hermes bytecode and bundled into the APK rather than fetched from a
