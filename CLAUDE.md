@@ -47,7 +47,8 @@ macro — are in `../petros/docs/decisions.md`. Read that first.
 ## Running it
 
 ```
-just              # fmt, lint, test
+just              # fmt, lint, test — what a laptop runs
+nix flake check   # …the same three, as derivations. What CI runs
 nix build .#harken-server   # …and .#harken-iced, .#harken-web
 just latency      # the measurements: fsync, the sandbox, the maintained view
 just mutators     # rebuild the domain module and hand it to Metro (~0.35s)
@@ -60,10 +61,82 @@ just bindings     # regenerate the Expo client's TS from crates/harken
 just expo-android # …and a phone. Needs `nix develop .#android`.
 nix build .#apk   # …or the whole APK, toolchain and all
 nix build .#apk-release     # …the release build (debug-signed, see below)
+./scripts/gradle-deps.sh    # re-record gradle's Maven graph (or the CI button)
 ```
 
 `just mutators` runs the generator out of `../petros`, so that repository has to
-be checked out beside this one.
+be checked out beside this one. `nix build .#mutators` does not: it builds
+`petros-codegen` from the engine `flake.lock` pins, which is what the Android
+build and the checks use.
+
+## `just` is for a laptop; `nix flake check` is what CI runs
+
+They are the same three things — fmt, clippy, the suite — and only one of them
+is pinned. `just` runs cargo against whatever `target/` is lying around; the
+checks are derivations over the narrow Rust tree and the vendored dependencies.
+CI ran `just` behind `Swatinem/rust-cache` until that cache served a `target/`
+whose fingerprints claimed a build script was fresh and whose binary it had
+pruned:
+
+    could not execute process …/build-script-build (never executed)
+
+The identical `just` passed on a laptop. Two places, same command, different
+answers — which is the whole argument for the derivations.
+
+Three consequences worth knowing:
+
+- **`nix flake check` skips when nothing it reads has changed.** What it reads
+  is `engineSrc`: `crates`, `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`,
+  `scripts`, `clients/iced`, and the module's config. A `.tsx` edit or a
+  workflow change does not run it. An engine pin bump does, because that is
+  `Cargo.toml`.
+- **A check's output is an empty directory.** What is cached is that it passed,
+  and that is the entire skip mechanism — so the outputs have to be gc-rooted
+  before the CI cache saves, or the collection takes them and the next run
+  learns what it already knew.
+- **`just` never actually checked formatting.** `default: fmt lint test` runs
+  `cargo fmt --all` first, which rewrites the tree, so the `--check` in `lint`
+  measured what it had just written. `check-fmt` is the first thing here that
+  can fail on formatting.
+
+## The Android build does not reach the network
+
+It did, in three places, and each one was pinned differently:
+
+- **gradle's Maven graph** is `gradle-deps.json` — 1642 artifacts across
+  `dl.google.com`, `maven.google.com`, `plugins.gradle.org` and Maven Central,
+  replayed through nixpkgs' `mitm-cache` instead of fetched. Regenerate it with
+  the `gradle-deps` workflow button, not on a laptop: recording runs both
+  assembles, and a store plus two Android builds is about twenty gigabytes.
+- **the mutator module** is a derivation. `scripts/mutators.sh` falls back to
+  `cargo install --git` when there is no sibling checkout; `nix build .#mutators`
+  builds `petros-codegen` from the pinned engine instead.
+- **`ubrn`** is compiled from a crate inside `node_modules`, and the npm package
+  ships no `Cargo.lock` at all. `clients/expo/ubrn-Cargo.lock` is committed here
+  and the vendored result is hashed. Do not trust the lockfile that appears at
+  `clients/expo/node_modules/uniffi-bindgen-react-native/Cargo.lock`: cargo
+  writes it whenever it runs under this tree, and it comes out carrying the
+  engine's seven crates because `[patch]` applies to whatever cargo resolves
+  there. It is a local artifact wearing upstream's name.
+
+## Gradle is 9.3.1, and the version is not negotiable
+
+`pkgs.gradle_9` is 9.4.1 and cannot build this project: it carries
+`kotlin-stdlib-2.3.0`, and Expo SDK 57's gradle plugins are compiled with Kotlin
+2.1.0, which reads metadata up to 2.2.0. It arrives as `Internal compiler error`
+against Expo's own settings plugin, naming no versions. That is what the
+template's 9.3.1 pin is for.
+
+`gradle-packages.mkGradle` builds that version and `wrapGradle` puts nixpkgs'
+setup hook and `passthru.fetchDeps` on it. Both are exposed deliberately.
+
+Two things follow from taking gradle from nixpkgs rather than unpacking the
+zip. The native libraries are patched properly — which is why `ncurses` is
+suddenly in the closure, since gradle's `native-platform` jars link it. And
+building gradle means *compiling* ncurses: `ncurses-abi5-compat` is
+multi-output, Hydra never pushed its `dev` output, and nix substitutes
+per-output but builds per-derivation. One 404 costs the whole compile, so
+gradle is one of the gc-rooted layers.
 
 ## Never write domain logic in TypeScript
 
@@ -242,6 +315,22 @@ so the Expo screen just writes `♥`.
   gradle installs missing
   components into the SDK directory and the store is read-only. Bring your own
   and export `ANDROID_HOME`; `nix develop .#android` adds `cargo-ndk` and a JDK.
+- **Precompiled headers are worth 1.51x on the native half.** Expo SDK 56 added
+  `android.usePrecompiledHeaders`, reached through the `expo-build-properties`
+  plugin rather than `gradle.properties`. Measured here, run 29 against run 31:
+  the gradle stage went 12m28s to 9m52s and the CMake window 6m42s to 4m26s.
+  Expo's own benchmark reports 2.81x, but theirs starts at seventeen minutes of
+  CMake; 1.3x is what they quote for a default project.
+- **`expo prebuild` writes `gradle.properties` with no trailing newline**, and
+  its last line is `expo.inlineModules.watchedDirectories=[]`. An appended line
+  lands on the end of it, which gives that property a value Expo's autolinking
+  plugin hands to `JSON.parse`. Gradle reports only
+  `Process 'command 'node'' finished with non-zero exit value 1`, with node's
+  message nowhere in the log. Append a newline first.
+- **A `command 'node'` failure from a gradle plugin carries no diagnosis.**
+  `nix build --keep-failed`, then re-run gradle out of the kept directory with
+  `--stacktrace` to find the call site, then run that node command by hand. It
+  turns a twenty-minute guess into a one-line bug.
 - **The release APK is signed with a key everyone has.** `.#apk-release` is
   `assembleRelease` — the JavaScript compiled to Hermes bytecode and bundled in
   rather than fetched from a dev server — and Expo's template signs that with
