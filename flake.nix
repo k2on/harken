@@ -813,10 +813,17 @@
             # Hermes and the release toolchain too, not just the debug half.
             gradleUpdateTask = "assembleDebug assembleRelease";
 
-            # Still impure until the recording exists and the other two
-            # derivations that reach the network — `ubrn` and the engine — stop
-            # doing so. Needs `sandbox = relaxed`, which the CI workflow sets.
-            __noChroot = true;
+            # No `__noChroot`. Nothing here reaches the network any more: the
+            # Maven graph is replayed from the recording above, the engine's
+            # module is a derivation, and `ubrn` is pinned by a lockfile.
+            #
+            # Which also buys a stable path. A sandboxed build runs at `/build`
+            # everywhere; an impure one runs somewhere ending in a pid and a
+            # random number. Gradle's task history and ninja's `.cxx` record
+            # absolute paths, so carrying native build state between
+            # derivations needs this — and that state is worth carrying:
+            # measured on one module, a second assemble with it restored is 35s
+            # against 3m30s.
 
             ANDROID_HOME = "${androidSdk}/libexec/android-sdk";
             ANDROID_SDK_ROOT = "${androidSdk}/libexec/android-sdk";

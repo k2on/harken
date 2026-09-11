@@ -11,10 +11,14 @@
 #
 # `nix build .#apk` rather than a sequence of steps, so that what CI builds and
 # what a laptop builds are the same expression rather than two descriptions of
-# one intention. The derivation is impure — gradle resolves its own dependency
-# graph from Maven and there is no lockfile to vendor it from — so the sandbox
-# is relaxed for it. Everything else is pinned: the Rust toolchain, every crate,
-# every npm package, the SDK, the NDK, CMake and gradle.
+# one intention. Everything is pinned: the Rust toolchain, every crate, every
+# npm package, the SDK, the NDK, CMake, gradle, and gradle's own Maven graph.
+#
+# And nothing relaxes the sandbox any more, which is the check on all of that.
+# A fixed-output derivation still gets the network — that is how the vendoring
+# fetches — but an ordinary one does not, so a build that quietly started
+# reaching for something fails here rather than working on whoever's machine
+# happened to have it.
 name: android
 
 on:
@@ -64,12 +68,6 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: DeterminateSystems/nix-installer-action@main
-        with:
-          # The APK derivation needs the network. `relaxed` lets a derivation
-          # that asks for it — `__noChroot` — have it, and leaves every other
-          # derivation sandboxed as usual.
-          extra-conf: |
-            sandbox = relaxed
 
       # The store is the expensive thing here: the NDK alone is over a gigabyte,
       # and the crates and npm packages are thousands of small fetches. Caching
