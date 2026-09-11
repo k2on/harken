@@ -465,7 +465,7 @@
             # the right one and it goes here.
             outputHash = {
               aarch64-linux = "sha256-usHdiS9E96QuhIj38q8xi5jPn9nLKZ57KN1jJGdWpOA=";
-              x86_64-linux = "sha256-LT4+CWAMYQIZugNYsJHAMv7GYXg7zD/Sl3regffiYLY=";
+              x86_64-linux = "sha256-nVY9X+FkNSvMlDy8oi/7AebhqpXiCc6V/aSLytq/RgQ=";
             }.${system} or (throw "no node_modules hash recorded for ${system}");
           };
 

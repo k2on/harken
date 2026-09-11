@@ -6,6 +6,7 @@
     "@expo/ui": "~57.0.16",
     "harken-native": "workspace:*",
     "expo": "~57.0.20",
+    "expo-build-properties": "~57.0.17",
     "expo-constants": "~57.0.17",
     "expo-dev-client": "^57.0.18",
     "expo-device": "~57.0.1",
