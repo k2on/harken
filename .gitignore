@@ -1,7 +1,7 @@
 /target
 result
 result-*
-clients/iced/web/pkg
+iced/web/pkg
 .direnv
 
 # Local override: builds against ../petros instead of the git dependency.

@@ -1,0 +1,50 @@
+{
+  "name": "harken-native",
+  "version": "0.1.0",
+  "description": "The Petros to-do client, generated from the domain crate. Do not write domain logic here.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/maxkoon/harken.git"
+  },
+  "author": "harken",
+  "license": "MIT",
+  "private": true,
+  "main": "src/index.tsx",
+  "source": "src/index.tsx",
+  "types": "src/index.tsx",
+  "files": [
+    "src",
+    "cpp",
+    "android",
+    "ios",
+    "HarkenNative.podspec",
+    "!**/build",
+    "!**/.cxx"
+  ],
+  "scripts": {
+    "ubrn:android": "ubrn build android --config ubrn.config.yaml --and-generate",
+    "ubrn:ios": "ubrn build ios --config ubrn.config.yaml --and-generate",
+    "ubrn:clean": "rm -rf cpp android ios src/generated src/index.tsx src/NativeHarkenNative.ts HarkenNative.podspec"
+  },
+  "dependencies": {
+    "@ubjs/core": "0.31.0-5",
+    "uniffi-bindgen-react-native": "0.31.0-5"
+  },
+  "peerDependencies": {
+    "react": "*",
+    "react-native": "*"
+  },
+  "codegenConfig": {
+    "name": "RNHarkenNativeSpec",
+    "type": "all",
+    "jsSrcsDir": "src",
+    "android": {
+      "javaPackageName": "com.harkennative"
+    }
+  },
+  "create-react-native-library": {
+    "type": "turbo-module",
+    "languages": "cpp",
+    "version": "0.42.3"
+  }
+}

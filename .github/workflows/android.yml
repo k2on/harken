@@ -105,9 +105,9 @@ jobs:
       - uses: nix-community/cache-nix-action/restore@v7
         id: nix-store-cache
         with:
-          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'Cargo.lock', 'clients/expo/bun.lock') }}-${{ github.run_id }}
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'Cargo.lock', 'expo/bun.lock') }}-${{ github.run_id }}
           restore-prefixes-first-match: |
-            nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'Cargo.lock', 'clients/expo/bun.lock') }}-
+            nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'Cargo.lock', 'expo/bun.lock') }}-
             nix-${{ runner.os }}-
 
       # The cheap check first, so a Rust mistake fails before the Android

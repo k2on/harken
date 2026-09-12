@@ -43,15 +43,15 @@ jobs:
           df -h /
 
       - name: Record
-        run: ./scripts/gradle-deps.sh
+        run: nix run .#harken -- gradle-deps
 
       - name: What changed
         run: |
-          wc -c gradle-deps.json
-          git diff --stat -- gradle-deps.json || true
+          wc -c expo/gradle-deps.json
+          git diff --stat -- expo/gradle-deps.json || true
 
       - uses: actions/upload-artifact@v4
         with:
           name: gradle-deps
-          path: gradle-deps.json
+          path: expo/gradle-deps.json
           if-no-files-found: error
