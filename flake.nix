@@ -1123,11 +1123,24 @@
           # `/build` in both, the source unpacks to `harken-workspace` in both
           # because that is this derivation's name, and `node_modules` is the
           # same fixed-output copy at the same place.
+          # Each file by name, and that is the whole point rather than a
+          # flourish. Written as `${src}/clients/expo/…` this derivation takes
+          # the *entire repository* as an input — `src` is the cleaned tree —
+          # so every commit rebuilt the layer, including the one that only
+          # touched `CLAUDE.md`. Run 60 built it twice and still finished
+          # gradle in 5m24s with 593 tasks up to date, which is how the
+          # mechanism proved itself and the inputs proved wrong in the same
+          # log. A path literal is its own store path and moves only when that
+          # file does.
           gradleStateSrc = pkgs.runCommand "harken-workspace" { } ''
             mkdir -p $out/clients/expo
-            cd ${src}/clients/expo
-            cp -a package.json app.json bun.lock tsconfig.json \
-              metro.config.js assets $out/clients/expo/
+            cp -a ${./clients/expo/package.json} $out/clients/expo/package.json
+            cp -a ${./clients/expo/app.json} $out/clients/expo/app.json
+            cp -a ${./clients/expo/bun.lock} $out/clients/expo/bun.lock
+            cp -a ${./clients/expo/tsconfig.json} $out/clients/expo/tsconfig.json
+            cp -a ${./clients/expo/metro.config.js} $out/clients/expo/metro.config.js
+            cp -a ${./clients/expo/assets} $out/clients/expo/assets
+            chmod -R u+w $out/clients/expo
 
             # A route, because `app.json` asks for `expo-router` and its config
             # plugin would rather find one. Never rendered — a debug APK bundles
