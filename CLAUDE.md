@@ -197,19 +197,28 @@ A `.tsx` edit, a mutation, or a change to this file rebuilds the APK and not the
 layer, which is the case worth being fast. Moving `bun.lock`, `app.json`,
 `gradle-deps.json` or the SDK rebuilds both.
 
-Measured on run 60, where the layer happened to be rebuilt in the same job and
-so both halves are visible against each other:
+Measured, as the APK step of the workflow:
+
+| run | APK step | what it built                       |
+|-----|----------|-------------------------------------|
+| 54  | ~540s    | the APK, before any of this         |
+| 59  | 1349s    | the layer and the APK, both cold    |
+| 60  | 1279s    | the layer *again*, and the APK      |
+| 62  | **416s** | the APK, against a cached layer     |
+
+Run 62 is the one to read, and its gradle says why:
 
 ```
-harken-gradle-state>  642 actionable tasks: 540 executed, 102 from cache
-harken-debug-apk>     642 actionable tasks: 44 executed, 5 from cache,
-                                            593 up-to-date
-harken-debug-apk>     BUILD SUCCESSFUL in 5m 24s
+harken-debug-apk>  BUILD SUCCESSFUL in 5m 28s
+harken-debug-apk>  642 actionable tasks: 44 executed, 5 from cache,
+                                         593 up-to-date
 ```
 
-The same 642 tasks, and 593 of them already done. That run was *slower* overall
-— it paid for the layer twice — which is worth remembering as a shape: a layer
-whose inputs are too wide looks exactly like a layer that does not work.
+593 of 642 tasks already done. Run 60 ran the same 642 tasks twice — once to
+build the layer, once to use it — and so came out *slower* than having no layer
+at all. That is worth remembering as a shape: a layer whose inputs are too wide
+is indistinguishable from a layer that does not work, because both present as
+"the step got longer". The task counts tell them apart and the clock does not.
 
 `gradleStateSrc` names its six files individually for that reason. Written as
 `${src}/clients/expo/…` it takes the whole cleaned repository as an input, so
