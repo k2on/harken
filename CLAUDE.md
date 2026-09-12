@@ -310,11 +310,18 @@ so the Expo screen just writes `♥`.
   architecture, same wrappers, same pinned qemu — and `.#androidDeps` builds
   there in 816s. The only variable left is the page size.
 
-  Fedora Asahi's default is `kernel-16k` and its 4 KiB `kernel` is still
-  packaged. FEX will not run on a 16 KiB host at all — it starts a 4 KiB
-  microVM (`muvm`) rather than try — which is the same constraint arrived at
-  from the other end. Booting the 4 KiB kernel is the fix here, and no flag is
-  a substitute.
+  **There is no 4 KiB kernel to boot.** Fedora Asahi ships a unified
+  `kernel-16k` and dropped the 4 KiB one; nixos-apple-silicon is 16 KiB only,
+  and its 4 KiB patch no longer applies with no plan to restore it. Apple
+  Silicon runs 16 KiB pages natively and the distributions have settled on
+  that. So this is not a setting, and the emulated path on such a machine is
+  simply unavailable — which is why the build now refuses to start rather than
+  corrupting itself fourteen minutes in (`emulationGuard`, in the engine).
+
+  FEX hits the same wall and answers it by running inside a 4 KiB microVM
+  (`muvm`) rather than on the host at all. That is the only local way through,
+  and it would mean running the nix build inside the VM — with a store of its
+  own, since the host's daemon is on the wrong side of it.
 
   Offloading is the other way out, and not the obvious one. `.#apk` on an ARM
   machine is an *aarch64* derivation that runs x86_64 code inside itself, so a

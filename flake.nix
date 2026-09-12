@@ -977,6 +977,10 @@
             configurePhase = ''
               runHook preConfigure
 
+              # Emulated here too — gradle drives the NDK's clang, and CMake
+              # drives it a great many times. Same refusal as the engine's.
+              ${pkgs.lib.optionalString (system != "x86_64-linux") android.emulationGuard}
+
               export HOME=$TMPDIR
               export CARGO_HOME=$TMPDIR/cargo
 

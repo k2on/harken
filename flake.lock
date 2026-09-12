@@ -19,11 +19,11 @@
     "petros": {
       "flake": false,
       "locked": {
-        "lastModified": 1789175667,
-        "narHash": "sha256-KSa3rfEmMtpDMShewkNoAF7US61agBPhWvhbGi8kga8=",
+        "lastModified": 1789188634,
+        "narHash": "sha256-L234NUq3i3pgtQT4ZYt/JQOq1BaOLnwKx2HB4sS/ims=",
         "owner": "k2on",
         "repo": "petros",
-        "rev": "3cc1a61b89ed55ffc15b50ecb4f9bd08182aff29",
+        "rev": "9b7776661618d1b744a62d61b05c90e6c9b0acb5",
         "type": "github"
       },
       "original": {
