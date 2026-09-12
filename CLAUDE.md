@@ -60,7 +60,7 @@ just web          # …a browser peer, at localhost:8080
 just bindings     # regenerate the Expo client's TS from crates/harken
 just expo-android # …and a phone. Needs `nix develop .#android`.
 nix build .#apk   # …or the whole APK, toolchain and all
-nix build .#ndk-check       # …does the NDK run here at all? Twenty seconds
+nix build .#ndk-check       # …does the NDK *start* here? Twenty seconds
 nix build .#apk-release     # …the release build (debug-signed, see below)
 ./scripts/gradle-deps.sh    # re-record gradle's Maven graph (or the CI button)
 ```
@@ -248,18 +248,11 @@ so the Expo screen just writes `♥`.
   in a pinned `qemu-x86_64` from nixpkgs, so `nix build .#apk` needs nothing
   registered on the machine. iOS still needs Xcode, so a macOS runner.
 
-  It used to rely on the host's `binfmt_misc` instead, which is worth knowing
-  because the failure is so unhelpful. Under `binfmt_misc` the kernel invokes
-  qemu, so nothing in the build gets to say how — and inside a sandbox the
-  emulated clang loads the wrong libc and dies with
-
-  ```
-  clang: symbol lookup error: undefined symbol: ceilf, version GLIBC_2.2.5
-  ```
-
-  `undefined symbol` rather than `cannot open shared object file`: a libm *was*
-  found, and it was the wrong one. `nix build .#ndk-check` asks that question in
-  twenty seconds instead of twenty minutes.
+  It used to rely on the host's `binfmt_misc` instead, which cannot work in a
+  sandbox: the kernel invokes qemu, so nothing in the build gets to say how.
+  Supplying the emulator is what let `__noChroot` go. It did *not* fix ARM —
+  the three traps below did some of that and the last one cannot be fixed from
+  here at all — so do not read this bullet as saying ARM works.
 - **An emulated compiler has to be told where it lives.** clang reads its own
   path to find its resource headers, its sysroot and the `ld.lld` it execs, and
   under emulation `/proc/self/exe` does not tell it — so `argv[0]` is all it
@@ -279,6 +272,57 @@ so the Expo screen just writes `♥`.
   foreign binary on its own, so the linker only works because clang finds *the
   wrapper* rather than the bare x86_64 `ld.lld` — which is the same fact from
   the other side.
+- **An emulated toolchain has to bind eagerly.** Lazy binding resolves a PLT
+  entry at first call, through machinery that does not survive emulation, and
+  it fails as a lookup error naming a symbol that is demonstrably present:
+
+  ```
+  clang: symbol lookup error: undefined symbol: ceilf, version GLIBC_2.2.5
+  ```
+
+  That reads like a missing library and is nothing of the kind.
+  `LD_DEBUG=libs,versions` shows `libm.so.6` found where it should be and
+  ``checking for version `GLIBC_2.2.5'`` *passing*, at load time — and the same
+  symbol reported undefined later, at first call. Nothing is absent. The
+  wrapper exports `LD_BIND_NOW` for this, and `LD_BIND_NOW=1 clang --version`
+  is what named it.
+
+  Corroborating, from the same trace: libm requires `GLIBC_ABI_DT_X86_64_PLT`
+  from libc, the marker for a glibc that rewrites PLT entries in place at run
+  time. Self-modifying code is what a TCG emulator handles worst, and eager
+  binding never goes near it.
+- **The host's pages must be 4 KiB, and Asahi's are not.** qemu presents a
+  4 KiB-page address space to an x86_64 guest. Where the host cannot map at
+  that granularity it has to fake it, and mappings that should be independent
+  end up sharing a host page — so a workload with enough mmap churn corrupts
+  itself. An `-O3` compile of the SQLite amalgamation is enough:
+
+  ```
+  libc++abi: Pure virtual function called!
+  qemu: uncaught target signal 6 (Aborted) - core dumped
+  ```
+
+  `SIGABRT` rather than `SIGILL`, which is the tell: memory changing under a
+  process, not an instruction the emulator cannot execute.
+
+  `android-arm.yml` is the control, and it is worth keeping for that reason
+  alone. An `ubuntu-24.04-arm` runner is aarch64 with 4 KiB pages — same
+  architecture, same wrappers, same pinned qemu — and `.#androidDeps` builds
+  there in 816s. The only variable left is the page size.
+
+  Fedora Asahi ships a 4 KiB kernel beside its 16 KiB default and points x86
+  emulation at it; that is the fix, and no flag is a substitute. Failing that,
+  build the x86_64 half somewhere x86_64 — CI does, and a `builders` entry
+  would let a laptop offload just those derivations.
+- **`.#ndk-check` answers a narrower question than it looks like.** It runs the
+  NDK's clang, compiles a file that includes a header, and links a shared
+  object — which is enough to catch a toolchain that cannot start, find its
+  resource headers, or exec its linker. It is *not* enough to catch either trap
+  above: both need a real compile to surface, and one of them needs a large
+  one. The check asserts the wrapper still carries `LD_BIND_NOW` rather than
+  re-running clang, because re-running clang cannot see the difference.
+  `.#androidDeps` is the real test, and `.#androidDeps-debug` is it with the
+  guest's loader narrating.
 - **`nix develop .#android` cannot run the NDK's clang, and a plain shell can.**
   Under emulation the same command fails inside the devshell with
   `undefined symbol: ceil, version GLIBC_2.2.5` and succeeds outside it — and
