@@ -606,10 +606,37 @@
               float f(float x) { return ceilf(x); }
               SRC
 
+              # When it fails under emulation it fails in the dynamic
+              # loader, and the message names a symbol rather than a file:
+              #
+              #   clang: symbol lookup error: …/clang:
+              #   undefined symbol: ceilf, version GLIBC_2.2.5
+              #
+              # which is what the loader says when a symbol *is* found and its
+              # version is not — so some libm was loaded and it was the wrong
+              # one. Nothing in the message says which, and that is the only
+              # question worth asking, so ask it here rather than leaving the
+              # next person to reconstruct the run by hand.
+              diagnose() {
+                echo "--- the NDK does not run here. What the loader did:"
+                echo "--- ldd:"
+                LD_TRACE_LOADED_OBJECTS=1 ${prebuilt}/bin/clang || true
+                echo "--- LD_DEBUG=libs,versions (tail):"
+                LD_DEBUG=libs,versions ${prebuilt}/bin/clang --version \
+                  > ld.log 2>&1 || true
+                grep -E 'libm|ceilf|version' ld.log | tail -60 || true
+                echo "--- the search path the guest was given:"
+                echo "LD_LIBRARY_PATH=''${LD_LIBRARY_PATH-<unset>}"
+                echo "LD_PRELOAD=''${LD_PRELOAD-<unset>}"
+                echo "--- the wrapper:"
+                cat ${prebuilt}/bin/clang || true
+                exit 1
+              }
+
               set -x
-              ${prebuilt}/bin/clang --version
+              ${prebuilt}/bin/clang --version || diagnose
               ${prebuilt}/bin/clang --target=aarch64-linux-android26 \
-                -shared -o a.so a.c
+                -shared -o a.so a.c || diagnose
               ${prebuilt}/bin/llvm-nm -D a.so | grep ' T f'
               ${prebuilt}/bin/llvm-readelf -h a.so | grep Machine
               set +x
