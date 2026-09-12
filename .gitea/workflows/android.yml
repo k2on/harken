@@ -1,0 +1,112 @@
+# The Android build, on a runner that keeps its nix store.
+#
+# The same two commands as `.github/workflows/android.yml`, and none of the
+# rest of it. That file installs nix, restores an eight-gigabyte tarball of
+# the store, garbage-collects it back down and uploads it again — five
+# minutes a run, a 10 GB ceiling GitHub enforces per repository, and a
+# `main` that was cold every time because each branch save evicted it. A
+# runner that builds into the machine's own `/nix/store` needs none of that:
+# what one run built, the next run finds, whichever ref it is on.
+#
+# What it does need is for the store not to be collected out from under it.
+# A derivation's output is garbage the moment nothing points at it, and the
+# expensive layers — the SDK, the Rust dependency graph, the gradle state —
+# are build inputs of the APK, not part of it, so the APK's own `result` link
+# does not protect them. The last step registers a gc root for each, under a
+# directory that outlives the job. Point `HARKEN_GCROOTS` somewhere the
+# runner's user owns and that survives a workspace clean; the default is in
+# that user's home.
+#
+# The runner label is `nix`. Rename it to whatever your act_runner registers
+# as — the job needs a host with `nix` on `PATH`, the `nix-command` and
+# `flakes` features enabled, and the sandbox on (the default on Linux),
+# because the gradle layer depends on every build running at `/build`.
+name: android
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      variant:
+        description: Which build to make
+        type: choice
+        options: [debug, release]
+        default: debug
+
+jobs:
+  apk:
+    runs-on: nix
+
+    env:
+      # The button decides when it is pressed, a `v*` tag decides by existing,
+      # and everything else is the development build — `dev.harken.koon.us`,
+      # "Harken Dev", which is what a branch push wants.
+      VARIANT: ${{ inputs.variant || (startsWith(github.ref, 'refs/tags/v') && 'release') || 'debug' }}
+      # Empty unless the repository sets it; the last step supplies the default.
+      HARKEN_GCROOTS: ${{ vars.HARKEN_GCROOTS }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # The cheap check first, so a Rust mistake fails before the Android
+      # toolchain has had its say. On a warm store this is the evaluation
+      # alone, about ten seconds: a check's output is an empty directory and
+      # what the store remembers is that it passed.
+      - name: fmt, clippy and the suite
+        run: nix flake check --print-build-logs
+
+      - name: Build the APK
+        run: nix build .#apk-$VARIANT --print-build-logs
+
+      - uses: actions/upload-artifact@v3
+        with:
+          name: harken-android-${{ env.VARIANT }}
+          path: result/*.apk
+          if-no-files-found: error
+
+      # A tag is a release, and a release is the APK. Named after the tag
+      # rather than gradle's `app-release.apk`, because the file outlives the
+      # page it was downloaded from.
+      - name: Name it after the tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: cp result/*.apk harken-${{ github.ref_name }}.apk
+
+      - uses: https://gitea.com/actions/gitea-release-action@v1
+        if: startsWith(github.ref, 'refs/tags/v')
+        with:
+          files: harken-${{ github.ref_name }}.apk
+          body: |
+            An Android build of harken. `adb install` it, or open it on the
+            device.
+
+            **Signed with Expo's debug keystore**, which is public — this is a
+            build to try, not one to distribute. Anyone can re-sign it as this
+            app, and Play will not take it. See `CLAUDE.md`.
+
+      # Root the layers worth keeping, so the store's collector walks around
+      # them. `nix build -o` registers an indirect gc root: a symlink the
+      # collector follows, and that is all it takes. One link per layer,
+      # overwritten each run, so a layer that moved is re-rooted and the old
+      # one becomes collectable — which is what should happen to it.
+      #
+      # The three checks are here for a different reason: their outputs are
+      # empty directories, so what is being kept is the fact that they
+      # passed, and that is the whole mechanism by which the check above is
+      # ten seconds instead of fourteen minutes.
+      - name: Keep the layers worth keeping
+        if: ${{ !cancelled() }}
+        run: |
+          HARKEN_GCROOTS="${HARKEN_GCROOTS:-$HOME/.local/state/harken/gcroots}"
+          mkdir -p "$HARKEN_GCROOTS"
+          for a in androidSdk expoModules ubrn androidDeps androidEngine \
+                   gradleState gradle9 mutators \
+                   check-fmt check-clippy check-tests; do
+            nix build -o "$HARKEN_GCROOTS/$a" ".#$a" || true
+          done
+          # The vendored Maven mirror hangs off the APK derivation rather than
+          # being a package of its own, and 1642 artifacts is a lot to
+          # re-materialise for want of one symlink.
+          nix build -o "$HARKEN_GCROOTS/maven" ".#apk-debug.mitmCache" || true

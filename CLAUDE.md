@@ -72,6 +72,18 @@ build and the checks use.
 
 ## `just` is for a laptop; `nix flake check` is what CI runs
 
+There are two CI files and they run the same two commands.
+`.github/workflows/android.yml` runs on GitHub's hosted runners, which start
+empty, so most of that file is installing nix and carrying an eight-gigabyte
+tarball of the store between runs — under a 10 GB per-repository ceiling that
+holds exactly one such tarball, which is why `main` there is cold whenever a
+branch has built since. `.gitea/workflows/android.yml` runs on a self-hosted
+runner that builds into the machine's own store, so it has none of that: what
+one run built, the next run finds, whatever ref it is on. Its only extra step
+registers gc roots for the layers worth keeping, under `HARKEN_GCROOTS`, so
+the host's collector walks around them.
+
+
 They are the same three things — fmt, clippy, the suite — and only one of them
 is pinned. `just` runs cargo against whatever `target/` is lying around; the
 checks are derivations over the narrow Rust tree and the vendored dependencies.
