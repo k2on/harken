@@ -154,6 +154,49 @@ multi-output, Hydra never pushed its `dev` output, and nix substitutes
 per-output but builds per-derivation. One 404 costs the whole compile, so
 gradle is one of the gc-rooted layers.
 
+## Gradle's state is a layer, the way cargo's `target/` is
+
+nix caches a derivation's output whole and gradle starts every derivation from
+nothing, so without help every build recompiles React Native's and Expo's gradle
+plugins from Kotlin, re-transforms every AAR, and re-runs CMake for
+expo-modules-core, reanimated, worklets, screens and gesture-handler once per
+ABI. None of that has anything to do with this app.
+
+`gradleState` does it once. What it is *not* built from is the point: its source
+is the Expo project's manifests and nothing else — no Rust, no TypeScript, no
+`modules/harken-native` — so changing a mutation cannot invalidate a gradle
+build that never saw one. The APK restores `GRADLE_USER_HOME` and every `build`,
+`.cxx` and `.gradle` directory under the project and under `node_modules`, adds
+the engine, and assembles.
+
+This is what removing `__noChroot` was for. Gradle's task history and ninja's
+`.cxx` record *absolute* paths, so a layer built at one path tells a build at
+another nothing; a sandboxed derivation runs at `/build` everywhere. `cp -a`
+throughout, because gradle and ninja read timestamps as well as content — the
+same reason the cargo layers use it.
+
+Three things that are easy to get wrong here, two of which cost a run each:
+
+- **`androidAttrs` is shared rather than duplicated.** `PATH` decides which
+  `ninja` and which compiler CMake finds, and CMake writes those paths into
+  `build.ninja`. A layer configured with a different `PATH` produces state the
+  next build silently cannot use.
+- **A nix indented string strips the smallest indentation any line has.**
+  Interpolated blocks written flush left take that minimum to zero, so nothing
+  is stripped — and `<<'PROPS'` needs its terminator at column 0. The heredoc
+  then runs to the end of the script and swallows the SDK copy,
+  `local.properties`, the aapt2 override and the `cd android`. What you see is
+  bash naming a line in stdenv's `setup` and gradle saying
+  `does not contain a Gradle build`. Neither points at indentation. Moving the
+  lines "further right" is not enough either: it is a column, not a direction,
+  and every line including the `runHook`s has to agree on it.
+- **`buildCMakeDebug` reports `EXECUTED` even when it does nothing.** The task
+  runs; ninja finds no work. Read the wall clock, not the task outcome.
+
+A `.tsx` edit, a mutation, or a change to this file rebuilds the APK and not the
+layer, which is the case worth being fast. Moving `bun.lock`, `app.json`,
+`gradle-deps.json` or the SDK rebuilds both.
+
 ## Never write domain logic in TypeScript
 
 Every mutation and every query is in `crates/harken/src/functions.rs`, written
