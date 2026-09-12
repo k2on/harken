@@ -198,7 +198,7 @@ jobs:
         if: ${{ !cancelled() }}
         run: |
           for a in androidSdk expoModules ubrn androidDeps androidEngine \
-                   gradle9 check-fmt check-clippy check-tests; do
+                   gradleState gradle9 check-fmt check-clippy check-tests; do
             nix build -o "$RUNNER_TEMP/gcroot-$a" ".#$a" || true
           done
           # The vendored Maven mirror, which is not a package: it hangs off the

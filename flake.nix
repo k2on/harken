@@ -890,17 +890,14 @@
           # Everything it needs from the network is fetched by a derivation that
           # *is* — `expoModules` and `gradleDeps` — and the build itself runs
           # offline.
-          apk-debug = pkgs.stdenv.mkDerivation (finalAttrs: {
-            name = "harken-debug-apk";
-            src = workspace;
-
-            # `debug` or `release`. A derivation attribute, so the builder gets
-            # it as a shell variable: it is gradle's build type, the directory
-            # the APK lands in, and — capitalised — half the name of the task
-            # that builds it. `apk-release` overrides this one attribute and
-            # nothing else.
-            variant = "debug";
-
+          # What both Android derivations are built with, named once.
+          #
+          # Shared for correctness rather than tidiness: `PATH` decides which
+          # `ninja` and which compiler CMake finds, and CMake writes those
+          # paths into `build.ninja`. A layer configured with a different
+          # `PATH` produces state the next build cannot use, and says nothing
+          # about why.
+          androidAttrs = {
             nativeBuildInputs = [
               toolchain
               gradle9
@@ -915,40 +912,6 @@
               pkgs.unzip
               pkgs.which
             ];
-
-            # Gradle's own dependency graph, recorded once and replayed from
-            # the store — the last reason this derivation reached the network.
-            #
-            # There is no lockfile to vendor a Maven graph from, because working
-            # out what a gradle build fetches is a Turing-complete question; so
-            # nixpkgs answers it by running the build once behind a recording
-            # proxy and keeping what came back. `gradle-deps.json` is that
-            # recording, and `scripts/gradle-deps.sh` regenerates it.
-            #
-            # An APK is a signed zip and is not reproducible byte-for-byte, so
-            # the *APK* can never be a fixed-output derivation. Its dependencies
-            # can, which is the part that matters.
-            mitmCache = gradle9.fetchDeps {
-              pkg = finalAttrs.finalPackage;
-              data = ./gradle-deps.json;
-            };
-
-            # What the recording runs, instead of nixpkgs' `nixDownloadDeps`.
-            #
-            # That task resolves every resolvable configuration, which is right
-            # for a plain JVM project and wrong for an Android one: the variant
-            # metadata is deliberately ambiguous until a build type picks a
-            # side, so it fails on configurations no build ever resolves.
-            #
-            #   Could not resolve project :expo-modules-core.
-            #   … we cannot choose between the following variants:
-            #     - debugApiElements
-            #     - releaseApiElements
-            #
-            # Both assembles, because `apk-release` is this derivation with one
-            # attribute changed and shares this recording — so it has to cover
-            # Hermes and the release toolchain too, not just the debug half.
-            gradleUpdateTask = "assembleDebug assembleRelease";
 
             ANDROID_HOME = "${androidSdk}/libexec/android-sdk";
             ANDROID_SDK_ROOT = "${androidSdk}/libexec/android-sdk";
@@ -968,13 +931,22 @@
             # `/usr/include`. Under a real sandbox it fails on `stdio.h`.
             ${hostCc} = "gcc";
             ${hostAr} = "ar";
+          };
 
-            # Preparing the project is `configurePhase`, not `buildPhase`, and
-            # that is load-bearing rather than tidiness. `fetchDeps`' update
-            # script runs `unpackPhase patchPhase configurePhase` and then
-            # gradle — it never calls `buildPhase`. With the preparation in
-            # `buildPhase` there would be no `android/` for it to record from.
-            configurePhase = ''
+          # Everything both Android derivations do before gradle runs.
+          #
+          # Written once because they must produce the *same tree at the same
+          # path*: gradle's task history and ninja's `.cxx` record absolute
+          # paths, so a layer built at one path tells the build at another
+          # nothing. A sandboxed derivation runs at `/build` everywhere, which
+          # is what makes carrying the state possible at all and is most of
+          # what removing `__noChroot` bought.
+          #
+          # `engine` is the Rust half, absent from the state layer so that a
+          # change to a mutation does not invalidate a gradle build that never
+          # saw it. `restore` is that layer, absent from the layer itself.
+          prepareAndroid = { engine ? null, restore ? null }: ''
+            runHook preConfigure
               runHook preConfigure
 
               # Emulated here too — gradle drives the NDK's clang, and CMake
@@ -1003,12 +975,14 @@
               # file in the repository changed, because that was this
               # derivation's source. It is `androidEngine` now, whose source is
               # the Rust and nothing else.
+${pkgs.lib.optionalString (engine != null) ''
               echo "--- the engine, prebuilt"
               m=clients/expo/modules/harken-native
               rm -rf $m
-              cp -r ${androidEngine}/module $m
-              cp ${androidEngine}/mutators.gen.ts clients/expo/src/mutators.gen.ts
+              cp -r ${engine}/module $m
+              cp ${engine}/mutators.gen.ts clients/expo/src/mutators.gen.ts
               chmod -R u+w $m clients/expo/src
+''}
 
               echo "--- the native project"
               cd clients/expo
@@ -1054,6 +1028,7 @@
               reactNativeArchitectures=arm64-v8a,x86_64
               org.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g -XX:+UseParallelGC
               org.gradle.parallel=true
+              org.gradle.caching=true
               PROPS
 
               # AGP resolves the versions a project asks for against the SDK
@@ -1061,7 +1036,7 @@
               # can never allow. A copy it can write to is the only way through
               # — and every component it could want is pinned above, so it never
               # actually installs anything.
-              cp -r $ANDROID_HOME $TMPDIR/sdk
+              cp -a $ANDROID_HOME $TMPDIR/sdk
               chmod -R u+w $TMPDIR/sdk
               # nixpkgs puts the NDK in two places and AGP complains about the
               # second one on every task.
@@ -1102,12 +1077,187 @@
               # setup hook honours it if it is already set.
               export GRADLE_USER_HOME=$TMPDIR/gradle
 
+${pkgs.lib.optionalString (restore != null) ''
+  echo "--- gradle's state, from the layer that already paid for it"
+  # `cp -a`, and for the same reason the cargo layers use it: gradle decides
+  # up-to-dateness from timestamps as well as content, and `cp -r` stamps
+  # every file with now.
+  #
+  # The working directory is `clients/expo` by now — `expo prebuild` left
+  # it there — and the layer's tree is relative to exactly that, which is
+  # what makes `.` right and is worth saying because it is not obvious
+  # from here.
+  cp -a ${restore}/gradle-home $GRADLE_USER_HOME
+  cp -a ${restore}/tree/. .
+  chmod -R u+w $GRADLE_USER_HOME android node_modules
+''}
+
               # Leave the shell in the gradle project. The update script runs
               # gradle straight after this phase and does no `cd` of its own.
               cd android
 
-              runHook postConfigure
+            runHook postConfigure
+          '';
+
+          # The gradle half of the build, done once and carried — the same
+          # trick as `thirdParty` for cargo, and for the same reason: nix
+          # caches a derivation's output whole, and gradle starts every
+          # derivation from nothing.
+          #
+          # What it is *not* built from is the point. Its source is the Expo
+          # project's manifests and nothing else — no Rust, no TypeScript, no
+          # `modules/harken-native` — so changing a mutation does not
+          # invalidate a gradle build that never saw one. What it therefore
+          # holds is everything that does not depend on this app: React
+          # Native's and Expo's gradle plugins, compiled from Kotlin on every
+          # run otherwise; expo-modules-core, reanimated, worklets, screens,
+          # gesture-handler and safe-area-context, each Kotlin *and* a CMake
+          # build per ABI.
+          #
+          # Carrying it needs the paths to match exactly, which is why this
+          # could not be written until the sandbox went on. `$TMPDIR` is
+          # `/build` in both, the source unpacks to `harken-workspace` in both
+          # because that is this derivation's name, and `node_modules` is the
+          # same fixed-output copy at the same place.
+          gradleStateSrc = pkgs.runCommand "harken-workspace" { } ''
+            mkdir -p $out/clients/expo
+            cd ${src}/clients/expo
+            cp -a package.json app.json bun.lock tsconfig.json \
+              metro.config.js assets $out/clients/expo/
+
+            # A route, because `app.json` asks for `expo-router` and its config
+            # plugin would rather find one. Never rendered — a debug APK bundles
+            # no JavaScript at all, it fetches it from Metro — so what is in it
+            # does not matter, only that the directory is not missing. The real
+            # `src` is deliberately not here: it changes on every screen edit,
+            # and this layer exists precisely to survive that.
+            mkdir -p $out/clients/expo/src/app
+            echo 'export default function Index() { return null; }' \
+              > $out/clients/expo/src/app/index.tsx
+          '';
+
+          gradleState = pkgs.stdenv.mkDerivation (finalAttrs: androidAttrs // {
+            name = "harken-gradle-state";
+            src = gradleStateSrc;
+            variant = "debug";
+
+            mitmCache = gradle9.fetchDeps {
+              pkg = finalAttrs.finalPackage;
+              data = ./gradle-deps.json;
+            };
+            gradleUpdateTask = "assembleDebug assembleRelease";
+
+            configurePhase = prepareAndroid { };
+
+            # `assembleDebug` rather than the libraries alone. Naming the
+            # subprojects would mean knowing which ones autolinking found,
+            # which is a list this file must not hold; assembling the app
+            # reaches all of them and the app's own half is cheap.
+            buildPhase = ''
+              runHook preBuild
+              gradle assembleDebug
+              runHook postBuild
             '';
+
+            # Two things, and the second is the expensive one.
+            #
+            # `gradle-home` is `GRADLE_USER_HOME`: the transformed AARs above
+            # all, which AGP re-derives from every dependency otherwise.
+            #
+            # `tree` is the build state itself — every `build` and `.cxx`
+            # directory under the project and under each module in
+            # `node_modules`, which is where React Native's libraries actually
+            # build. `.gradle` is the task history that makes gradle willing to
+            # believe any of it.
+            #
+            # `cp -a` throughout: gradle and ninja both decide staleness from
+            # timestamps, and a plain `cp` stamps everything with now — which
+            # is the same mistake that cost the cargo layer six crates of
+            # recompilation before it was `cp -a` there too.
+            installPhase = ''
+              runHook preInstall
+              mkdir -p $out/tree
+              cd $NIX_BUILD_TOP/harken-workspace/clients/expo
+
+              find android node_modules -type d \
+                \( -name build -o -name .cxx -o -name .gradle \) \
+                -prune -print0 |
+                while IFS= read -r -d ''' d; do
+                  case "$d" in
+                    # `build` in a JavaScript package is a source directory
+                    # that happens to share the name. Only gradle projects
+                    # have one worth keeping, and they all live under
+                    # `android/`.
+                    node_modules/*) case "$d" in */android/*) ;; *) continue ;; esac ;;
+                  esac
+                  mkdir -p "$out/tree/$(dirname "$d")"
+                  cp -a "$d" "$out/tree/$d"
+                done
+
+              cp -a "$GRADLE_USER_HOME" $out/gradle-home
+
+              echo "--- carried:"
+              du -sh $out/tree $out/gradle-home
+              runHook postInstall
+            '';
+          });
+
+          apk-debug = pkgs.stdenv.mkDerivation (finalAttrs: androidAttrs // {
+            name = "harken-debug-apk";
+            src = workspace;
+
+            # `debug` or `release`. A derivation attribute, so the builder gets
+            # it as a shell variable: it is gradle's build type, the directory
+            # the APK lands in, and — capitalised — half the name of the task
+            # that builds it. `apk-release` overrides this one attribute and
+            # nothing else.
+            variant = "debug";
+
+
+            # Gradle's own dependency graph, recorded once and replayed from
+            # the store — the last reason this derivation reached the network.
+            #
+            # There is no lockfile to vendor a Maven graph from, because working
+            # out what a gradle build fetches is a Turing-complete question; so
+            # nixpkgs answers it by running the build once behind a recording
+            # proxy and keeping what came back. `gradle-deps.json` is that
+            # recording, and `scripts/gradle-deps.sh` regenerates it.
+            #
+            # An APK is a signed zip and is not reproducible byte-for-byte, so
+            # the *APK* can never be a fixed-output derivation. Its dependencies
+            # can, which is the part that matters.
+            mitmCache = gradle9.fetchDeps {
+              pkg = finalAttrs.finalPackage;
+              data = ./gradle-deps.json;
+            };
+
+            # What the recording runs, instead of nixpkgs' `nixDownloadDeps`.
+            #
+            # That task resolves every resolvable configuration, which is right
+            # for a plain JVM project and wrong for an Android one: the variant
+            # metadata is deliberately ambiguous until a build type picks a
+            # side, so it fails on configurations no build ever resolves.
+            #
+            #   Could not resolve project :expo-modules-core.
+            #   … we cannot choose between the following variants:
+            #     - debugApiElements
+            #     - releaseApiElements
+            #
+            # Both assembles, because `apk-release` is this derivation with one
+            # attribute changed and shares this recording — so it has to cover
+            # Hermes and the release toolchain too, not just the debug half.
+            gradleUpdateTask = "assembleDebug assembleRelease";
+
+
+            # Preparing the project is `configurePhase`, not `buildPhase`, and
+            # that is load-bearing rather than tidiness. `fetchDeps`' update
+            # script runs `unpackPhase patchPhase configurePhase` and then
+            # gradle — it never calls `buildPhase`. With the preparation in
+            # `buildPhase` there would be no `android/` for it to record from.
+            configurePhase = prepareAndroid {
+              engine = androidEngine;
+              restore = gradleState;
+            };
 
             # `gradle`, not `./gradlew`: the wrapper downloads its own copy from
             # services.gradle.org, which buys nothing over the pinned one and
