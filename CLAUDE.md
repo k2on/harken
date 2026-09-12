@@ -222,7 +222,7 @@ Measured, as the APK step of the workflow:
 | 60  | 1279s    | the layer *again*, and the APK      |
 | 62  | **416s** | the APK, against a cached layer     |
 
-Run 62 is the one to read, and its gradle says why:
+Run 62 is the one to read for the Kotlin half, and its gradle says why:
 
 ```
 harken-debug-apk>  BUILD SUCCESSFUL in 5m 28s
