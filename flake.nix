@@ -695,7 +695,7 @@
           # change to a mutation does not invalidate a gradle build that never
           # saw it. `restore` is that layer, absent from the layer itself.
           prepareAndroid = { engine ? null, restore ? null }: ''
-            runHook preConfigure
+                          runHook preConfigure
 
               # Emulated here too — gradle drives the NDK's clang, and CMake
               # drives it a great many times. Same refusal as the engine's.
@@ -723,14 +723,14 @@
               # file in the repository changed, because that was this
               # derivation's source. It is `androidEngine` now, whose source is
               # the Rust and nothing else.
-${pkgs.lib.optionalString (engine != null) ''
+              ${pkgs.lib.optionalString (engine != null) ''
               echo "--- the engine, prebuilt"
               m=clients/expo/modules/harken-native
               rm -rf $m
               cp -r ${engine}/module $m
               cp ${engine}/mutators.gen.ts clients/expo/src/mutators.gen.ts
               chmod -R u+w $m clients/expo/src
-''}
+              ''}
 
               echo "--- the native project"
               cd clients/expo
@@ -825,26 +825,26 @@ ${pkgs.lib.optionalString (engine != null) ''
               # setup hook honours it if it is already set.
               export GRADLE_USER_HOME=$TMPDIR/gradle
 
-${pkgs.lib.optionalString (restore != null) ''
-  echo "--- gradle's state, from the layer that already paid for it"
-  # `cp -a`, and for the same reason the cargo layers use it: gradle decides
-  # up-to-dateness from timestamps as well as content, and `cp -r` stamps
-  # every file with now.
-  #
-  # The working directory is `clients/expo` by now — `expo prebuild` left
-  # it there — and the layer's tree is relative to exactly that, which is
-  # what makes `.` right and is worth saying because it is not obvious
-  # from here.
-  cp -a ${restore}/gradle-home $GRADLE_USER_HOME
-  cp -a ${restore}/tree/. .
-  chmod -R u+w $GRADLE_USER_HOME android node_modules
-''}
+              ${pkgs.lib.optionalString (restore != null) ''
+                echo "--- gradle's state, from the layer that already paid for it"
+                # `cp -a`, and for the same reason the cargo layers use it: gradle decides
+                # up-to-dateness from timestamps as well as content, and `cp -r` stamps
+                # every file with now.
+                #
+                # The working directory is `clients/expo` by now — `expo prebuild` left
+                # it there — and the layer's tree is relative to exactly that, which is
+                # what makes `.` right and is worth saying because it is not obvious
+                # from here.
+                cp -a ${restore}/gradle-home $GRADLE_USER_HOME
+                cp -a ${restore}/tree/. .
+                chmod -R u+w $GRADLE_USER_HOME android node_modules
+              ''}
 
               # Leave the shell in the gradle project. The update script runs
               # gradle straight after this phase and does no `cd` of its own.
               cd android
 
-            runHook postConfigure
+              runHook postConfigure
           '';
 
         in
