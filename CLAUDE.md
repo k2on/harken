@@ -197,6 +197,25 @@ A `.tsx` edit, a mutation, or a change to this file rebuilds the APK and not the
 layer, which is the case worth being fast. Moving `bun.lock`, `app.json`,
 `gradle-deps.json` or the SDK rebuilds both.
 
+Measured on run 60, where the layer happened to be rebuilt in the same job and
+so both halves are visible against each other:
+
+```
+harken-gradle-state>  642 actionable tasks: 540 executed, 102 from cache
+harken-debug-apk>     642 actionable tasks: 44 executed, 5 from cache,
+                                            593 up-to-date
+harken-debug-apk>     BUILD SUCCESSFUL in 5m 24s
+```
+
+The same 642 tasks, and 593 of them already done. That run was *slower* overall
+— it paid for the layer twice — which is worth remembering as a shape: a layer
+whose inputs are too wide looks exactly like a layer that does not work.
+
+`gradleStateSrc` names its six files individually for that reason. Written as
+`${src}/clients/expo/…` it takes the whole cleaned repository as an input, so
+every commit rebuilds it, and the commit that only touched this file — chosen
+*because* it touches nothing the layer reads — rebuilt it too.
+
 ## Never write domain logic in TypeScript
 
 Every mutation and every query is in `crates/harken/src/functions.rs`, written
