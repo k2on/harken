@@ -1,0 +1,108 @@
+# Does the Android toolchain work on an ARM host that is not the laptop?
+#
+# `.#apk` is built on x86_64 by `android.yml`, where everything Google ships
+# simply runs. This is the other question, and it exists because of one failure:
+# on an Asahi laptop the engine's first layer dies compiling SQLite, in the
+# emulated clang, with a pure-virtual call and `SIGABRT` — memory changing under
+# a process rather than an instruction it cannot execute.
+#
+# The suspicion is the host's page size. Asahi's default kernel uses 16 KiB
+# pages; qemu has to present a 4 KiB-page address space to an x86_64 guest, and
+# where the host cannot map at that granularity it has to fake it. Fedora Asahi
+# ships a 4 KiB kernel for exactly this reason and points x86 emulation at it.
+#
+# An `ubuntu-24.04-arm` runner is aarch64 with 4 KiB pages, which makes it the
+# control: same architecture, same emulation, different page size. If the layer
+# builds here the page size is the answer and no flag will fix the laptop; if it
+# fails here too, the cause is in what this repository builds and this is where
+# to chase it.
+#
+# Not a gate. It runs from the button once this file reaches the default
+# branch — `workflow_dispatch` only exists for workflows that are on it — and
+# until then, and afterwards, on a push that touches the emulation itself.
+name: android-arm
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/android-arm.yml
+      - flake.nix
+      - flake.lock
+
+concurrency:
+  group: android-arm-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deps:
+    runs-on: ubuntu-24.04-arm
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # What the whole run is about, recorded before anything can obscure it.
+      - name: What kind of machine is this
+        run: |
+          uname -srm
+          echo "page size: $(getconf PAGESIZE)"
+          nproc && free -g | head -2
+
+      # `extra-platforms`, because the SDK derivation itself is x86_64.
+      #
+      # Worth separating from what this is testing. The *toolchain* is emulated
+      # by wrappers this repository builds, and needs nothing from the host. But
+      # composing the SDK unzips Google's archives and patchelfs them, and that
+      # derivation's own builder — bash, unzip, patchelf — is x86_64, because
+      # everything in it is. Those are unfree, so no binary cache has them and
+      # they have to be built here.
+      #
+      # So `binfmt_misc` is still wanted for *building* the SDK, and is not
+      # wanted for *using* it. That is the distinction the wrappers exist to
+      # make, and this file is where it is easiest to confuse.
+      - name: Let this machine build x86_64 derivations
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-user-static binfmt-support
+          cat /proc/sys/fs/binfmt_misc/qemu-x86_64 || true
+
+      - uses: DeterminateSystems/nix-installer-action@main
+        with:
+          extra-conf: |
+            extra-platforms = x86_64-linux
+
+      - uses: nix-community/cache-nix-action/restore@v7
+        id: nix-store-cache
+        with:
+          primary-key: nix-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'Cargo.lock', 'clients/expo/bun.lock') }}-${{ github.run_id }}
+          restore-prefixes-first-match: |
+            nix-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'Cargo.lock', 'clients/expo/bun.lock') }}-
+            nix-${{ runner.os }}-${{ runner.arch }}-
+
+      # Cheap, and it answers "does the emulated toolchain start and link".
+      - name: Does the NDK run here
+        run: nix build .#ndk-check --print-build-logs
+
+      # The actual question. This is the derivation that fails on the laptop,
+      # and it fails inside it — an `-O3` compile of the SQLite amalgamation
+      # through the emulated clang, which is far more of the compiler than
+      # `.#ndk-check` reaches.
+      - name: The layer that fails on the laptop
+        run: nix build .#androidDeps --print-build-logs
+
+      - name: Keep the layers worth caching
+        if: ${{ !cancelled() }}
+        run: |
+          for a in androidSdk ubrn androidDeps; do
+            nix build -o "$RUNNER_TEMP/gcroot-$a" ".#$a" || true
+          done
+
+      - uses: nix-community/cache-nix-action/save@v7
+        if: ${{ !cancelled() }}
+        with:
+          primary-key: ${{ steps.nix-store-cache.outputs.primary-key }}
+          gc-max-store-size-linux: 12G
+          purge: true
+          purge-prefixes: nix-${{ runner.os }}-${{ runner.arch }}-
+          purge-created: 0
+          purge-primary-key: never
