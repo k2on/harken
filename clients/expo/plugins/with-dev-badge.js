@@ -1,3 +1,6 @@
+// @ts-check
+/// <reference types="node" />
+//
 // A banner on the development build's icon, drawn by `app-icon-badge`.
 //
 // Not that package's own config plugin, and the difference is when the
@@ -7,24 +10,38 @@
 // once. Expo then reads files that may be half-written, and on the iOS side
 // two badges are written to the *same* path at the same time. Seen here as
 // a Jimp `parseBitmap` error and, once, a prebuild that lost
-// `android.package` and produced `com.harkendev`. Inside a sandboxed build
-// there is no second try, so the drawing is done in a dangerous mod, which
-// is allowed to be async, and each file is waited for before the config
-// points at it.
+// `android.package`. Inside a sandboxed build there is no second try, so the
+// drawing is done in a dangerous mod, which is allowed to be async, and each
+// file is waited for before the config points at it.
 //
-// The adaptive foreground must be 1024px. The package's adaptive overlay
-// is drawn at that size and composited at the origin, so on a 512px image
-// the banner lands entirely outside the canvas and nothing appears; on
-// device, Android's launcher mask then shows the bottom banner with its
-// text intact, which was checked by rendering the circular mask.
-const fs = require('fs');
-const path = require('path');
+// The adaptive foreground must be 1024px. The package's adaptive overlay is
+// drawn at that size and composited at the origin, so on a 512px image the
+// banner lands entirely outside the canvas and nothing appears; on device,
+// Android's launcher mask then shows the bottom banner with its text intact,
+// which was checked by rendering the circular mask.
+//
+// JavaScript with `@ts-check` rather than TypeScript, because Expo loads
+// `app.config.ts` through its own compiler but resolves what that file
+// imports with Node's, which does not find a `.ts` next door. `tsc` checks
+// this file all the same, against the JSDoc types below.
+const fs = require('node:fs');
+const path = require('node:path');
 const { withDangerousMod } = require('expo/config-plugins');
 const { addBadge } = require('app-icon-badge');
 const Jimp = require('jimp');
 
+/** @typedef {{ badges: import('app-icon-badge/types').Badge[] }} DevBadgeProps */
+
 const OUT = '.expo/app-icon-badge';
 
+/**
+ * @param {string} projectRoot
+ * @param {string} icon
+ * @param {string} out
+ * @param {import('app-icon-badge/types').Badge[]} badges
+ * @param {boolean} isAdaptiveIcon
+ * @returns {Promise<string>}
+ */
 async function badge(projectRoot, icon, out, badges, isAdaptiveIcon) {
   const dst = path.join(projectRoot, OUT, out);
   fs.mkdirSync(path.dirname(dst), { recursive: true });
@@ -43,7 +60,8 @@ async function badge(projectRoot, icon, out, badges, isAdaptiveIcon) {
   throw new Error(`with-dev-badge: ${dst} was never written`);
 }
 
-module.exports = (config, { badges }) =>
+/** @type {import('expo/config-plugins').ConfigPlugin<DevBadgeProps>} */
+const withDevBadge = (config, { badges }) =>
   withDangerousMod(config, [
     'android',
     async (config) => {
@@ -51,10 +69,12 @@ module.exports = (config, { badges }) =>
       if (config.icon) {
         config.icon = await badge(root, config.icon, 'icon.png', badges, false);
       }
-      const fg = config.android?.adaptiveIcon?.foregroundImage;
-      if (fg) {
-        config.android.adaptiveIcon.foregroundImage = await badge(root, fg, 'foreground.png', badges, true);
+      const adaptive = config.android?.adaptiveIcon;
+      if (adaptive?.foregroundImage) {
+        adaptive.foregroundImage = await badge(root, adaptive.foregroundImage, 'foreground.png', badges, true);
       }
       return config;
     },
   ]);
+
+module.exports = withDevBadge;

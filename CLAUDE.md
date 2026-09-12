@@ -220,7 +220,7 @@ Three things that are easy to get wrong here, two of which cost a run each:
   gradle's content hashes. `dontFixup = true`.
 
 A `.tsx` edit, a mutation, or a change to this file rebuilds the APK and not the
-layer, which is the case worth being fast. Moving `bun.lock`, `app.json`,
+layer, which is the case worth being fast. Moving `bun.lock`, `app.config.ts`,
 `gradle-deps.json` or the SDK rebuilds both.
 
 Measured, as the APK step of the workflow:
@@ -261,15 +261,19 @@ Native's gradle plugin, Expo's module plugin and the dev-launcher's are gradle
 projects outside any `android/`, and a rule that only looked there left their
 compiled state behind — the build cache was covering for it.
 
-## Two apps: `dev.harken.app.dev` beside `dev.harken.app`
+## Two apps: `dev.harken.koon.us` beside `harken.koon.us`
 
 A development build and a release build are different apps to Android, so
-both can be installed at once. `clients/expo/app.config.js` decides which from
-`APP_VARIANT`: `production` is `dev.harken.app`, "Harken", the icon as drawn;
-anything else is `dev.harken.app.dev`, "Harken Dev", with a DEV banner across
-the bottom of the icon. The nix build exports it from the APK derivation's
-`variant` before `expo prebuild`, `eas.json` sets it per profile, and a bare
-`expo start` gets development, which is the only thing it can be pointed at.
+both can be installed at once. `clients/expo/app.config.ts` is the whole app
+config — there is no `app.json` — and decides which from `APP_VARIANT`:
+`production` is `harken.koon.us`, "Harken", the icon as drawn; anything else
+is `dev.harken.koon.us`, "Harken Dev", with a DEV banner across the bottom of
+the icon. The nix build exports it from the APK derivation's `variant` before
+`expo prebuild`, `eas.json` sets it per profile, and a bare `expo start` gets
+development, which is the only thing it can be pointed at. The config is an
+`ExpoConfig`, so `tsc` checks it; the badge plugin is applied as a function
+rather than listed under `plugins`, which `ExpoConfig` types as names only,
+so its props are checked against the plugin's own type too.
 
 The banner is drawn by `app-icon-badge`, but not by its config plugin.
 `plugins/with-dev-badge.js` calls the package's `addBadge` from a dangerous
@@ -277,8 +281,10 @@ mod and waits for each file to be readable before pointing the config at it.
 The package's own plugin starts the drawing and returns at once — the promise
 is dropped, `addBadge` does not await its write, and the iOS branch writes to
 the same path as the flat icon at the same time — which showed up here as a
-Jimp `parseBitmap` error and, once, a prebuild that lost `android.package` and
-made a `com.harkendev`. A sandboxed build gets no second try.
+Jimp `parseBitmap` error and, once, a prebuild that lost `android.package`.
+A sandboxed build gets no second try. It is JavaScript under `@ts-check`
+rather than TypeScript because Expo compiles `app.config.ts` itself but
+resolves that file's imports with Node, which does not find a `.ts` beside it.
 
 Two things the plugin needs and does not say: the adaptive foreground must be
 1024px, because the adaptive overlay is drawn at that size and composited at
@@ -441,10 +447,11 @@ so the Expo screen just writes `♥`.
   `SIGABRT` rather than `SIGILL`, which is the tell: memory changing under a
   process, not an instruction the emulator cannot execute.
 
-  `android-arm.yml` is the control, and it is worth keeping for that reason
-  alone. An `ubuntu-24.04-arm` runner is aarch64 with 4 KiB pages — same
-  architecture, same wrappers, same pinned qemu — and `.#androidDeps` builds
-  there in 816s. The only variable left is the page size.
+  The control was an `ubuntu-24.04-arm` runner — aarch64 with 4 KiB pages,
+  same architecture, same wrappers, same pinned qemu — where `.#androidDeps`
+  built in 816s. The only variable left was the page size. That workflow is
+  gone now; the finding stands, and anyone who doubts it can run
+  `.#androidDeps` on any 4 KiB-page ARM machine.
 
   **There is no 4 KiB kernel to boot.** Fedora Asahi ships a unified
   `kernel-16k` and dropped the 4 KiB one; nixos-apple-silicon is 16 KiB only,

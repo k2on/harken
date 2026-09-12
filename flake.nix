@@ -227,7 +227,7 @@
 
           # What the Android engine build reads, and nothing else.
           #
-          # The point is what is *missing*: `clients/expo/src`, `app.json`, the
+          # The point is what is *missing*: `clients/expo/src`, `app.config.ts`, the
           # assets. Editing a screen must not be an input to a cross-compile.
           # Measured on run 21 the engine half is 529s of every APK build — the
           # `ubrn` CLI compiled from source, then the workspace compiled twice,
@@ -635,7 +635,7 @@
             # goes stale, nix prints the right one and it goes here.
             outputHash = {
               aarch64-linux = "sha256-Lo8p11fynW14olU8Sz5HAPQFrwtEe/xS/4t5v9qj5Hc=";
-              x86_64-linux = "sha256-3UwRndffuG69u3tMHFEDFo+FIqVNJbF1U1NvHpCVY6U=";
+              x86_64-linux = "sha256-nKYJZdiKJQYxI2gSh3V5tQ7Q16Bj9U0Rlk/Tg1kw7BM=";
             }.${system} or (throw "no node_modules hash recorded for ${system}");
           };
 
@@ -734,9 +734,9 @@
 
               echo "--- the native project"
               cd clients/expo
-              # Which app this is. `app.config.js` reads it: a release build
-              # is `dev.harken.app`, "Harken"; anything else is
-              # `dev.harken.app.dev`, "Harken Dev", with a banner on the
+              # Which app this is. `app.config.ts` reads it: a release build
+              # is `harken.koon.us`, "Harken"; anything else is
+              # `dev.harken.koon.us`, "Harken Dev", with a banner on the
               # icon — so both can be installed at once. `variant` is the
               # APK derivation's attribute; the state layer has none and gets
               # the development identity, which is the one it is restored
@@ -1039,7 +1039,7 @@
           # others whose versions are fixed in a lockfile that did not move.
           #
           # `engineSrc` is what it is allowed to read, and what is deliberately
-          # missing from it is `clients/expo/src` and `app.json`: a screen is
+          # missing from it is `clients/expo/src` and `app.config.ts`: a screen is
           # not an input to a cross-compile.
           androidEngine = android.mkEngine {
             name = "harken";
@@ -1207,7 +1207,7 @@
             }} $out/clients/expo
             chmod -R u+w $out/clients/expo
 
-            # A route, because `app.json` asks for `expo-router` and its config
+            # A route, because `app.config.ts` asks for `expo-router` and its config
             # plugin would rather find one. Never rendered — a debug APK bundles
             # no JavaScript at all, it fetches it from Metro — so what is in it
             # does not matter, only that the directory is not missing. The real
