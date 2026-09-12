@@ -556,117 +556,10 @@
             buildInputs = [ pkgs.openssl ];
             doCheck = false;
           };
-        in
-        rec {
-          default = harken-server;
-
-          # The generator, and the wasm module it reads. Exposed because
-          # `nix build .#mutators` is how you find out whether it is the module
-          # or your own code that is broken.
-          inherit petrosCodegen mutators;
-
-          # The three checks, also as packages: `nix flake check` runs them all
-          # and says little, while `nix build .#check-clippy` runs one and shows
-          # what it said.
-          inherit check-fmt check-clippy check-tests;
-
           # The Android SDK, pinned to what Expo SDK 57 asks gradle for. The
           # versions are this app's; how to compose them without the Gradle
           # Plugin trying to install its own is the engine's.
           androidSdk = android.mkSdk { };
-
-          # Does the NDK's compiler run here, sandboxed? Twenty seconds instead
-          # of twenty minutes.
-          #
-          # On x86_64 the answer is uninteresting. Everywhere else the toolchain
-          # is emulated, and the whole of `.#apk` rests on that working inside a
-          # build sandbox — which it did not, under the host's `binfmt_misc`:
-          #
-          #   clang: symbol lookup error: undefined symbol: ceilf,
-          #   version GLIBC_2.2.5
-          #
-          # An ordinary derivation, so it is sandboxed exactly the way the real
-          # build is, and it compiles something rather than only asking for a
-          # version string: `--version` is answered before much of clang is
-          # loaded, and the failure above came from loading the rest of it.
-          ndk-check =
-            let
-              ndk = "${androidSdk}/libexec/android-sdk/ndk/27.1.12297006";
-              prebuilt = "${ndk}/toolchains/llvm/prebuilt/linux-x86_64";
-            in
-            pkgs.runCommand "ndk-check" { } ''
-              # `#include`, so the resource headers have to be found, and a
-              # shared object rather than an object file, so the driver has to
-              # exec `ld.lld`. Both are things a compiler does by knowing where
-              # it lives, which is exactly what emulation takes away — and both
-              # pass happily if the test is a `--version` and a `-c` of a
-              # builtin, which is what this was at first.
-              cat > a.c <<'SRC'
-              #include <math.h>
-              float f(float x) { return ceilf(x); }
-              SRC
-
-              # When it fails under emulation it fails in the dynamic
-              # loader, and the message names a symbol rather than a file:
-              #
-              #   clang: symbol lookup error: …/clang:
-              #   undefined symbol: ceilf, version GLIBC_2.2.5
-              #
-              # which is what the loader says when a symbol *is* found and its
-              # version is not — so some libm was loaded and it was the wrong
-              # one. Nothing in the message says which, and that is the only
-              # question worth asking, so ask it here rather than leaving the
-              # next person to reconstruct the run by hand.
-              diagnose() {
-                echo "--- the NDK does not run here. What the loader did:"
-                echo "--- ldd:"
-                LD_TRACE_LOADED_OBJECTS=1 ${prebuilt}/bin/clang || true
-                echo "--- LD_DEBUG=libs,versions (tail):"
-                LD_DEBUG=libs,versions ${prebuilt}/bin/clang --version \
-                  > ld.log 2>&1 || true
-                grep -E 'libm|ceilf|version' ld.log | tail -60 || true
-                echo "--- the search path the guest was given:"
-                echo "LD_LIBRARY_PATH=''${LD_LIBRARY_PATH-<unset>}"
-                echo "LD_PRELOAD=''${LD_PRELOAD-<unset>}"
-                echo "--- the wrapper:"
-                cat ${prebuilt}/bin/clang || true
-                exit 1
-              }
-
-              set -x
-              ${prebuilt}/bin/clang --version || diagnose
-
-              # Where the toolchain is emulated, the wrapper has to be the
-              # thing forcing eager binding — not this check, and not the
-              # caller.
-              #
-              # Lazy binding resolves a PLT entry at first call, through
-              # machinery that does not survive emulation, and it fails as a
-              # lookup error naming a symbol that is demonstrably present:
-              #
-              #   checking for version `GLIBC_2.2.5' in file …/libm.so.6 [0]
-              #     required by file …/clang [0]        ← passes, at load time
-              #   …/clang: error: symbol lookup error: undefined symbol:
-              #     ceilf, version GLIBC_2.2.5 (fatal)  ← later, at first call
-              #
-              # So there is nothing to find and nothing missing. Asserting the
-              # wrapper still carries the workaround is worth more than running
-              # clang again here, because the failure depends on a code path
-              # `--version` does not take — which is how this check passed on a
-              # machine that could not build.
-              if head -c2 ${prebuilt}/bin/clang | grep -q '#!'; then
-                grep -q LD_BIND_NOW ${prebuilt}/bin/clang || {
-                  echo "the wrapper no longer forces eager binding" >&2
-                  exit 1
-                }
-              fi
-              ${prebuilt}/bin/clang --target=aarch64-linux-android26 \
-                -shared -o a.so a.c || diagnose
-              ${prebuilt}/bin/llvm-nm -D a.so | grep ' T f'
-              ${prebuilt}/bin/llvm-readelf -h a.so | grep Machine
-              set +x
-              echo "the NDK works here" | tee $out
-            '';
 
           # Gradle 9.3.1, built with nixpkgs' own machinery rather than
           # fetched and wrapped by hand.
@@ -746,150 +639,6 @@
             }.${system} or (throw "no node_modules hash recorded for ${system}");
           };
 
-          # The `ubrn` command, built once rather than compiled from source by
-          # the shim in `node_modules` on every build.
-          ubrn = android.mkUbrn {
-            inherit toolchain;
-            nodeModules = expoModules;
-            # The generator ships no lockfile — the npm package is the built
-            # CLI and its Rust sources, and cargo is expected to resolve
-            # wherever it runs. So one is committed here, and the vendored
-            # result is pinned by hash. Both move when `bun.lock` moves the
-            # generator's version.
-            #
-            # `clients/expo/node_modules/…/Cargo.lock` is not this file: cargo
-            # writes one there whenever it runs under this tree, and it comes
-            # out carrying the engine's seven crates because `[patch]` applies.
-            lockFile = ./clients/expo/ubrn-Cargo.lock;
-            depsHash = "sha256-YdwO0AOhoQjRbo5psMAxSSCRM7Ok8OsrjcAE13QMXP0=";
-          };
-
-          # The engine cross-compiled for Android, and the bindings generated
-          # from the same metadata.
-          #
-          # Two layers, and the first is why: `androidEngine.thirdParty`
-          # compiles the dependency graph from a tree where this app's crates
-          # *and the engine's* are stubs, and the engine build starts from that
-          # `target/`. Changing a mutation recompiles harken; bumping the engine
-          # recompiles petros; neither recompiles `ciborium` and the hundred
-          # others whose versions are fixed in a lockfile that did not move.
-          #
-          # `engineSrc` is what it is allowed to read, and what is deliberately
-          # missing from it is `clients/expo/src` and `app.json`: a screen is
-          # not an input to a cross-compile.
-          androidEngine = android.mkEngine {
-            name = "harken";
-            src = engineWorkspace;
-            inherit toolchain ubrn;
-            sdk = androidSdk;
-            nodeModules = expoModules;
-            petrosSrc = petros;
-            vendor = cargoDeps;
-            moduleDir = "clients/expo/modules/harken-native";
-            appCrates = [ "crates/harken" "crates/server" "clients/iced" ];
-
-            # `foreign_peer!` does `include_bytes!` of the module, so the crate
-            # does not compile until it exists.
-            preEngine = ''
-              # The module, already built, rather than `scripts/mutators.sh`.
-              #
-              # The script reaches the network: with no sibling checkout it
-              # installs `petros-codegen` with `cargo install --git`, which is
-              # one of the two remaining reasons this derivation asks for
-              # `__noChroot`. The derivation builds the same two files from the
-              # pinned engine.
-              #
-              # The wasm goes back where `include_bytes!` expects it, because
-              # compiling `harken` with `--features foreign` reads it — that is
-              # what makes this a build input and not a test fixture.
-              echo "--- the mutator module, prebuilt"
-              mkdir -p clients/expo/src target/wasm32-unknown-unknown/mutators
-              cp ${mutators}/mutators.gen.ts clients/expo/src/mutators.gen.ts
-              cp ${mutators}/harken.wasm \
-                target/wasm32-unknown-unknown/mutators/harken.wasm
-              chmod -R u+w clients/expo/src target/wasm32-unknown-unknown
-
-              # The generator resolves react-native's headers through this.
-              echo "--- node_modules"
-              cp -a ${expoModules} clients/expo/node_modules
-              chmod -R u+w clients/expo/node_modules
-
-              # `#!/usr/bin/env node` is not a thing inside a sandbox. npm's
-              # shims all start that way, and `__noChroot` was quietly handing
-              # them the runner's `/usr/bin/env`:
-              #
-              #   ./node_modules/.bin/expo: /usr/bin/env: bad interpreter
-              #
-              # Same shape as the compiler triple — a dependency on the host
-              # filesystem that only an impure build can satisfy, and that
-              # nobody notices until a machine is missing it.
-              patchShebangs clients/expo/node_modules
-            '';
-
-            extraInstall = ''
-              install -Dm444 clients/expo/src/mutators.gen.ts $out/mutators.gen.ts
-            '';
-          };
-
-          # The first layer on its own, for when the question is whether it is
-          # the dependencies or this app that is slow.
-          androidDeps = androidEngine.thirdParty;
-
-          # …and the same layer with the guest's loader narrating.
-          #
-          # This is the layer that fails under emulation, and it fails in a way
-          # `.#ndk-check` cannot reproduce: that check drives the same clang
-          # through the same wrapper and passes, so the binary is fine and the
-          # *context* is not. cargo sets `LD_LIBRARY_PATH` when it runs a build
-          # script — the target's `deps` and the rust toolchain's own `lib` —
-          # and `libsqlite3-sys` hands that environment to clang. Which is why
-          # running the failing command by hand afterwards proves nothing: by
-          # hand is the case that works.
-          #
-          # So ask from inside. `LD_DEBUG=libs,versions` in the guest prints
-          # every path it tries and every version check it makes, and the
-          # emulated compiles are few — clang is reached for the SQLite
-          # amalgamation and little else, while rustc runs natively.
-          androidDeps-debug = androidDeps.overrideAttrs (_: {
-            name = "harken-android-deps-debug";
-            NDK_EMULATION_DEBUG = "1";
-          });
-
-          # The Android build, in two variants — see `apk-release` below.
-          #
-          # Everything Google publishes for Android is a `linux-x86_64` binary
-          # — the NDK's clang, aapt2, d8, CMake — so on an ARM machine every
-          # one of them runs under qemu. The emulator comes from `mkSdk`, which
-          # wraps them, rather than from the host's `binfmt_misc`: a sandboxed
-          # build cannot use the kernel's registration, and a derivation should
-          # not depend on how a machine is set up anyway. It is slow either
-          # way — the emulated compile of SQLite's amalgamation alone is about
-          # a minute per ABI.
-          #
-          # Nothing here reaches the network, so with the emulator supplied
-          # this is an ordinary sandboxed build on every architecture: the
-          # Maven graph is replayed from the recording below, the engine's
-          # module is a derivation, and `ubrn` is pinned by a lockfile. Which
-          # also buys the stable path — `/build` everywhere rather than
-          # something ending in a pid and a random number — and gradle's task
-          # history and ninja's `.cxx` both record absolute paths, so native
-          # build state can be carried between derivations.
-          #
-          # One thing does *not* work under emulation: the SDK's CMake, which
-          # qemu refuses with "Unable to find a guest_base to satisfy all guest
-          # address mapping requirements". On x86_64 it runs and nothing is
-          # needed. On ARM, `local.properties` has to name a native CMake with
-          # `cmake.dir` — and it must be 3.22.x, because React Native declares a
-          # minimum that 4.x rejects and 3.31 does not find `ReactAndroid` where
-          # the prefab puts it. 25.05 ships neither, and 3.22.1 does not compile
-          # against its curl, so that is unfinished: `.#apk` is x86_64 for now,
-          # which is what CI is.
-          #
-          # Not a fixed-output derivation, and it cannot be one: an APK is a zip
-          # and a signed one at that, so it is not reproducible byte-for-byte.
-          # Everything it needs from the network is fetched by a derivation that
-          # *is* — `expoModules` and `gradleDeps` — and the build itself runs
-          # offline.
           # What both Android derivations are built with, named once.
           #
           # Shared for correctness rather than tidiness: `PATH` decides which
@@ -947,7 +696,6 @@
           # saw it. `restore` is that layer, absent from the layer itself.
           prepareAndroid = { engine ? null, restore ? null }: ''
             runHook preConfigure
-              runHook preConfigure
 
               # Emulated here too — gradle drives the NDK's clang, and CMake
               # drives it a great many times. Same refusal as the engine's.
@@ -1099,6 +847,262 @@ ${pkgs.lib.optionalString (restore != null) ''
             runHook postConfigure
           '';
 
+        in
+        rec {
+          # Defined in the `let` above, because the two Android helpers there
+          # need them and a flake output must be a derivation — so neither
+          # `androidAttrs` nor `prepareAndroid` can live out here.
+          inherit androidSdk gradle9 expoModules;
+
+          default = harken-server;
+
+          # The generator, and the wasm module it reads. Exposed because
+          # `nix build .#mutators` is how you find out whether it is the module
+          # or your own code that is broken.
+          inherit petrosCodegen mutators;
+
+          # The three checks, also as packages: `nix flake check` runs them all
+          # and says little, while `nix build .#check-clippy` runs one and shows
+          # what it said.
+          inherit check-fmt check-clippy check-tests;
+
+          # Does the NDK's compiler run here, sandboxed? Twenty seconds instead
+          # of twenty minutes.
+          #
+          # On x86_64 the answer is uninteresting. Everywhere else the toolchain
+          # is emulated, and the whole of `.#apk` rests on that working inside a
+          # build sandbox — which it did not, under the host's `binfmt_misc`:
+          #
+          #   clang: symbol lookup error: undefined symbol: ceilf,
+          #   version GLIBC_2.2.5
+          #
+          # An ordinary derivation, so it is sandboxed exactly the way the real
+          # build is, and it compiles something rather than only asking for a
+          # version string: `--version` is answered before much of clang is
+          # loaded, and the failure above came from loading the rest of it.
+          ndk-check =
+            let
+              ndk = "${androidSdk}/libexec/android-sdk/ndk/27.1.12297006";
+              prebuilt = "${ndk}/toolchains/llvm/prebuilt/linux-x86_64";
+            in
+            pkgs.runCommand "ndk-check" { } ''
+              # `#include`, so the resource headers have to be found, and a
+              # shared object rather than an object file, so the driver has to
+              # exec `ld.lld`. Both are things a compiler does by knowing where
+              # it lives, which is exactly what emulation takes away — and both
+              # pass happily if the test is a `--version` and a `-c` of a
+              # builtin, which is what this was at first.
+              cat > a.c <<'SRC'
+              #include <math.h>
+              float f(float x) { return ceilf(x); }
+              SRC
+
+              # When it fails under emulation it fails in the dynamic
+              # loader, and the message names a symbol rather than a file:
+              #
+              #   clang: symbol lookup error: …/clang:
+              #   undefined symbol: ceilf, version GLIBC_2.2.5
+              #
+              # which is what the loader says when a symbol *is* found and its
+              # version is not — so some libm was loaded and it was the wrong
+              # one. Nothing in the message says which, and that is the only
+              # question worth asking, so ask it here rather than leaving the
+              # next person to reconstruct the run by hand.
+              diagnose() {
+                echo "--- the NDK does not run here. What the loader did:"
+                echo "--- ldd:"
+                LD_TRACE_LOADED_OBJECTS=1 ${prebuilt}/bin/clang || true
+                echo "--- LD_DEBUG=libs,versions (tail):"
+                LD_DEBUG=libs,versions ${prebuilt}/bin/clang --version \
+                  > ld.log 2>&1 || true
+                grep -E 'libm|ceilf|version' ld.log | tail -60 || true
+                echo "--- the search path the guest was given:"
+                echo "LD_LIBRARY_PATH=''${LD_LIBRARY_PATH-<unset>}"
+                echo "LD_PRELOAD=''${LD_PRELOAD-<unset>}"
+                echo "--- the wrapper:"
+                cat ${prebuilt}/bin/clang || true
+                exit 1
+              }
+
+              set -x
+              ${prebuilt}/bin/clang --version || diagnose
+
+              # Where the toolchain is emulated, the wrapper has to be the
+              # thing forcing eager binding — not this check, and not the
+              # caller.
+              #
+              # Lazy binding resolves a PLT entry at first call, through
+              # machinery that does not survive emulation, and it fails as a
+              # lookup error naming a symbol that is demonstrably present:
+              #
+              #   checking for version `GLIBC_2.2.5' in file …/libm.so.6 [0]
+              #     required by file …/clang [0]        ← passes, at load time
+              #   …/clang: error: symbol lookup error: undefined symbol:
+              #     ceilf, version GLIBC_2.2.5 (fatal)  ← later, at first call
+              #
+              # So there is nothing to find and nothing missing. Asserting the
+              # wrapper still carries the workaround is worth more than running
+              # clang again here, because the failure depends on a code path
+              # `--version` does not take — which is how this check passed on a
+              # machine that could not build.
+              if head -c2 ${prebuilt}/bin/clang | grep -q '#!'; then
+                grep -q LD_BIND_NOW ${prebuilt}/bin/clang || {
+                  echo "the wrapper no longer forces eager binding" >&2
+                  exit 1
+                }
+              fi
+              ${prebuilt}/bin/clang --target=aarch64-linux-android26 \
+                -shared -o a.so a.c || diagnose
+              ${prebuilt}/bin/llvm-nm -D a.so | grep ' T f'
+              ${prebuilt}/bin/llvm-readelf -h a.so | grep Machine
+              set +x
+              echo "the NDK works here" | tee $out
+            '';
+
+          # The `ubrn` command, built once rather than compiled from source by
+          # the shim in `node_modules` on every build.
+          ubrn = android.mkUbrn {
+            inherit toolchain;
+            nodeModules = expoModules;
+            # The generator ships no lockfile — the npm package is the built
+            # CLI and its Rust sources, and cargo is expected to resolve
+            # wherever it runs. So one is committed here, and the vendored
+            # result is pinned by hash. Both move when `bun.lock` moves the
+            # generator's version.
+            #
+            # `clients/expo/node_modules/…/Cargo.lock` is not this file: cargo
+            # writes one there whenever it runs under this tree, and it comes
+            # out carrying the engine's seven crates because `[patch]` applies.
+            lockFile = ./clients/expo/ubrn-Cargo.lock;
+            depsHash = "sha256-YdwO0AOhoQjRbo5psMAxSSCRM7Ok8OsrjcAE13QMXP0=";
+          };
+
+          # The engine cross-compiled for Android, and the bindings generated
+          # from the same metadata.
+          #
+          # Two layers, and the first is why: `androidEngine.thirdParty`
+          # compiles the dependency graph from a tree where this app's crates
+          # *and the engine's* are stubs, and the engine build starts from that
+          # `target/`. Changing a mutation recompiles harken; bumping the engine
+          # recompiles petros; neither recompiles `ciborium` and the hundred
+          # others whose versions are fixed in a lockfile that did not move.
+          #
+          # `engineSrc` is what it is allowed to read, and what is deliberately
+          # missing from it is `clients/expo/src` and `app.json`: a screen is
+          # not an input to a cross-compile.
+          androidEngine = android.mkEngine {
+            name = "harken";
+            src = engineWorkspace;
+            inherit toolchain ubrn;
+            sdk = androidSdk;
+            nodeModules = expoModules;
+            petrosSrc = petros;
+            vendor = cargoDeps;
+            moduleDir = "clients/expo/modules/harken-native";
+            appCrates = [ "crates/harken" "crates/server" "clients/iced" ];
+
+            # `foreign_peer!` does `include_bytes!` of the module, so the crate
+            # does not compile until it exists.
+            preEngine = ''
+              # The module, already built, rather than `scripts/mutators.sh`.
+              #
+              # The script reaches the network: with no sibling checkout it
+              # installs `petros-codegen` with `cargo install --git`, which is
+              # one of the two remaining reasons this derivation asks for
+              # `__noChroot`. The derivation builds the same two files from the
+              # pinned engine.
+              #
+              # The wasm goes back where `include_bytes!` expects it, because
+              # compiling `harken` with `--features foreign` reads it — that is
+              # what makes this a build input and not a test fixture.
+              echo "--- the mutator module, prebuilt"
+              mkdir -p clients/expo/src target/wasm32-unknown-unknown/mutators
+              cp ${mutators}/mutators.gen.ts clients/expo/src/mutators.gen.ts
+              cp ${mutators}/harken.wasm \
+                target/wasm32-unknown-unknown/mutators/harken.wasm
+              chmod -R u+w clients/expo/src target/wasm32-unknown-unknown
+
+              # The generator resolves react-native's headers through this.
+              echo "--- node_modules"
+              cp -a ${expoModules} clients/expo/node_modules
+              chmod -R u+w clients/expo/node_modules
+
+              # `#!/usr/bin/env node` is not a thing inside a sandbox. npm's
+              # shims all start that way, and `__noChroot` was quietly handing
+              # them the runner's `/usr/bin/env`:
+              #
+              #   ./node_modules/.bin/expo: /usr/bin/env: bad interpreter
+              #
+              # Same shape as the compiler triple — a dependency on the host
+              # filesystem that only an impure build can satisfy, and that
+              # nobody notices until a machine is missing it.
+              patchShebangs clients/expo/node_modules
+            '';
+
+            extraInstall = ''
+              install -Dm444 clients/expo/src/mutators.gen.ts $out/mutators.gen.ts
+            '';
+          };
+
+          # The first layer on its own, for when the question is whether it is
+          # the dependencies or this app that is slow.
+          androidDeps = androidEngine.thirdParty;
+
+          # …and the same layer with the guest's loader narrating.
+          #
+          # This is the layer that fails under emulation, and it fails in a way
+          # `.#ndk-check` cannot reproduce: that check drives the same clang
+          # through the same wrapper and passes, so the binary is fine and the
+          # *context* is not. cargo sets `LD_LIBRARY_PATH` when it runs a build
+          # script — the target's `deps` and the rust toolchain's own `lib` —
+          # and `libsqlite3-sys` hands that environment to clang. Which is why
+          # running the failing command by hand afterwards proves nothing: by
+          # hand is the case that works.
+          #
+          # So ask from inside. `LD_DEBUG=libs,versions` in the guest prints
+          # every path it tries and every version check it makes, and the
+          # emulated compiles are few — clang is reached for the SQLite
+          # amalgamation and little else, while rustc runs natively.
+          androidDeps-debug = androidDeps.overrideAttrs (_: {
+            name = "harken-android-deps-debug";
+            NDK_EMULATION_DEBUG = "1";
+          });
+
+          # The Android build, in two variants — see `apk-release` below.
+          #
+          # Everything Google publishes for Android is a `linux-x86_64` binary
+          # — the NDK's clang, aapt2, d8, CMake — so on an ARM machine every
+          # one of them runs under qemu. The emulator comes from `mkSdk`, which
+          # wraps them, rather than from the host's `binfmt_misc`: a sandboxed
+          # build cannot use the kernel's registration, and a derivation should
+          # not depend on how a machine is set up anyway. It is slow either
+          # way — the emulated compile of SQLite's amalgamation alone is about
+          # a minute per ABI.
+          #
+          # Nothing here reaches the network, so with the emulator supplied
+          # this is an ordinary sandboxed build on every architecture: the
+          # Maven graph is replayed from the recording below, the engine's
+          # module is a derivation, and `ubrn` is pinned by a lockfile. Which
+          # also buys the stable path — `/build` everywhere rather than
+          # something ending in a pid and a random number — and gradle's task
+          # history and ninja's `.cxx` both record absolute paths, so native
+          # build state can be carried between derivations.
+          #
+          # One thing does *not* work under emulation: the SDK's CMake, which
+          # qemu refuses with "Unable to find a guest_base to satisfy all guest
+          # address mapping requirements". On x86_64 it runs and nothing is
+          # needed. On ARM, `local.properties` has to name a native CMake with
+          # `cmake.dir` — and it must be 3.22.x, because React Native declares a
+          # minimum that 4.x rejects and 3.31 does not find `ReactAndroid` where
+          # the prefab puts it. 25.05 ships neither, and 3.22.1 does not compile
+          # against its curl, so that is unfinished: `.#apk` is x86_64 for now,
+          # which is what CI is.
+          #
+          # Not a fixed-output derivation, and it cannot be one: an APK is a zip
+          # and a signed one at that, so it is not reproducible byte-for-byte.
+          # Everything it needs from the network is fetched by a derivation that
+          # *is* — `expoModules` and `gradleDeps` — and the build itself runs
+          # offline.
           # The gradle half of the build, done once and carried — the same
           # trick as `thirdParty` for cargo, and for the same reason: nix
           # caches a derivation's output whole, and gradle starts every
