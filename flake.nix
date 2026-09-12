@@ -635,7 +635,7 @@
             # goes stale, nix prints the right one and it goes here.
             outputHash = {
               aarch64-linux = "sha256-Lo8p11fynW14olU8Sz5HAPQFrwtEe/xS/4t5v9qj5Hc=";
-              x86_64-linux = "sha256-nVY9X+FkNSvMlDy8oi/7AebhqpXiCc6V/aSLytq/RgQ=";
+              x86_64-linux = "sha256-3UwRndffuG69u3tMHFEDFo+FIqVNJbF1U1NvHpCVY6U=";
             }.${system} or (throw "no node_modules hash recorded for ${system}");
           };
 
@@ -734,6 +734,17 @@
 
               echo "--- the native project"
               cd clients/expo
+              # Which app this is. `app.config.js` reads it: a release build
+              # is `dev.harken.app`, "Harken"; anything else is
+              # `dev.harken.app.dev`, "Harken Dev", with a banner on the
+              # icon — so both can be installed at once. `variant` is the
+              # APK derivation's attribute; the state layer has none and gets
+              # the development identity, which is the one it is restored
+              # into.
+              case "''${variant:-debug}" in
+                release) export APP_VARIANT=production ;;
+                *)       export APP_VARIANT=development ;;
+              esac
               ./node_modules/.bin/expo prebuild --platform android --no-install
 
               # The ABIs gradle compiles C++ for, which the template sets to all

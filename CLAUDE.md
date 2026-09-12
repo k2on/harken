@@ -261,6 +261,35 @@ Native's gradle plugin, Expo's module plugin and the dev-launcher's are gradle
 projects outside any `android/`, and a rule that only looked there left their
 compiled state behind — the build cache was covering for it.
 
+## Two apps: `dev.harken.app.dev` beside `dev.harken.app`
+
+A development build and a release build are different apps to Android, so
+both can be installed at once. `clients/expo/app.config.js` decides which from
+`APP_VARIANT`: `production` is `dev.harken.app`, "Harken", the icon as drawn;
+anything else is `dev.harken.app.dev`, "Harken Dev", with a DEV banner across
+the bottom of the icon. The nix build exports it from the APK derivation's
+`variant` before `expo prebuild`, `eas.json` sets it per profile, and a bare
+`expo start` gets development, which is the only thing it can be pointed at.
+
+The banner is drawn by `app-icon-badge`, but not by its config plugin.
+`plugins/with-dev-badge.js` calls the package's `addBadge` from a dangerous
+mod and waits for each file to be readable before pointing the config at it.
+The package's own plugin starts the drawing and returns at once — the promise
+is dropped, `addBadge` does not await its write, and the iOS branch writes to
+the same path as the flat icon at the same time — which showed up here as a
+Jimp `parseBitmap` error and, once, a prebuild that lost `android.package` and
+made a `com.harkendev`. A sandboxed build gets no second try.
+
+Two things the plugin needs and does not say: the adaptive foreground must be
+1024px, because the adaptive overlay is drawn at that size and composited at
+the origin, so on the 512px original the banner lands outside the canvas and
+nothing appears — hence `android-icon-foreground-1024.png`, used by the
+development variant only. And `ios.icon` is `assets/expo.icon`, a directory in
+Apple's layered format that nothing can draw on, so the development variant
+drops it and iOS takes the badged flat icon. The legacy launcher icon that
+Android 7 draws is composed from the foreground's centre and loses the banner;
+everything from Android 8 shows it.
+
 ## Never write domain logic in TypeScript
 
 Every mutation and every query is in `crates/harken/src/functions.rs`, written
