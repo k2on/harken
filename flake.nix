@@ -810,6 +810,26 @@
           # the dependencies or this app that is slow.
           androidDeps = androidEngine.thirdParty;
 
+          # …and the same layer with the guest's loader narrating.
+          #
+          # This is the layer that fails under emulation, and it fails in a way
+          # `.#ndk-check` cannot reproduce: that check drives the same clang
+          # through the same wrapper and passes, so the binary is fine and the
+          # *context* is not. cargo sets `LD_LIBRARY_PATH` when it runs a build
+          # script — the target's `deps` and the rust toolchain's own `lib` —
+          # and `libsqlite3-sys` hands that environment to clang. Which is why
+          # running the failing command by hand afterwards proves nothing: by
+          # hand is the case that works.
+          #
+          # So ask from inside. `LD_DEBUG=libs,versions` in the guest prints
+          # every path it tries and every version check it makes, and the
+          # emulated compiles are few — clang is reached for the SQLite
+          # amalgamation and little else, while rustc runs natively.
+          androidDeps-debug = androidDeps.overrideAttrs (_: {
+            name = "harken-android-deps-debug";
+            NDK_EMULATION_DEBUG = "1";
+          });
+
           # The Android build, in two variants — see `apk-release` below.
           #
           # Everything Google publishes for Android is a `linux-x86_64` binary
