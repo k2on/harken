@@ -60,6 +60,7 @@ just web          # …a browser peer, at localhost:8080
 just bindings     # regenerate the Expo client's TS from crates/harken
 just expo-android # …and a phone. Needs `nix develop .#android`.
 nix build .#apk   # …or the whole APK, toolchain and all
+nix build .#ndk-check       # …does the NDK run here at all? Twenty seconds
 nix build .#apk-release     # …the release build (debug-signed, see below)
 ./scripts/gradle-deps.sh    # re-record gradle's Maven graph (or the CI button)
 ```
@@ -118,6 +119,21 @@ It did, in three places, and each one was pinned differently:
   writes it whenever it runs under this tree, and it comes out carrying the
   engine's seven crates because `[patch]` applies to whatever cargo resolves
   there. It is a local artifact wearing upstream's name.
+
+So there is no `__noChroot` anywhere, which is the point of having done it.
+What a sandbox forbids is an *ordinary* derivation reaching outside itself — a
+fixed-output one still gets the network, which is how the vendoring fetches —
+and what it therefore catches is a build quietly using the machine it happens
+to be running on. It has caught four: a hardcoded compiler triple that meant
+nothing was set on the runner, `/usr/bin/env` in npm's shims, the aapt2 below,
+and the NDK's own emulator. Each of them worked on every machine anyone had
+tried.
+
+It also buys a stable path. A sandboxed build runs at `/build` everywhere and
+an impure one somewhere ending in a pid and a random number, and gradle's task
+history and ninja's `.cxx` both record absolute paths — so native build state
+can be carried between derivations, which is worth about three minutes a
+module.
 
 ## Gradle is 9.3.1, and the version is not negotiable
 
@@ -226,28 +242,51 @@ so the Expo screen just writes `♥`.
 
 ## Traps in the client toolchain
 
-- **The NDK is x86_64-only**, but that is not the same as unusable on ARM.
-  Google publishes no aarch64-linux host toolchain, so the NDK's `clang` is an
-  x86_64 binary — and with `binfmt_misc` registered for x86_64 and qemu-user
-  installed, an ARM Linux box runs it anyway, transparently, including inside a
-  nix build sandbox. This file said it "cannot execute", which was true of a
-  machine without that and is what `.#apk` now depends on:
+- **The NDK is x86_64-only, and the build brings its own qemu.** Google
+  publishes no aarch64-linux host toolchain, so the NDK's `clang` is an x86_64
+  binary. `mkSdk` answers that by wrapping every x86_64 executable in the SDK
+  in a pinned `qemu-x86_64` from nixpkgs, so `nix build .#apk` needs nothing
+  registered on the machine. iOS still needs Xcode, so a macOS runner.
+
+  It used to rely on the host's `binfmt_misc` instead, which is worth knowing
+  because the failure is so unhelpful. Under `binfmt_misc` the kernel invokes
+  qemu, so nothing in the build gets to say how — and inside a sandbox the
+  emulated clang loads the wrong libc and dies with
 
   ```
-  cat /proc/sys/fs/binfmt_misc/x86_64-linux   # should say "enabled"
+  clang: symbol lookup error: undefined symbol: ceilf, version GLIBC_2.2.5
   ```
 
-  On NixOS: `boot.binfmt.emulatedSystems = [ "x86_64-linux" ];` and nix's
-  `extra-platforms`. iOS still needs Xcode, so a macOS runner.
+  `undefined symbol` rather than `cannot open shared object file`: a libm *was*
+  found, and it was the wrong one. `nix build .#ndk-check` asks that question in
+  twenty seconds instead of twenty minutes.
+- **An emulated compiler has to be told where it lives.** clang reads its own
+  path to find its resource headers, its sysroot and the `ld.lld` it execs, and
+  under emulation `/proc/self/exe` does not tell it — so `argv[0]` is all it
+  has. The wrappers pass their own full path for exactly this. Given a bare
+  name instead, clang searches `$PATH`, fails, and settles on the working
+  directory:
+
+  ```
+  InstalledDir: /nix/var/nix/builds/nix-build-ndk-check…
+  ```
+
+  and finds none of those things. It still compiles a file that includes
+  nothing, which is why `.#ndk-check` includes a header and links a shared
+  object rather than asking for `--version`.
+
+  Linking is the other half. A process already inside qemu cannot exec a
+  foreign binary on its own, so the linker only works because clang finds *the
+  wrapper* rather than the bare x86_64 `ld.lld` — which is the same fact from
+  the other side.
 - **`nix develop .#android` cannot run the NDK's clang, and a plain shell can.**
   Under emulation the same command fails inside the devshell with
   `undefined symbol: ceil, version GLIBC_2.2.5` and succeeds outside it — and
   *replaying the devshell's entire environment* in a plain shell also succeeds,
   so it is not a variable. Something about the process `nix develop` creates
-  upsets qemu's loader. Not chased further, because a `nix build` runs in a
-  builder sandbox rather than a devshell, and the sandbox is fine; noted so the
-  next person does not spend the afternoon on it. Use `nix build .#apk`, or a
-  plain shell with the toolchain on `PATH`.
+  upsets qemu's loader. This is the devshell only: it brings no SDK, so the one
+  on your `PATH` is unwrapped and it is the kernel running qemu again. Use
+  `nix build .#apk`, which supplies its own, or a plain shell.
 - **A host build can pick up the NDK's compiler by accident.** `cargo-ndk` sets
   `CC` for its child, which cc-rs also consults for *host* artifacts — and
   `petros-sql` is a proc macro that links SQLite, so an Android build compiles
@@ -309,13 +348,24 @@ so the Expo screen just writes `♥`.
   none of this arises there.
 - **AGP brings its own aapt2, and it is not the SDK's.** It resolves
   `com.android.tools.build:aapt2` from Maven and unpacks a raw Google binary,
-  which fails on NixOS with "Daemon startup failed" for the same reason
-  everything else Google ships does. The SDK's copy *is* patched and does run,
-  and AGP takes an override for exactly this:
+  which wants `/lib64/ld-linux-x86-64.so.2` and reports its absence as
+
+  ```
+  AAPT2 aapt2-8.12.0-13700139-linux Daemon #0: Daemon startup failed
+  ```
+
+  naming neither the file nor the loader. The SDK's copy *is* patched and does
+  run, and AGP takes an override for exactly this:
 
   ```
   android.aapt2FromMavenOverride=<sdk>/build-tools/36.0.0/aapt2
   ```
+
+  This file described that trap for a long time while the property was not
+  actually set, and the build was green — because an Ubuntu runner *does* have
+  that loader, so under `__noChroot` Google's unpatched binary ran and nothing
+  said which aapt2 was compiling the resources. Sandboxing the build is what
+  asked the question. A documented trap is not a fixed one.
 
   The pattern is worth stating once: **anything Google's build downloads for
   itself is unpatched and will not run; anything nixpkgs packaged is patched and
