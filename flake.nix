@@ -838,6 +838,32 @@
                 cp -a ${restore}/gradle-home $GRADLE_USER_HOME
                 cp -a ${restore}/tree/. .
                 chmod -R u+w $GRADLE_USER_HOME android node_modules
+
+                # Put the timestamps back. The store set them all to 1, and
+                # AGP's C++ configure compares them for equality against what
+                # it recorded — see the layer's install phase for the whole
+                # story. Python rather than `touch`, because this is several
+                # hundred thousand files and a process per file is minutes.
+                python3 - "${restore}/mtimes" "$GRADLE_USER_HOME" <<'PY'
+                import os, sys
+                manifest, gradle_home = sys.argv[1], sys.argv[2]
+                n = 0
+                with open(manifest) as f:
+                    for line in f:
+                        stamp, _, path = line.rstrip("\n").partition("\t")
+                        secs, _, frac = stamp.partition(".")
+                        ns = int(secs) * 10**9 + int((frac + "000000000")[:9])
+                        if path.startswith("tree/"):
+                            path = path[len("tree/"):]
+                        elif path.startswith("gradle-home/"):
+                            path = os.path.join(gradle_home, path[len("gradle-home/"):])
+                        try:
+                            os.utime(path, ns=(ns, ns), follow_symlinks=False)
+                            n += 1
+                        except FileNotFoundError:
+                            pass
+                print(f"restored {n} timestamps")
+                PY
               ''}
 
               # Leave the shell in the gradle project. The update script runs
@@ -1133,13 +1159,27 @@
           # log. A path literal is its own store path and moves only when that
           # file does.
           gradleStateSrc = pkgs.runCommand "harken-workspace" { } ''
-            mkdir -p $out/clients/expo
-            cp -a ${./clients/expo/package.json} $out/clients/expo/package.json
-            cp -a ${./clients/expo/app.json} $out/clients/expo/app.json
-            cp -a ${./clients/expo/bun.lock} $out/clients/expo/bun.lock
-            cp -a ${./clients/expo/tsconfig.json} $out/clients/expo/tsconfig.json
-            cp -a ${./clients/expo/metro.config.js} $out/clients/expo/metro.config.js
-            cp -a ${./clients/expo/assets} $out/clients/expo/assets
+            mkdir -p $out/clients
+            cp -a ${pkgs.lib.cleanSourceWith {
+              name = "harken-expo-config";
+              src = ./clients/expo;
+              # The Expo project *minus* what changes per commit or belongs to
+              # another derivation. An exclusion list rather than a list of
+              # files, so a new config file — a `babel.config.js`, a
+              # `react-native.config.js` — is an input the day it appears,
+              # instead of the day someone remembers to name it here. The
+              # cost of a forgotten exclusion is one extra layer build; the
+              # cost of a forgotten inclusion was a layer that quietly
+              # stopped matching the build it was meant to serve.
+              filter = path: _type:
+                let rel = pkgs.lib.removePrefix (toString ./clients/expo + "/") (toString path);
+                in !(builtins.elem rel [
+                  "src" "modules"                        # the app, and the engine's module
+                  "node_modules" "android" "ios" ".expo" # generated
+                  "README.md" "LICENSE"                  # prose
+                  "eas.json" "scripts" "ubrn-Cargo.lock" # EAS, and the generator's own build
+                ]);
+            }} $out/clients/expo
             chmod -R u+w $out/clients/expo
 
             # A route, because `app.json` asks for `expo-router` and its config
@@ -1153,16 +1193,24 @@
               > $out/clients/expo/src/app/index.tsx
           '';
 
-          gradleState = pkgs.stdenv.mkDerivation (finalAttrs: androidAttrs // {
+          gradleState = pkgs.stdenv.mkDerivation (androidAttrs // {
             name = "harken-gradle-state";
             src = gradleStateSrc;
-            variant = "debug";
 
-            mitmCache = gradle9.fetchDeps {
-              pkg = finalAttrs.finalPackage;
-              data = ./gradle-deps.json;
-            };
-            gradleUpdateTask = "assembleDebug assembleRelease";
+            # The APK's mirror, not a second recording of it. `fetchDeps`
+            # names its derivation after `pkg`, so giving it this package made
+            # a `harken-gradle-state-deps` beside `harken-debug-apk-deps`:
+            # the same 1642 artifacts materialised twice, and only one of the
+            # two rooted by the workflow — run 60 built the second and the
+            # save deleted it again.
+            mitmCache = apk-debug.mitmCache;
+
+            # Nothing here is a program to be fixed up, and the fixup was
+            # doing real work: 980 `patchelf --shrink-rpath` calls over the
+            # Android objects in `.cxx` and `build/`, eighty seconds of it.
+            # Had any of them carried an rpath the file would have changed
+            # under gradle, which hashes its outputs.
+            dontFixup = true;
 
             configurePhase = prepareAndroid { };
 
@@ -1196,25 +1244,48 @@
               mkdir -p $out/tree
               cd $NIX_BUILD_TOP/harken-workspace/clients/expo
 
+              # Every `build`, `.cxx` and `.gradle` directory that belongs to
+              # a gradle project — decided by the build file beside it, not
+              # by where it lives. React Native's gradle plugin, Expo's module
+              # plugin and the dev-launcher's are gradle projects that do not
+              # live under an `android/`, and a rule that only looked there
+              # left their compiled state behind; a `build/` in a JavaScript
+              # package is source, and has no `build.gradle` next to it.
               find android node_modules -type d \
                 \( -name build -o -name .cxx -o -name .gradle \) \
                 -prune -print0 |
                 while IFS= read -r -d ''' d; do
-                  case "$d" in
-                    # `build` in a JavaScript package is a source directory
-                    # that happens to share the name. Only gradle projects
-                    # have one worth keeping, and they all live under
-                    # `android/`.
-                    node_modules/*) case "$d" in */android/*) ;; *) continue ;; esac ;;
-                  esac
+                  p=$(dirname "$d")
+                  is_gradle_project=
+                  for f in build.gradle build.gradle.kts settings.gradle settings.gradle.kts; do
+                    [ -e "$p/$f" ] && is_gradle_project=1
+                  done
+                  [ -n "$is_gradle_project" ] || continue
                   mkdir -p "$out/tree/$(dirname "$d")"
                   cp -a "$d" "$out/tree/$d"
                 done
 
               cp -a "$GRADLE_USER_HOME" $out/gradle-home
 
+              # The timestamps, before the store erases them.
+              #
+              # nix sets every file in an output to mtime 1 when it registers
+              # the path, and `cp -a` from the store faithfully carries that
+              # 1 into the next build. Gradle does not mind — it hashes
+              # content — but AGP's C++ configure does not hash: its
+              # fingerprint is (lastModified, length) per input, compared for
+              # equality, and a mismatch is a reconfigure. So every `.cxx`
+              # carried here was judged changed, CMake ran again for every
+              # library and both ABIs, and ninja rebuilt what a fresh prefab
+              # directory made newer than its objects: five minutes of the
+              # native build, paid on a warm run, with 593 tasks up to date
+              # around it. Recorded here at nanosecond precision and replayed
+              # after the copy, the fingerprints compare equal again.
+              ( cd $out && find tree gradle-home -type f -printf '%T@\t%p\n' ) > $out/mtimes
+
               echo "--- carried:"
               du -sh $out/tree $out/gradle-home
+              wc -l $out/mtimes
               runHook postInstall
             '';
           });

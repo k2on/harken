@@ -190,8 +190,24 @@ Three things that are easy to get wrong here, two of which cost a run each:
   `does not contain a Gradle build`. Neither points at indentation. Moving the
   lines "further right" is not enough either: it is a column, not a direction,
   and every line including the `runHook`s has to agree on it.
-- **`buildCMakeDebug` reports `EXECUTED` even when it does nothing.** The task
-  runs; ninja finds no work. Read the wall clock, not the task outcome.
+- **The store erases timestamps, and AGP's C++ configure compares them for
+  equality.** nix sets every file in an output to mtime 1 when it registers
+  the path, so `cp -a` from the layer carries a 1 into the next build. Gradle
+  hashes content and does not care; AGP's configure fingerprint is
+  `(lastModified, length)` per input, compared with `!=`, and a mismatch is a
+  reconfigure — after which a fresh prefab directory is newer than every
+  object and ninja rebuilds the lot. Run 63 had 593 tasks up to date and
+  still spent five minutes in CMake, with clang's warnings in the log to
+  prove it was compiling. The layer records every carried file's mtime at
+  nanosecond precision before the store gets it, and the build replays them
+  after the copy.
+- **`buildCMakeDebug` reports `EXECUTED` whether or not ninja did anything.**
+  The task outcome says nothing; a `C/C++:` compiler warning in the log, or
+  thirty seconds after `configureCMakeDebug`, says CMake ran.
+- **The layer must not be fixed up.** stdenv's fixup ran `patchelf` over 980
+  Android objects in the carried `.cxx` and `build/` directories, eighty
+  seconds a build, and would have changed any that carried an rpath under
+  gradle's content hashes. `dontFixup = true`.
 
 A `.tsx` edit, a mutation, or a change to this file rebuilds the APK and not the
 layer, which is the case worth being fast. Moving `bun.lock`, `app.json`,
@@ -220,10 +236,20 @@ at all. That is worth remembering as a shape: a layer whose inputs are too wide
 is indistinguishable from a layer that does not work, because both present as
 "the step got longer". The task counts tell them apart and the clock does not.
 
-`gradleStateSrc` names its six files individually for that reason. Written as
-`${src}/clients/expo/…` it takes the whole cleaned repository as an input, so
-every commit rebuilds it, and the commit that only touched this file — chosen
-*because* it touches nothing the layer reads — rebuilt it too.
+`gradleStateSrc` is `clients/expo` minus an exclusion list for that reason.
+Written as `${src}/clients/expo/…` it takes the whole cleaned repository as an
+input, so every commit rebuilds it. Written as six named files it was correct
+until the seventh: a new `babel.config.js` or `react-native.config.js` would
+have been read by the build and unknown to the layer until someone remembered
+to list it. Excluding what changes per commit — `src`, `modules`, the prose —
+makes a new config file an input the day it appears, and a forgotten exclusion
+costs one extra layer build rather than a layer that quietly stops matching.
+
+The carried directories are found the same way: every `build`, `.cxx` and
+`.gradle` whose parent has a gradle build file, wherever it lives. React
+Native's gradle plugin, Expo's module plugin and the dev-launcher's are gradle
+projects outside any `android/`, and a rule that only looked there left their
+compiled state behind — the build cache was covering for it.
 
 ## Never write domain logic in TypeScript
 
