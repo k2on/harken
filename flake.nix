@@ -635,6 +635,24 @@
 
               set -x
               ${prebuilt}/bin/clang --version || diagnose
+
+              # The same, with every PLT entry resolved at startup instead of
+              # at first call — and this is the half that catches things.
+              #
+              # Lazy binding means a symbol that cannot be resolved costs
+              # nothing until something calls it, so this check passed on ARM
+              # while the real build failed: `--version` and a one-line compile
+              # never reach `ceilf`, and an `-O3` pass over the SQLite
+              # amalgamation does. The failure arrives at
+              #
+              #   transferring control: …/clang
+              #   …/clang: error: symbol lookup error: undefined symbol:
+              #   ceilf, version GLIBC_2.2.5 (fatal)
+              #
+              # which is clang running, not clang loading. `LD_BIND_NOW` turns
+              # that back into a load-time question, so the check stops
+              # depending on which code path a compile happens to take.
+              LD_BIND_NOW=1 ${prebuilt}/bin/clang --version || diagnose
               ${prebuilt}/bin/clang --target=aarch64-linux-android26 \
                 -shared -o a.so a.c || diagnose
               ${prebuilt}/bin/llvm-nm -D a.so | grep ' T f'
