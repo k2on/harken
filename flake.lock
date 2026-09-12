@@ -1,5 +1,102 @@
 {
   "nodes": {
+    "android": {
+      "inputs": {
+        "flake-parts": [
+          "petros-js",
+          "flake-parts"
+        ],
+        "import-tree": [
+          "petros-js",
+          "import-tree"
+        ],
+        "nixpkgs": [
+          "petros-js",
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1789249567,
+        "narHash": "sha256-URW4Z8JeFWNnm5u5gRzXZVVvEq9PZc5Iw7EJ22qRXSk=",
+        "owner": "k2on",
+        "repo": "android.nix",
+        "rev": "58c995f3a73c9bddb0c1a6f9dbce8ae261037d43",
+        "type": "github"
+      },
+      "original": {
+        "owner": "k2on",
+        "repo": "android.nix",
+        "type": "github"
+      }
+    },
+    "expo": {
+      "inputs": {
+        "android": [
+          "petros-js",
+          "android"
+        ],
+        "flake-parts": [
+          "petros-js",
+          "flake-parts"
+        ],
+        "import-tree": [
+          "petros-js",
+          "import-tree"
+        ],
+        "nixpkgs": [
+          "petros-js",
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1789249644,
+        "narHash": "sha256-8WyngkecEtyWaq1r9xD1Mp8AHap3KgreaMwUmOdwFFY=",
+        "owner": "k2on",
+        "repo": "expo.nix",
+        "rev": "adedf265bf23e62f82da0cd01a94cbd38b3ea0e1",
+        "type": "github"
+      },
+      "original": {
+        "owner": "k2on",
+        "repo": "expo.nix",
+        "type": "github"
+      }
+    },
+    "flake-parts": {
+      "inputs": {
+        "nixpkgs-lib": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1788450739,
+        "narHash": "sha256-glZLQlzIn1fXH6PazR2iUmTo7kzzyYSshrWhLS9TqCU=",
+        "owner": "hercules-ci",
+        "repo": "flake-parts",
+        "rev": "31729ca8cbdb4fa927b34e5f4353e6a83f39e993",
+        "type": "github"
+      },
+      "original": {
+        "owner": "hercules-ci",
+        "repo": "flake-parts",
+        "type": "github"
+      }
+    },
+    "import-tree": {
+      "locked": {
+        "lastModified": 1788467110,
+        "narHash": "sha256-ljEMTXP/rH0tOvDzc9gzwww6KcHRPRnEHzd9lK48V7s=",
+        "owner": "vic",
+        "repo": "import-tree",
+        "rev": "eb1b52eaecc57f7c136d07ae8a93e724dfecac46",
+        "type": "github"
+      },
+      "original": {
+        "owner": "vic",
+        "repo": "import-tree",
+        "type": "github"
+      }
+    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1789009968,
@@ -17,13 +114,26 @@
       }
     },
     "petros": {
-      "flake": false,
+      "inputs": {
+        "flake-parts": [
+          "flake-parts"
+        ],
+        "import-tree": [
+          "import-tree"
+        ],
+        "nixpkgs": [
+          "nixpkgs"
+        ],
+        "rust-overlay": [
+          "rust-overlay"
+        ]
+      },
       "locked": {
-        "lastModified": 1789188634,
-        "narHash": "sha256-L234NUq3i3pgtQT4ZYt/JQOq1BaOLnwKx2HB4sS/ims=",
+        "lastModified": 1789249656,
+        "narHash": "sha256-pJN2pVG4pygTuqzInF+2QBIU44leAzIFiugnBRZg3Xo=",
         "owner": "k2on",
         "repo": "petros",
-        "rev": "9b7776661618d1b744a62d61b05c90e6c9b0acb5",
+        "rev": "c15b6018ef3b44a8d2d7aaf6e95333474bf2b2e0",
         "type": "github"
       },
       "original": {
@@ -32,10 +142,44 @@
         "type": "github"
       }
     },
+    "petros-js": {
+      "inputs": {
+        "android": "android",
+        "expo": "expo",
+        "flake-parts": [
+          "flake-parts"
+        ],
+        "import-tree": [
+          "import-tree"
+        ],
+        "nixpkgs": [
+          "nixpkgs"
+        ],
+        "petros": [
+          "petros"
+        ]
+      },
+      "locked": {
+        "lastModified": 1789249684,
+        "narHash": "sha256-10Hvp0BBGB7V1225VV9Tve8cW6ORvW1Sdkk9kLwMvxc=",
+        "owner": "k2on",
+        "repo": "petros-js",
+        "rev": "ac5f942cec05fcf5bbee8eaf6675652521c3d8ba",
+        "type": "github"
+      },
+      "original": {
+        "owner": "k2on",
+        "repo": "petros-js",
+        "type": "github"
+      }
+    },
     "root": {
       "inputs": {
+        "flake-parts": "flake-parts",
+        "import-tree": "import-tree",
         "nixpkgs": "nixpkgs",
         "petros": "petros",
+        "petros-js": "petros-js",
         "rust-overlay": "rust-overlay"
       }
     },

@@ -38,6 +38,7 @@ clients/iced/            the desktop and browser client
 clients/expo/            the phone client; src/ is UI and a socket, nothing else
   modules/harken-native/ the turbo module — generated, gitignored, not authored
 scripts/mutators.sh      builds the module and its TypeScript types
+modules/                 the flake, one flake-parts module per file (see below)
 docs/decisions.md        what is true because this ships to a phone
 ```
 
@@ -69,6 +70,44 @@ nix build .#apk-release     # …the release build (debug-signed, see below)
 be checked out beside this one. `nix build .#mutators` does not: it builds
 `petros-codegen` from the engine `flake.lock` pins, which is what the Android
 build and the checks use.
+
+## The flake is nine files, and only one of them knows about Android
+
+`flake.nix` names inputs and nothing else: it is flake-parts over
+`import-tree ./modules`, so every file under `modules/` is a module and adding
+one is creating a file. What they are:
+
+```
+modules/pkgs.nix       nixpkgs with the Rust overlay; `toolchain`, `rustPlatform`
+modules/sources.nix    the cleaned tree, the narrow engine tree, the vendored deps
+modules/rust.nix       harken-server, harken-iced, harken-web
+modules/checks.nix     check-fmt, check-clippy, check-tests
+modules/mutators.nix   the wasm module and its TypeScript, via the engine's lib
+modules/android.nix    the phone: one call to `petrosJs.mkApp`
+modules/devshells.nix  the two shells
+modules/nixos.nix      `services.harken`
+modules/imports.nix    the two libraries below, and `systems.nix` the rest
+```
+
+Everything reusable about building for a phone lives elsewhere and arrives
+through two inputs. `petros` brings the engine's nix — the crate list, the
+`[patch]` that makes the lockfile resolvable, the code generator.
+`petros-js` brings `ubrn`, the two-layer cross-compile and `mkApp`, and
+carries `expo.nix` (node_modules, `expo prebuild`, `APP_VARIANT`, the gradle
+state layer's source) and `android.nix` (the SDK, gradle, the Maven
+recording, the layer mechanism, emulation) as inputs of its own. Each of
+those flakes follows the one above it for nixpkgs, and the top of the chain
+is this file — so `flake.lock` has one nixpkgs, and the SDK is composed from
+the same one as the server. `modules/android.nix` is the whole of what this
+app has to say about Android: its files, its hashes, which crates are its
+own. Read the three libraries' `README.md`s for how the pieces work; the
+traps below are still true and still worth knowing, they are just fixed in
+those repositories now.
+
+The package names are unchanged — `apk`, `apk-debug`, `apk-release`,
+`gradleState`, `androidEngine`, `androidDeps`, `expoModules`, `ubrn`,
+`androidSdk`, `gradle9`, `mutators`, `ndk-check`, the three checks — because
+the workflows gc-root them by name.
 
 ## `just` is for a laptop; `nix flake check` is what CI runs
 
@@ -189,7 +228,7 @@ same reason the cargo layers use it.
 
 Three things that are easy to get wrong here, two of which cost a run each:
 
-- **`androidAttrs` is shared rather than duplicated.** `PATH` decides which
+- **The build attributes are shared rather than duplicated.** `PATH` decides which
   `ninja` and which compiler CMake finds, and CMake writes those paths into
   `build.ninja`. A layer configured with a different `PATH` produces state the
   next build silently cannot use.
@@ -258,7 +297,7 @@ at all. That is worth remembering as a shape: a layer whose inputs are too wide
 is indistinguishable from a layer that does not work, because both present as
 "the step got longer". The task counts tell them apart and the clock does not.
 
-`gradleStateSrc` is `clients/expo` minus an exclusion list for that reason.
+The layer's source is `clients/expo` minus an exclusion list for that reason.
 Written as `${src}/clients/expo/…` it takes the whole cleaned repository as an
 input, so every commit rebuilds it. Written as six named files it was correct
 until the seventh: a new `babel.config.js` or `react-native.config.js` would
