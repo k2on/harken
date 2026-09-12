@@ -310,10 +310,23 @@ so the Expo screen just writes `♥`.
   architecture, same wrappers, same pinned qemu — and `.#androidDeps` builds
   there in 816s. The only variable left is the page size.
 
-  Fedora Asahi ships a 4 KiB kernel beside its 16 KiB default and points x86
-  emulation at it; that is the fix, and no flag is a substitute. Failing that,
-  build the x86_64 half somewhere x86_64 — CI does, and a `builders` entry
-  would let a laptop offload just those derivations.
+  Fedora Asahi's default is `kernel-16k` and its 4 KiB `kernel` is still
+  packaged. FEX will not run on a 16 KiB host at all — it starts a 4 KiB
+  microVM (`muvm`) rather than try — which is the same constraint arrived at
+  from the other end. Booting the 4 KiB kernel is the fix here, and no flag is
+  a substitute.
+
+  Offloading is the other way out, and not the obvious one. `.#apk` on an ARM
+  machine is an *aarch64* derivation that runs x86_64 code inside itself, so a
+  remote x86_64 builder will never be offered it: nix dispatches on a
+  derivation's `system`, and this one is native. What offloads is the x86_64
+  build of the same expression —
+
+  ```
+  nix build .#packages.x86_64-linux.apk --builders 'ssh://box x86_64-linux'
+  ```
+
+  which is what CI runs, and where nothing is emulated at all.
 - **`.#ndk-check` answers a narrower question than it looks like.** It runs the
   NDK's clang, compiles a file that includes a header, and links a shared
   object — which is enough to catch a toolchain that cannot start, find its
