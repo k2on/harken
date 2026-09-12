@@ -204,6 +204,16 @@ Three things that are easy to get wrong here, two of which cost a run each:
 - **`buildCMakeDebug` reports `EXECUTED` whether or not ninja did anything.**
   The task outcome says nothing; a `C/C++:` compiler warning in the log, or
   thirty seconds after `configureCMakeDebug`, says CMake ran.
+- **A configuration-time cache in the carried tree is a list of what the
+  layer saw, not what the build has.** React Native's settings plugin keeps
+  the output of `react-native config` in
+  `android/build/generated/autolinking/` and reuses it while the lockfiles'
+  hashes match. The layer wrote it without `harken-native`; the APK build has
+  the same lockfiles; so seven runs of APKs linked the layer's list and
+  carried no engine at all — 642 tasks where a build without the layer has
+  680, `mergeDebugNativeLibs` UP-TO-DATE, and not one `:harken-native:` task.
+  The restore deletes that directory. Read the task count against 680 and
+  look for `:harken-native:` before believing any layered build.
 - **The layer must not be fixed up.** stdenv's fixup ran `patchelf` over 980
   Android objects in the carried `.cxx` and `build/` directories, eighty
   seconds a build, and would have changed any that carried an rpath under

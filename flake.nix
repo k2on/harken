@@ -839,6 +839,20 @@
                 cp -a ${restore}/tree/. .
                 chmod -R u+w $GRADLE_USER_HOME android node_modules
 
+                # Not this one. React Native's settings plugin caches the
+                # output of `react-native config` — the list of libraries to
+                # link — in `android/build/generated/autolinking/`, and reuses
+                # it whenever the lockfiles' hashes match. The layer wrote
+                # that list without `harken-native`, because the module is
+                # not in the layer; the lockfiles here are the same files; so
+                # every APK built against the layer linked the same list and
+                # carried no engine at all. 642 tasks against the 680 of a
+                # build without the layer, `:app:mergeDebugNativeLibs`
+                # UP-TO-DATE, and not one `:harken-native:` task in the log —
+                # for seven runs. Deleting the cache costs one `react-native
+                # config`, about two seconds.
+                rm -rf android/build/generated/autolinking
+
                 # Put the timestamps back. The store set them all to 1, and
                 # AGP's C++ configure compares them for equality against what
                 # it recorded — see the layer's install phase for the whole
