@@ -1,9 +1,9 @@
 /**
- * Where you say who you are and which server to join.
+ * Where you say which server to join, and sign in to it.
  *
  * Whatever you said last time, because a peer that forgets its server on every
  * launch makes you retype a LAN address before you can look at your own data.
- * `@petros/client` keeps that; this screen only asks.
+ * The login is remembered too, so signing in is once per server per phone.
  *
  * The default, the first time and only then, is guessed from whatever host
  * Metro is being served from, because that is almost always the machine running
@@ -11,14 +11,19 @@
  * release build there is no Metro and the guess is worth little, which is the
  * other half of why the answer is remembered.
  *
+ * Who you are is not asked here: the server says, after you sign in. Against
+ * `nix run .#serve` the sheet that opens asks for a name, because that server
+ * has no provider and takes your word for it.
+ *
  * "use offline" is a real answer rather than a failed connection: it opens the
  * library with no socket at all, and the pill in there links up when you want.
+ * It needs a login from before, because the library is somebody's.
  */
 
 import { useMemo, useState } from 'react';
 import { router } from 'expo-router';
 import Constants from 'expo-constants';
-import { recallServer, rememberServer } from '@petros/client';
+import type { Login } from '@petros/client';
 import {
   KeyboardAvoidingView,
   Platform,
@@ -30,7 +35,7 @@ import {
   View,
 } from 'react-native';
 
-import { storage, LAST_ACTOR } from '@/storage';
+import { recallServer, remembered, rememberServer, signIn } from '@/auth';
 import { useTheme } from '@/theme';
 
 const PORT = 8787;
@@ -39,49 +44,46 @@ function guessServer(): string {
   const fromMetro = Constants.expoConfig?.hostUri?.split(':')[0];
   const fromBrowser =
     typeof location !== 'undefined' && location.hostname ? location.hostname : undefined;
-  return `ws://${fromMetro ?? fromBrowser ?? 'localhost'}:${PORT}`;
+  return `http://${fromMetro ?? fromBrowser ?? 'localhost'}:${PORT}`;
 }
 
 export default function Connect() {
   const theme = useTheme();
-  const [user, setUser] = useState(() => storage.get(LAST_ACTOR) ?? 'phone');
-  // Read once, for the peer this device was last used as. It does not follow
-  // the name field as you type: a server appearing and disappearing under the
-  // cursor is worse than one that is occasionally the wrong guess.
-  const [server, setServer] = useState(() => {
-    const remembered = recallServer(storage, storage.get(LAST_ACTOR) ?? 'phone');
-    // `null` is a peer that chose to work alone last time — leave the field
-    // empty and let it choose again. `undefined` has never been asked.
-    if (remembered === null) return '';
-    return remembered ?? guessServer();
-  });
+  const [server, setServer] = useState(() => recallServer() ?? guessServer());
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
 
-  const nameProblem = user.trim() === '' ? 'a peer needs a name' : null;
   const urlProblem = useMemo(
     () =>
-      /^wss?:\/\/[^\s/]+/.test(server.trim())
+      /^https?:\/\/[^\s/]+/.test(server.trim())
         ? null
-        : 'the server should look like ws://host:port',
+        : 'the server should look like http://host:port',
     [server],
   );
-  const problem = nameProblem ?? urlProblem;
+  // Read as you type, so the button says who you would continue as.
+  const login: Login | null = useMemo(
+    () => (urlProblem ? null : remembered(server.trim())),
+    [server, urlProblem],
+  );
 
-  /** Remember who, and where — including that "nowhere" was chosen. */
-  const go = (target: string | null) => {
-    const actor = user.trim();
-    storage.set(LAST_ACTOR, actor);
-    rememberServer(storage, actor, target);
-    router.push({ pathname: '/library', params: { user: actor, server: target ?? '' } });
+  const go = (target: string, online: boolean) => {
+    rememberServer(target);
+    router.push({ pathname: '/library', params: { server: target, online: online ? '1' : '0' } });
   };
 
-  const join = () => {
-    if (problem) return;
-    go(server.trim());
-  };
-
-  const offline = () => {
-    if (nameProblem) return;
-    go(null);
+  const join = async () => {
+    if (urlProblem || busy) return;
+    const target = server.trim();
+    setBusy(true);
+    setProblem(null);
+    try {
+      const got = await signIn(target);
+      if (got) go(target, true);
+    } catch (e) {
+      setProblem(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
   };
 
   const s = styles(theme);
@@ -91,26 +93,10 @@ export default function Connect() {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       <ScrollView contentContainerStyle={s.page} keyboardShouldPersistTaps="handled">
-        <Text style={s.title}>petros</Text>
+        <Text style={s.title}>harken</Text>
         <Text style={s.blurb}>
-          An offline-first peer of the same server the terminal and desktop examples join. Add
+          An offline-first peer of the same server the desktop and the browser join. Add
           something here and it appears there; pull the plug and it waits.
-        </Text>
-
-        <Text style={s.label}>who you are</Text>
-        <TextInput
-          style={s.input}
-          value={user}
-          onChangeText={setUser}
-          autoCapitalize="none"
-          autoCorrect={false}
-          placeholder="phone"
-          placeholderTextColor={theme.dim}
-          returnKeyType="next"
-        />
-        <Text style={s.hint}>
-          Stamped on every row this peer authors, and it picks the database — the same thing
-          `nix run .#iced alice` means.
         </Text>
 
         <Text style={s.label}>server</Text>
@@ -121,7 +107,7 @@ export default function Connect() {
           autoCapitalize="none"
           autoCorrect={false}
           keyboardType="url"
-          placeholder={`ws://host:${PORT}`}
+          placeholder={`http://host:${PORT}`}
           placeholderTextColor={theme.dim}
           returnKeyType="go"
           onSubmitEditing={join}
@@ -131,24 +117,41 @@ export default function Connect() {
           device needs the machine&apos;s address on your network.
         </Text>
 
+        {login ? (
+          <Pressable
+            style={({ pressed }) => [s.button, pressed && s.buttonMuted]}
+            onPress={() => go(server.trim(), true)}
+          >
+            <Text style={s.buttonText}>continue as {login.user.name || login.user.id}</Text>
+          </Pressable>
+        ) : null}
+
         <Pressable
-          style={({ pressed }) => [s.button, (problem !== null || pressed) && s.buttonMuted]}
-          disabled={problem !== null}
+          style={({ pressed }) => [
+            login ? s.ghost : s.button,
+            (urlProblem !== null || busy || pressed) && s.buttonMuted,
+          ]}
+          disabled={urlProblem !== null || busy}
           onPress={join}
         >
-          <Text style={s.buttonText}>{problem ?? 'join'}</Text>
+          <Text style={login ? s.ghostText : s.buttonText}>
+            {urlProblem ?? (busy ? 'signing in…' : login ? 'sign in as someone else' : 'sign in')}
+          </Text>
         </Pressable>
 
         {/* Not a fallback for a server that would not answer: no socket is
             opened at all, and nothing retries in the background. Edits are kept
             and offered whenever you link up, which is the pill in the library. */}
-        <Pressable
-          style={({ pressed }) => [s.ghost, (nameProblem !== null || pressed) && s.buttonMuted]}
-          disabled={nameProblem !== null}
-          onPress={offline}
-        >
-          <Text style={s.ghostText}>use offline</Text>
-        </Pressable>
+        {login ? (
+          <Pressable
+            style={({ pressed }) => [s.ghost, pressed && s.buttonMuted]}
+            onPress={() => go(server.trim(), false)}
+          >
+            <Text style={s.ghostText}>use offline</Text>
+          </Pressable>
+        ) : null}
+
+        {problem ? <Text style={s.problem}>{problem}</Text> : null}
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -189,4 +192,5 @@ const styles = (t: ReturnType<typeof useTheme>) =>
       alignItems: 'center',
     },
     ghostText: { color: t.text, fontSize: 16, fontWeight: '600' },
+    problem: { marginTop: 12, fontSize: 13, lineHeight: 18, color: t.accent },
   });

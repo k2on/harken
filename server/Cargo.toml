@@ -11,6 +11,8 @@ axum = "0.8"
 harken = { workspace = true, features = ["storage"] }
 petros.workspace = true
 petros-axum.workspace = true
+# Signing in: the OpenID Connect relying party and the sessions it issues.
+petros-auth = { workspace = true, features = ["server"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal"] }
 # Static files, for serving the browser client from the same port as the socket.
 # `fs` only: no compression, no tracing, no cors — the point is a handler beside

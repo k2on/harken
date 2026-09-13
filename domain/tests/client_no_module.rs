@@ -17,6 +17,7 @@ fn mutating_without_a_module_is_refused_rather_than_ignored() {
     let client = Peer::open(
         dir.join("peer.db").to_string_lossy().into_owned(),
         "alice".into(),
+        None,
     )
     .expect("open");
 

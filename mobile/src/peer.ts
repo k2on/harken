@@ -13,7 +13,7 @@
 import { useEffect, useMemo } from 'react';
 import { AppState } from 'react-native';
 import { Paths } from 'expo-file-system';
-import { held } from '@petros/client';
+import { held, socketUrl, type Login } from '@petros/client';
 import { usePeer as usePetrosPeer } from '@petros/client/react';
 // Aliased: this file's own `Peer` is the hook's return type, and the native
 // one is the object it drives.
@@ -43,6 +43,8 @@ export type Peer = {
   cursor: number;
   pending: number;
   online: boolean;
+  /** Why the server turned this peer away, or null. A sign-in clears it. */
+  denied: string | null;
   note: string;
   mutators: number;
   lastMutationMs: number | null;
@@ -58,14 +60,19 @@ export type Peer = {
   setServer: (next: string | null) => void;
 };
 
-/** Where this peer's database lives. One file per actor, so two names on one
- *  device are two peers, exactly as `--user` is on the desktop. */
-function databasePath(actor: string): string {
+/** Where this peer's database lives. One file per user, so two people on
+ *  one device are two peers, exactly as two logins are on the desktop. */
+function databasePath(user: string): string {
   const dir = Paths.document.uri.replace(/^file:\/\//, '').replace(/\/$/, '');
-  return `${dir}/harken-${actor.replace(/[^a-zA-Z0-9._-]/g, '_')}.db`;
+  return `${dir}/harken-${user.replace(/[^a-zA-Z0-9._-]/g, '_')}.db`;
 }
 
-export function usePeer(actor: string, server: string | null): Peer {
+/**
+ * A peer for `login`, pointed at `server` — the server's base URL, from which
+ * the socket is derived — or nowhere.
+ */
+export function usePeer(login: Login, server: string | null): Peer {
+  const user = login.user.id;
   // The list, held here and spliced from what the peer sends. `library()` would
   // hand back every song on every change — at a thousand songs that is a
   // thousand rows and about seventy kilobytes across the bridge for one added
@@ -80,9 +87,12 @@ export function usePeer(actor: string, server: string | null): Peer {
   // anything being decoded twice. That is the part still proportional to the
   // library, and it is the cheap part.
   const peer = usePetrosPeer<PeerLike, Song[]>({
-    key: actor,
-    server,
-    open: () => NativePeer.open(databasePath(actor), actor),
+    key: user,
+    server: server === null ? null : socketUrl(server),
+    token: login.token,
+    // Who every entry is authored as, and under which login. Both what the
+    // server said at sign-in; both checked by it on the way back.
+    open: () => NativePeer.open(databasePath(user), user, login.session),
     query: (client, scratch) => {
       // The list lives in the session's scratch, not in a ref. `libraryUpdate`
       // reports what moved *since it was last asked*, and it is asked once per
@@ -126,6 +136,7 @@ export function usePeer(actor: string, server: string | null): Peer {
       cursor: peer.cursor,
       pending: peer.pending,
       online: peer.online,
+      denied: peer.denied,
       note: peer.note,
       mutators: peer.mutators,
       lastMutationMs: peer.lastMutationMs,

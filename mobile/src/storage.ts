@@ -71,7 +71,3 @@ export const storage: Storage = {
     flush();
   },
 };
-
-/** Which peer this device was last used as. The server is remembered per peer,
- *  so this is what says whose to look up. */
-export const LAST_ACTOR = 'harken.actor';

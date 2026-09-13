@@ -1,8 +1,10 @@
 # harken · expo
 
 A peer of the same Petros server the desktop client joins, on a phone. The
-first screen asks who you are and which server to talk to; the second is the
-music library.
+first screen asks which server to talk to and signs you in there — through a
+browser sheet at whatever provider the server uses, coming back on
+`harken://` — and the second is the music library. Who you are is what the
+server says; `src/auth.ts` is the whole of it here.
 
 ## There is no domain logic in this directory
 

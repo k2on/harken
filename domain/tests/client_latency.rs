@@ -46,7 +46,9 @@ fn the_cost_of_the_thread() {
         fill.push(t.elapsed().as_secs_f64() * 1000.0);
 
         let t = Instant::now();
-        m.apply(&mut conn, &filled, "alice").unwrap().unwrap();
+        m.apply(&mut conn, &filled, &petros::Ctx::from_user("alice"))
+            .unwrap()
+            .unwrap();
         apply.push(t.elapsed().as_secs_f64() * 1000.0);
     }
     println!("\n  one wasm call, thread + instantiate + work:");
@@ -173,7 +175,9 @@ fn a_bulk_mutation_row_by_row() {
                 let mut bytes = Vec::new();
                 ciborium::into_writer(&raw, &mut bytes).unwrap();
                 let filled = m.fill_auto(&bytes, &mut auto).unwrap();
-                m.apply(&mut conn, &filled, "alice").unwrap().unwrap();
+                m.apply(&mut conn, &filled, &petros::Ctx::from_user("alice"))
+                    .unwrap()
+                    .unwrap();
             }
 
             let raw = harken::favorite_all();
@@ -186,9 +190,16 @@ fn a_bulk_mutation_row_by_row() {
                 let payload: harken::Payload = ciborium::from_reader(&filled[..])
                     .map(harken::Payload)
                     .unwrap();
-                harken::apply(&mut SqliteStore::new(&mut conn), &payload.0, "alice").unwrap();
+                harken::apply(
+                    &mut SqliteStore::new(&mut conn),
+                    &payload.0,
+                    &petros::Ctx::from_user("alice"),
+                )
+                .unwrap();
             } else {
-                m.apply(&mut conn, &filled, "alice").unwrap().unwrap();
+                m.apply(&mut conn, &filled, &petros::Ctx::from_user("alice"))
+                    .unwrap()
+                    .unwrap();
             }
             times.push(t.elapsed().as_secs_f64() * 1000.0);
 
@@ -311,6 +322,7 @@ fn what_crosses_the_boundary() {
         let peer = Peer::open(
             dir.join("peer.db").to_string_lossy().into_owned(),
             "alice".into(),
+            None,
         )
         .unwrap();
         peer.load_mutators(harken::BUNDLED.to_vec()).unwrap();

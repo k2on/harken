@@ -16,7 +16,7 @@ fn the_client_runs_the_module() {
     std::fs::create_dir_all(&dir).unwrap();
     let db = dir.join("peer.db").to_string_lossy().into_owned();
 
-    let client = Peer::open(db, "alice".into()).expect("open");
+    let client = Peer::open(db, "alice".into(), None).expect("open");
 
     // The generation is process-wide and the other test in this binary loads a
     // module too, so between the call returning and the read below it can have
@@ -89,6 +89,7 @@ fn a_verb_the_client_never_heard_of() {
     let client = Peer::open(
         dir.join("peer.db").to_string_lossy().into_owned(),
         "alice".into(),
+        None,
     )
     .expect("open");
     client.load_mutators(MODULE.to_vec()).expect("install");
@@ -154,6 +155,7 @@ fn the_peer_maintains_its_library() {
     let client = Peer::open(
         dir.join("peer.db").to_string_lossy().into_owned(),
         "alice".into(),
+        None,
     )
     .expect("open");
     client.load_mutators(MODULE.to_vec()).expect("install");

@@ -9,7 +9,8 @@
  */
 
 import { useState } from 'react';
-import { Stack, useLocalSearchParams } from 'expo-router';
+import { Redirect, router, Stack, useLocalSearchParams } from 'expo-router';
+import type { Login } from '@petros/client';
 import type { Song } from 'harken-native';
 import {
   FlatList,
@@ -22,30 +23,51 @@ import {
   View,
 } from 'react-native';
 
-import { recallServer } from '@petros/client';
-
+import { recallServer, remembered, signIn, signOut } from '@/auth';
 import { usePeer } from '@/peer';
-import { storage } from '@/storage';
 import { useTheme } from '@/theme';
 
 export default function Library() {
-  const params = useLocalSearchParams<{ user?: string; server?: string }>();
-  const user = params.user ?? 'phone';
-  // An empty server is a peer working alone, which is a choice and not a
-  // missing parameter — so it is `null` rather than a URL nothing answers on.
+  const params = useLocalSearchParams<{ server?: string; online?: string }>();
   // Arriving with no parameter at all (a deep link, a restored screen) asks
-  // what this peer chose last time.
-  const server =
-    params.server === undefined
-      ? (recallServer(storage, user) ?? null)
-      : params.server === ''
-        ? null
-        : params.server;
+  // which server this phone was last pointed at.
+  const server = params.server ?? recallServer();
+  const login = server ? remembered(server) : null;
+  if (!server || !login) {
+    // Nobody is signed in here: the library is somebody's.
+    return <Redirect href="/" />;
+  }
+  return <Signed server={server} login={login} online={params.online !== '0'} />;
+}
 
+function Signed(props: { server: string; login: Login; online: boolean }) {
+  const { server } = props;
+  // The login can change under a running peer — turned away and signed in
+  // again — and the new token reconnects the same database.
+  const [login, setLogin] = useState(props.login);
+  // "offline" is a choice and not a failed connection: no socket at all,
+  // rather than a URL nothing answers on.
   const theme = useTheme();
-  const peer = usePeer(user, server);
+  const peer = usePeer(login, props.online ? server : null);
   const [title, setTitle] = useState('');
   const [artist, setArtist] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const again = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const got = await signIn(server);
+      if (got) setLogin(got);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const leave = async () => {
+    await signOut(server);
+    router.replace('/');
+  };
 
   const submit = () => {
     if (!title.trim()) return;
@@ -62,7 +84,7 @@ export default function Library() {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
     >
-      <Stack.Screen options={{ title: `harken · ${user}` }} />
+      <Stack.Screen options={{ title: `harken · ${login.user.name || login.user.id}` }} />
 
       <View style={s.entry}>
         <View style={s.inputs}>
@@ -102,6 +124,9 @@ export default function Library() {
             <Text style={s.verb}>heart everything</Text>
           </Pressable>
         ) : null}
+        <Pressable onPress={leave}>
+          <Text style={s.verb}>sign out</Text>
+        </Pressable>
       </View>
 
       <FlatList
@@ -141,12 +166,22 @@ export default function Library() {
           has been applied, `pending` is what this peer has done that no server
           has confirmed yet. */}
       <View style={s.status}>
-        <Pressable
-          style={[s.pill, { backgroundColor: peer.online ? theme.good : theme.dim }]}
-          onPress={peer.toggleLink}
-        >
-          <Text style={s.pillText}>{peer.online ? 'online' : 'offline'}</Text>
-        </Pressable>
+        {/* Turned away by the server — an expired token, a revoked session.
+            The database and the pending edits stay; signing in again as the
+            same person offers them. Not the online pill, because knocking
+            again with the same token is only refused again. */}
+        {peer.denied !== null ? (
+          <Pressable style={[s.pill, { backgroundColor: theme.danger }]} onPress={again}>
+            <Text style={s.pillText}>{busy ? 'signing in…' : 'sign in again'}</Text>
+          </Pressable>
+        ) : (
+          <Pressable
+            style={[s.pill, { backgroundColor: peer.online ? theme.good : theme.dim }]}
+            onPress={peer.toggleLink}
+          >
+            <Text style={s.pillText}>{peer.online ? 'online' : 'offline'}</Text>
+          </Pressable>
+        )}
         <Text style={s.statusText} numberOfLines={2}>
           {peer.songs.length} songs · {favourites} hearted · cursor {peer.cursor} ·{' '}
           {peer.pending} pending · mutators v{peer.mutators}

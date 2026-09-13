@@ -11,8 +11,10 @@
 //! `&mut Db` is the store. `NewId` and `Now` are the only non-determinism a
 //! mutation gets, chosen once at the originating client and frozen in the log —
 //! a body may not call a clock or invent an id, because two replicas would
-//! choose differently and diverge. `Actor` is who authored the entry. Which is
-//! which is decided by type, so there is no list to keep in step.
+//! choose differently and diverge. `ctx: &Ctx` is who authored the entry
+//! (`ctx.user.id`, which the server verified) and under which login
+//! (`ctx.session.id`). Which is which is decided by type, so there is no list
+//! to keep in step.
 //!
 //! # There is no SQL here
 //!
@@ -41,9 +43,9 @@ use crate::schema::{id_of, Song};
 #[mutation]
 pub fn add_song(
     db: &mut Db,
+    ctx: &Ctx,
     id: NewId,
     added_ms: Now,
-    actor: Actor,
     title: String,
     artist: String,
 ) -> Result {
@@ -64,7 +66,7 @@ pub fn add_song(
         artist: artist.trim().to_string(),
         pos: last + 1,
         added_ms,
-        actor: actor.to_string(),
+        actor: ctx.user.id.clone(),
     })?;
     Ok(())
 }
@@ -76,7 +78,7 @@ pub fn add_song(
 /// — the playlist is a set with an order, and a song keeps the place it first
 /// got.
 #[mutation]
-pub fn favorite(db: &mut Db, favorited_ms: Now, actor: Actor, id: Id) -> Result {
+pub fn favorite(db: &mut Db, ctx: &Ctx, favorited_ms: Now, id: Id) -> Result {
     if !db.exists::<SongRow>(&SongRow::key_of(&id)) {
         return Ok(());
     }
@@ -88,7 +90,7 @@ pub fn favorite(db: &mut Db, favorited_ms: Now, actor: Actor, id: Id) -> Result 
         song_id: id.to_vec(),
         pos: last + 1,
         favorited_ms,
-        actor: actor.to_string(),
+        actor: ctx.user.id.clone(),
     })?;
     Ok(())
 }
@@ -112,7 +114,7 @@ pub fn unfavorite(db: &mut Db, id: Id) -> Result {
 /// of which rows they were, which is exactly what an incremental view cannot
 /// work from.
 #[mutation]
-pub fn favorite_all(db: &mut Db, favorited_ms: Now, actor: Actor) -> Result {
+pub fn favorite_all(db: &mut Db, ctx: &Ctx, favorited_ms: Now) -> Result {
     let mut pos = last_favorite_pos(db);
     // Ordered, because the positions it assigns go into the log and every
     // replica has to assign the same ones.
@@ -130,7 +132,7 @@ pub fn favorite_all(db: &mut Db, favorited_ms: Now, actor: Actor) -> Result {
             song_id: song.id,
             pos,
             favorited_ms,
-            actor: actor.to_string(),
+            actor: ctx.user.id.clone(),
         })?;
     }
     Ok(())

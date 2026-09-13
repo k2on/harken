@@ -60,7 +60,11 @@ fn native_apply(
     payload: &harken::Payload,
     actor: &str,
 ) -> Result<(), String> {
-    harken::apply(&mut SqliteStore::new(conn), &payload.0, actor)
+    harken::apply(
+        &mut SqliteStore::new(conn),
+        &payload.0,
+        &petros::Ctx::from_user(actor),
+    )
 }
 
 fn encode(p: &harken::Payload) -> Vec<u8> {
@@ -97,7 +101,7 @@ fn both_ways(script: &[(&str, serde_json::Value)]) -> (Vec<Row>, Vec<Row>) {
     let mut wasm_db = database();
     for p in &payloads {
         let _ = module
-            .apply(&mut wasm_db, &encode(p), "alice")
+            .apply(&mut wasm_db, &encode(p), &petros::Ctx::from_user("alice"))
             .expect("the host ran");
     }
 
@@ -166,7 +170,7 @@ fn refusals_match_too() {
         let native = native_apply(&mut a, &p, "alice");
         let mut b = database();
         let wasm = module
-            .apply(&mut b, &encode(&p), "alice")
+            .apply(&mut b, &encode(&p), &petros::Ctx::from_user("alice"))
             .expect("host ran");
 
         assert_eq!(

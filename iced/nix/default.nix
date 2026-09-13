@@ -18,8 +18,10 @@
         '';
       };
 
+      # The name is offered to the server, which `nix run .#serve` honours
+      # without a browser; a real server ignores it and opens one.
       apps.iced.program = script "iced" {
-        text = ''cargo run -p harken-iced -- --user "''${1:-alice}" --server "''${2:-127.0.0.1:8787}"'';
+        text = ''cargo run -p harken-iced -- --user "''${1:-alice}" --server "''${2:-http://127.0.0.1:8787}"'';
       };
 
       petros.buildInputs = lib.optionals pkgs.stdenv.isLinux icedLibs;

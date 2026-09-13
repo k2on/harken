@@ -23,7 +23,8 @@ domain/                  the domain — the ONLY apply
                          `tables!` generates the row types from it, and its
                          foreign keys generate the relationships between them
   src/schema.rs          the model: the tables, and the view a client reads
-  src/functions.rs       every mutation and every query, one definition each
+  src/functions.rs       every mutation and every query, one definition each;
+                         a mutation takes `ctx: &Ctx` for who authored it
   tests/conformance.rs   the native and wasm builds of `apply`, compared
   tests/converge.rs      the domain against a simulated fleet
   tests/read_model.rs    library() and favorites() against rows apply wrote
@@ -31,14 +32,21 @@ domain/                  the domain — the ONLY apply
   src/foreign_client.rs  the client a foreign caller sees (feature `foreign`)
   src/wasm_app.rs        the App whose `apply` is a module (feature `foreign`)
   nix/default.nix        which crate is the module; the vendored-deps hash; `latency`
-server/                  axum, with one Petros handler mounted on it
-  nix/default.nix        the package, `serve`, and the NixOS service
+server/                  axum, with one Petros handler mounted on it, and the
+                         sign-in routes beside it
+  nix/default.nix        the package, `serve`, and the NixOS service — where
+                         the OpenID Connect provider is configured
+  nix/readme.nix         its section of README.md
 iced/                    the desktop and browser client
+  src/main.rs            …and how each target signs in: a loopback port, or the page
   src/heart.rs           the heart, drawn as a path (see below)
+  nix/readme.nix         its section of README.md
   web/                   the browser shell `nix run .#web` serves
   nix/default.nix        the desktop package and `iced`
   nix/web.nix            the wasm build, `web` and `web-build`
 mobile/                  the phone client; src/ is UI and a socket, nothing else
+  src/auth.ts            …and signing in, through a browser sheet and `harken://`
+  nix/readme.nix         its section of README.md
   modules/harken-native/ the turbo module — generated, gitignored, not authored
   gradle-deps.json       gradle's Maven graph, recorded, replayed by the APK build
   eas.json               generated: the profiles, with what an EAS container installs
@@ -47,6 +55,8 @@ mobile/                  the phone client; src/ is UI and a socket, nothing else
   nix/eas.nix            the EAS profiles
 Cargo.toml               the workspace, and the one place the engine is pinned
 flake.nix                nixpkgs and petros, and `petros.lib.mkApp inputs ./.`
+readme.nix               the top of README.md; the rest is each directory's
+README.md                generated from those, like eas.json
 ```
 
 The engine's own decisions — the rebase, the log, the wasm ABI, the schema
@@ -68,13 +78,13 @@ nix flake check             # …the same three, as derivations. What CI runs
 nix run .#latency           # the measurements: fsync, the sandbox, the maintained view
 nix run .#mutators          # rebuild the domain module and hand it to Metro (~0.35s)
 nix run .#mutators-watch    # …on every save. Leave it running beside `bun start`.
-nix run .#serve             # the sync server…
+nix run .#serve             # the sync server, in dev auth: anyone is whoever they say…
 nix run .#iced alice        # …a desktop peer…
 nix run .#iced bob          # …and another, to watch them sync
 nix run .#web               # …a browser peer, at localhost:8080
 nix run .#bindings          # regenerate the Expo client's TS from the domain crate
 nix run .#expo-android      # …and a phone. Needs `nix develop .#android`.
-nix run .#write-files       # regenerate eas.json, eas-rust.sh, ubrn.config.yaml (see below)
+nix run .#write-files       # regenerate README.md, eas.json, eas-rust.sh, ubrn.config.yaml
 nix build .#harken-server   # …and .#harken-iced, .#harken-web
 nix build .#apk             # the whole APK, toolchain and all
 nix build .#ndk-check       # …does the NDK *start* here? Twenty seconds
@@ -383,6 +393,40 @@ Apple's layered format that nothing can draw on, so the development variant
 drops it and iOS takes the badged flat icon. The legacy launcher icon that
 Android 7 draws is composed from the foreground's centre and loses the banner;
 everything from Android 8 shows it.
+
+## Who a peer is, the server says
+
+The engine holds every entry to the login that pushed it, so every peer
+signs in, and all three do it the same way: open the server's `/auth/login`
+with somewhere to come back to, receive a single-use code, trade it at
+`/auth/exchange` for a session token, and put the token in every `Hello`.
+The server is the only OpenID Connect client — `services.harken.oidc` on
+NixOS names the provider, the client id, and a *file* holding the secret,
+which systemd hands to the service as a credential — and the clients hold no
+secret and know no provider. `petros-auth` is all of it; `../petros/docs/
+decisions.md` has the reasoning.
+
+Where the code comes back to is the one thing that differs:
+
+- the desktop listens on a loopback port and opens the system browser; the
+  login is kept in `~/.config/harken/logins.json`;
+- the page sends itself to `/auth/login` and comes back to its own address
+  with `?code=`, which it takes out of the URL; the login is in
+  `localStorage`. Served by the server it signs in against its own origin,
+  which is why `services.harken.web` and `HARKEN_WEB` exist;
+- the phone opens the login in `expo-web-browser`'s sheet and comes back on
+  `harken://auth`, the scheme `app.config.ts` declares; `mobile/src/auth.ts`.
+
+`nix run .#serve` runs in dev auth — no provider, anyone is whoever they say,
+said loudly at startup — so `nix run .#iced alice` is a login for a name and
+opens no browser, and the phone's sheet shows a text box. A server refuses
+to start with neither a provider nor `HARKEN_DEV_AUTH=1`.
+
+What a mutation sees of this is `ctx: &Ctx`: `ctx.user.id` is the user the
+server verified and every song's `actor`; `ctx.session.id` is the login it
+was authored under. A peer turned away — an expired token, a revoked
+session — keeps its database and its pending edits, stops reconnecting, and
+shows a sign-in button; the next login as the same person offers them.
 
 ## Never write domain logic in TypeScript
 
@@ -698,12 +742,13 @@ so the Expo screen just writes `♥`.
   an empty library over a full database. It reads exactly like "it saves
   nothing", which is a horrible bug to be told about and an easy one to write.
   `@petros/client` puts it in the session's `scratch` for this reason.
-- **The phone remembers where it was pointed, and "nowhere" is one of the
-  answers.** `recallServer`/`rememberServer` keep the choice across launches
-  over `src/storage.ts`, one JSON file read synchronously — a connect screen
-  needs its initial value while it renders, and an async read is a frame of the
-  wrong answer. A peer with no server opens no socket and retries nothing; the
-  engine is told with `disconnected()` so it stops filling an outbox nobody
+- **The phone remembers where it was pointed, and who it was there.**
+  `src/auth.ts` keeps the last server and, per server, the login — over
+  `src/storage.ts`, one JSON file read synchronously, because a connect
+  screen needs its initial value while it renders and an async read is a
+  frame of the wrong answer. "use offline" is one of the answers, and needs a
+  login from before: a peer with no server opens no socket and retries
+  nothing; the engine is told with `disconnected()` so it stops filling an outbox nobody
   will drain.
 - **Expo Go cannot load this app.** It calls into Rust, so it needs a
   development build. `ios/` and `android/` are generated by `expo prebuild`.
@@ -799,6 +844,23 @@ first. The engine's own decisions are in `../petros/docs/decisions.md`.
   axum program with `get(petros_axum::sync::<HarkenApp>)` mounted on it and a
   `/healthz` beside it. Forty lines, none of them about sync, which is the
   honest demonstration of the engine being sans-io.
+- **The server signs people in; the clients only open a URL.** Three clients
+  is three places to put an OpenID Connect library, three copies of a
+  client secret, and three ways for a phone's suspended socket and a
+  browser's cookie jar to disagree about who is signed in. Instead the
+  server is the one relying party and hands out sessions of its own, and
+  what a client does is the same everywhere: open `/auth/login`, get a code
+  back, exchange it, put the token on the socket. The secret is a file the
+  NixOS module loads as a systemd credential, never a store path. `nix run
+  .#serve` keeps the loop on a laptop honest by signing anyone in as a name
+  — and says so at startup — because two peers named alice and bob are still
+  the demonstration of the rebase.
+- **`README.md` is generated, one section per directory.** A README for
+  four directories is four people's prose in one file, and the file is where
+  it goes stale. Each directory's `nix/readme.nix` writes its own section
+  beside its nix; `readme.nix` at the root is the intro; the engine's
+  `readme` module orders them into `README.md` through the files module, so
+  it is checked like `eas.json`.
 - **No ORM, because it described the schema a second time.** Reads went
   through Diesel's DSL and writes through checked SQL, so the tables were
   described twice and nothing held the two together — and the half that could

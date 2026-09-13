@@ -142,7 +142,8 @@
           runtimeInputs = [ pkgs.wasm-bindgen-cli pkgs.python3 ];
           text = ''
             ${webBuild}
-            echo "serving on http://localhost:8080"
+            echo "serving on http://localhost:8080/?server=http://127.0.0.1:8787"
+            echo "(or point HARKEN_WEB=iced/web at nix run .#serve, and it is one origin)"
             cd iced/web && python3 -m http.server 8080
           '';
         };

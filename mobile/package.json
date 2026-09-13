@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "dependencies": {
     "@expo/ui": "~57.0.16",
-    "@petros/client": "github:k2on/petros-js#ef630b617da9e3bcfd58ca7014989c8d5acd75f1",
+    "@petros/client": "github:k2on/petros-js#abf3cfb125398d3cc0b3c5f275c883f6da280dba",
     "app-icon-badge": "^0.1.2",
     "expo": "~57.0.20",
     "expo-build-properties": "~57.0.17",

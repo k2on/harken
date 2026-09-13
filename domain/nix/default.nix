@@ -5,7 +5,7 @@
     petros = {
       # The hash of `cargo vendor` over `Cargo.lock`; nix prints the right one
       # when the lock moves.
-      cargoVendorHash = "sha256-z3c9ZDiu29FuDF6JOY7pseb7FXEmppvaYSPRXa2k+bI=";
+      cargoVendorHash = "sha256-rdkdTsilXfgzYgXPAFWACDzkH1Psn/8wHLRmJRHYIuw=";
       mutators.crate = "harken";
     };
 

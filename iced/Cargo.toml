@@ -9,6 +9,11 @@ rust-version.workspace = true
 [dependencies]
 harken = { workspace = true, features = ["storage"] }
 petros = { workspace = true, features = ["ws"] }
+# Signing in: a loopback listener and the browser on the desktop, the
+# page's own address in a browser.
+petros-auth = { workspace = true, features = ["client"] }
+# The remembered login, as a file on the desktop and a storage item in a browser.
+serde_json.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # `smol` gives iced a timer to drive the transport pump. In a browser it
