@@ -1,20 +1,8 @@
-# The desktop client, and the same client compiled to wasm with the shell that
-# loads it. `nix run .#iced` is a desktop peer, `nix run .#web` the browser one.
+# The same client compiled to wasm, and the shell that loads it: `nix build
+# .#harken-web` pinned, `nix run .#web` on a laptop at localhost:8080.
 {
   perSystem = { pkgs, lib, toolchain, rustPlatform, sources, script, ... }:
     let
-      inherit (sources) workspace cargoDeps;
-
-      # What iced dlopens at runtime, and what clippy has to find to compile
-      # the client at all. Shared with the checks and the devshell.
-      icedLibs = with pkgs; [
-        wayland
-        libxkbcommon
-        libGL
-        vulkan-loader
-        fontconfig
-      ];
-
       # wasm-bindgen's generated glue and the module it generates for carry
       # a schema version that must match *exactly*, so the CLI has to be the
       # version in Cargo.lock and not whatever a channel happens to ship —
@@ -23,7 +11,7 @@
       # the crate and this follows, and only the hashes need a human.
       wasmBindgenVersion =
         let
-          lock = builtins.readFile ../Cargo.lock;
+          lock = builtins.readFile ../../Cargo.lock;
           after = pkgs.lib.strings.removePrefix
             "name = \"wasm-bindgen\"\nversion = \""
             (builtins.elemAt (builtins.split "name = \"wasm-bindgen\"\nversion = \"" lock) 2);
@@ -65,24 +53,6 @@
         doCheck = false;
       };
 
-      # The desktop client. iced dlopens its graphics stack, so the runtime
-      # libraries go on the RPATH rather than being hoped for.
-      harken-iced = rustPlatform.buildRustPackage {
-        pname = "harken-iced";
-        version = "0.1.0";
-        src = workspace;
-        inherit cargoDeps;
-        cargoBuildFlags = [ "-p" "harken-iced" ];
-        doCheck = false;
-        nativeBuildInputs = [ pkgs.makeWrapper ];
-        buildInputs = icedLibs;
-        postInstall = ''
-          wrapProgram $out/bin/harken-iced \
-            --prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath icedLibs}
-        '';
-        meta.mainProgram = "harken-iced";
-      };
-
       # The same client, compiled to wasm, plus the shell that loads it.
       # `nix run .#web-build` does this too; the difference is that this one
       # cannot reach the network, so every version is pinned rather than
@@ -90,8 +60,8 @@
       harken-web = rustPlatform.buildRustPackage {
         pname = "harken-web";
         version = "0.1.0";
-        src = workspace;
-        inherit cargoDeps;
+        src = sources.workspace;
+        inherit (sources) cargoDeps;
         doCheck = false;
 
         nativeBuildInputs = [ wasm-bindgen-cli pkgs.llvmPackages.clang-unwrapped pkgs.llvmPackages.bintools ];
@@ -165,14 +135,9 @@
       '';
     in
     {
-      packages = { inherit harken-iced harken-web; };
+      packages = { inherit harken-web; };
 
       apps = {
-        # A desktop peer. Run it twice with different names to watch them sync.
-        iced.program = script "iced" {
-          text = ''cargo run -p harken-iced -- --user "''${1:-alice}" --server "''${2:-127.0.0.1:8787}"'';
-        };
-        # The client in a browser, at localhost:8080.
         web.program = script "web" {
           runtimeInputs = [ pkgs.wasm-bindgen-cli pkgs.python3 ];
           text = ''
@@ -186,29 +151,5 @@
           text = webBuild;
         };
       };
-
-      # What clippy over the workspace has to find to compile this crate, and
-      # what the binary dlopens at runtime.
-      workspace.buildInputs = lib.optionals pkgs.stdenv.isLinux icedLibs;
-      workspace.packages = lib.optionals pkgs.stdenv.isLinux icedLibs;
-      workspace.shellHook = lib.optionalString pkgs.stdenv.isLinux ''
-        export LD_LIBRARY_PATH="${lib.makeLibraryPath icedLibs}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-        # NixOS keeps the host's GPU drivers under /run/opengl-driver, linked
-        # against the host's libwayland. LD_LIBRARY_PATH beats a library's own
-        # RUNPATH, so on a machine tracking a newer channel than this flake's
-        # pin the wayland above shadows the one Mesa was built for: every Mesa
-        # Vulkan driver fails to load, wgpu finds no adapter, and iced quietly
-        # falls back to its software renderer. Let the host's own copy win.
-        for driver in /run/opengl-driver/lib/libvulkan_*.so; do
-          [ -e "$driver" ] || continue
-          hostWayland=$(LD_LIBRARY_PATH= ldd "$driver" 2>/dev/null \
-            | sed -n 's|.*=> \(.*\)/libwayland-client\.so\.0 .*|\1|p' \
-            | head -1)
-          if [ -n "$hostWayland" ]; then
-            export LD_LIBRARY_PATH="$hostWayland:$LD_LIBRARY_PATH"
-            break
-          fi
-        done
-      '';
     };
 }

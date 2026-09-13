@@ -1,9 +1,3 @@
-# Generated from Cargo.toml.in by `nix run .#write-files` — edit that file.
-#
-# The engine's revision is the one thing here that lives elsewhere: it is
-# `flake.lock`'s pin on `petros`, substituted in. `nix flake update petros`
-# then `nix run .#write-files` moves it; `nix flake check` fails while the
-# two disagree.
 [workspace]
 resolver = "2"
 members = [
@@ -39,21 +33,21 @@ ciborium = "0.2"
 # picks up edits without a commit. It is gitignored, which is what makes a fresh
 # clone — and EAS — get the pinned engine instead.
 #
-# Moving the pin is `nix flake update petros` and `nix run .#write-files`, which
-# rewrites all seven from `flake.lock`. Verify it the way a build container
-# will, with the patch out of the way:
+# This is the one place the engine is pinned: nix reads the revision back from
+# here and fetches the engine at it. Moving the pin means moving all seven.
+# Verify it the way a build container will, with the patch out of the way:
 #
 #     mv .cargo/config.toml /tmp/ && cargo test --workspace --all-features
 #
 # A branch whose engine changes is broken for everyone but the person who has
 # both checkouts, and the local patch hides that perfectly.
-petros = { git = "https://github.com/k2on/petros", rev = "c15b6018ef3b44a8d2d7aaf6e95333474bf2b2e0" }
-petros-wasm-host = { git = "https://github.com/k2on/petros", rev = "c15b6018ef3b44a8d2d7aaf6e95333474bf2b2e0" }
-petros-schema = { git = "https://github.com/k2on/petros", rev = "c15b6018ef3b44a8d2d7aaf6e95333474bf2b2e0" }
-petros-sql = { git = "https://github.com/k2on/petros", rev = "c15b6018ef3b44a8d2d7aaf6e95333474bf2b2e0" }
-petros-testkit = { git = "https://github.com/k2on/petros", rev = "c15b6018ef3b44a8d2d7aaf6e95333474bf2b2e0" }
-petros-wasm-guest = { git = "https://github.com/k2on/petros", rev = "c15b6018ef3b44a8d2d7aaf6e95333474bf2b2e0" }
-petros-axum = { git = "https://github.com/k2on/petros", rev = "c15b6018ef3b44a8d2d7aaf6e95333474bf2b2e0" }
+petros = { git = "https://github.com/k2on/petros", rev = "fcd993607d78acc10c075e65956668c1da1d1677" }
+petros-wasm-host = { git = "https://github.com/k2on/petros", rev = "fcd993607d78acc10c075e65956668c1da1d1677" }
+petros-schema = { git = "https://github.com/k2on/petros", rev = "fcd993607d78acc10c075e65956668c1da1d1677" }
+petros-sql = { git = "https://github.com/k2on/petros", rev = "fcd993607d78acc10c075e65956668c1da1d1677" }
+petros-testkit = { git = "https://github.com/k2on/petros", rev = "fcd993607d78acc10c075e65956668c1da1d1677" }
+petros-wasm-guest = { git = "https://github.com/k2on/petros", rev = "fcd993607d78acc10c075e65956668c1da1d1677" }
+petros-axum = { git = "https://github.com/k2on/petros", rev = "fcd993607d78acc10c075e65956668c1da1d1677" }
 harken = { path = "domain", default-features = false }
 # `fira-sans` embeds a default font. Without it iced asks the system for
 # one, which works on a desktop and gets you nothing at all in a browser:

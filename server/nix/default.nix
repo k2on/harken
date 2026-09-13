@@ -1,38 +1,21 @@
 # The sync server: the package, `nix run .#serve`, and the NixOS service.
 { inputs, ... }: {
-  perSystem = { pkgs, rustPlatform, sources, script, ... }:
-    let
-      inherit (sources) workspace cargoDeps;
-
-      # The sync server. `HARKEN_WEB` points it at a browser client; the
-      # NixOS module sets it to `harken-web` so both are on one port.
-      harken-server = rustPlatform.buildRustPackage {
-        pname = "harken-server";
-        version = "0.1.0";
-        src = workspace;
-        inherit cargoDeps;
-        cargoBuildFlags = [ "-p" "harken-server" ];
-        # The workspace's tests need the mutator module, which is a wasm
-        # build with its own toolchain. `nix flake check` is not the place
-        # for that; `just` is, and CI runs it.
-        doCheck = false;
-        meta.mainProgram = "harken-server";
-      };
-    in
-    {
-      packages = {
-        inherit harken-server;
-        default = harken-server;
-      };
-
-      # Pass 0.0.0.0:8787 to reach it from a phone on the same network.
-      apps.serve.program = script "serve" {
-        text = ''cargo run -p harken-server -- "''${1:-127.0.0.1:8787}"'';
-      };
-
-      # sqlite for looking at a log; ffmpeg for the audio server's transcoding.
-      workspace.packages = [ pkgs.sqlite pkgs.ffmpeg ];
+  perSystem = { pkgs, crate, script, ... }: {
+    packages = {
+      # `HARKEN_WEB` points it at a browser client; the NixOS module sets it
+      # to `harken-web` so both are on one port.
+      harken-server = crate "harken-server" { };
+      default = crate "harken-server" { };
     };
+
+    # Pass 0.0.0.0:8787 to reach it from a phone on the same network.
+    apps.serve.program = script "serve" {
+      text = ''cargo run -p harken-server -- "''${1:-127.0.0.1:8787}"'';
+    };
+
+    # sqlite for looking at a log; ffmpeg for the audio server's transcoding.
+    petros.shell.packages = [ pkgs.sqlite pkgs.ffmpeg ];
+  };
 
   # `services.harken.enable = true` and there is a music system on a port:
   # the sync socket and the browser client that talks to it, together,

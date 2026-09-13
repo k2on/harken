@@ -8,7 +8,7 @@ Four directories, four things: the domain, the server, the desktop client, the
 phone. All three programs run the same `apply`: the first two link it, the
 phone loads it as a module. The phone's native half is a *feature* of the
 domain crate rather than a package, because everything it exports was already
-defined there. Each directory carries its own nix as `flake-module.nix`.
+defined there. Each directory carries its own nix under `nix/`.
 
 The domain is songs and a favourites playlist. Favourites is a real ordered
 playlist rather than a flag, so "add to favourites" reads `MAX(pos) + 1` — which
@@ -30,22 +30,23 @@ domain/                  the domain — the ONLY apply
   src/lib.rs             …and, under `cfg(wasm32)`, the module's ABI
   src/foreign_client.rs  the client a foreign caller sees (feature `foreign`)
   src/wasm_app.rs        the App whose `apply` is a module (feature `foreign`)
-  mutators.sh            builds the module and its TypeScript types, outside nix
-  flake-module.nix       the same two steps as derivations, and `nix run .#mutators`
+  nix/default.nix        which crate is the module; the vendored-deps hash; `latency`
 server/                  axum, with one Petros handler mounted on it
-  flake-module.nix       the package, and the NixOS service
+  nix/default.nix        the package, `serve`, and the NixOS service
 iced/                    the desktop and browser client
   src/heart.rs           the heart, drawn as a path (see below)
   web/                   the browser shell `nix run .#web` serves
-  flake-module.nix       the desktop package, and the wasm build with its shell
-expo/                    the phone client; src/ is UI and a socket, nothing else
+  nix/default.nix        the desktop package and `iced`
+  nix/web.nix            the wasm build, `web` and `web-build`
+mobile/                  the phone client; src/ is UI and a socket, nothing else
   modules/harken-native/ the turbo module — generated, gitignored, not authored
   gradle-deps.json       gradle's Maven graph, recorded, replayed by the APK build
-  eas.json               generated: the profiles, with the Rust version nix names
-  eas-rust.sh            the Rust half of an EAS build, for a container with no nix
-  flake-module.nix       the APK, and everything on the way to it
-Cargo.toml.in            the workspace; `Cargo.toml` is generated from it
-flake.nix                the inputs, then what the four directories share (see below)
+  eas.json               generated: the profiles, with what an EAS container installs
+  eas-rust.sh            generated: the Rust half of an EAS build, for a container with no nix
+  nix/default.nix        the name, the hashes, and the petros-js module they go to
+  nix/eas.nix            the EAS profiles
+Cargo.toml               the workspace, and the one place the engine is pinned
+flake.nix                nixpkgs and petros, and `petros.lib.mkApp inputs ./.`
 ```
 
 The engine's own decisions — the rebase, the log, the wasm ABI, the schema
@@ -56,7 +57,8 @@ at the bottom of this file.
 
 Every developer task is `nix run .#<name>`, defined in the directory it
 belongs to; `nix develop` carries the tools they need. There is no justfile
-and no `rust-toolchain.toml`: the toolchain is named once, in `flake.nix`.
+and no `rust-toolchain.toml`: the toolchain is the engine's, at the revision
+`Cargo.toml` pins.
 
 ```
 nix run .#fmt               # cargo fmt
@@ -72,7 +74,7 @@ nix run .#iced bob          # …and another, to watch them sync
 nix run .#web               # …a browser peer, at localhost:8080
 nix run .#bindings          # regenerate the Expo client's TS from the domain crate
 nix run .#expo-android      # …and a phone. Needs `nix develop .#android`.
-nix run .#write-files       # regenerate Cargo.toml, eas.json, ubrn.config.yaml (see below)
+nix run .#write-files       # regenerate eas.json, eas-rust.sh, ubrn.config.yaml (see below)
 nix build .#harken-server   # …and .#harken-iced, .#harken-web
 nix build .#apk             # the whole APK, toolchain and all
 nix build .#ndk-check       # …does the NDK *start* here? Twenty seconds
@@ -80,55 +82,64 @@ nix build .#apk-release     # …the release build (debug-signed, see below)
 nix run .#gradle-deps       # re-record gradle's Maven graph (or the CI button)
 ```
 
-`nix run .#mutators` runs the generator out of `../petros`, so that repository
-has to be checked out beside this one. `nix build .#mutators` does not: it
-builds `petros-codegen` from the engine `flake.lock` pins, which is what the
-Android build and the checks use.
+`nix run .#mutators` and `nix build .#mutators` both use `petros-codegen`
+built from the engine `Cargo.toml` pins; a local engine edit reaches the
+crates through `.cargo/config.toml` but not the generator, which is rarely
+what changes.
 
-## The flake is four modules, and what they share
+## The flake is four lines, and each directory's `nix/`
 
-`flake.nix` names its inputs and imports one `flake-module.nix` from each of
-the four directories. What it holds itself is what none of them owns: one
-nixpkgs and one toolchain, the source trees, the three whole-workspace checks
-and their `nix run` twins, and the devshell — which it assembles from what the
-directories contribute through one option, `workspace`: tools for the shell,
-libraries the checks need, a shell hook. So `flake.nix` names no directory
-beyond importing it, and adding a program is adding an `apps.<name>` where it
-belongs.
+`flake.nix` names nixpkgs and the engine and hands the tree to
+`petros.lib.mkApp`. That is flake-parts over every `*.nix` under this root —
+the dendritic pattern, `import-tree` — plus the engine's own app modules,
+which are what every Petros app shares: the toolchain, the workspace, the
+three whole-workspace checks and their `nix run` twins, the devshell, and the
+wasm module a domain compiles to. Which directories exist is what wires the
+rest: each one's `nix/` says what is true about it and nothing else, and a
+program with only a `domain/` would be this same `flake.nix` with less under
+it. The same file serves a bare crate, a crate with a server, a crate with a
+phone, or this.
 
 ```
-domain/flake-module.nix   mutators, petros-codegen; run: mutators, mutators-watch, latency
-server/flake-module.nix   harken-server, `services.harken`; run: serve
-iced/flake-module.nix     harken-iced, harken-web; run: iced, web, web-build
-expo/flake-module.nix     the phone: one call to `petrosJs.mkApp`; run: bindings,
-                          expo-android, expo-ios, gradle-deps; the `android` shell
-flake.nix                 pkgs, toolchain, sources, check-*; run: fmt, lint, test
+domain/nix/default.nix   petros.mutators.crate, petros.cargoVendorHash; run: latency
+server/nix/default.nix   harken-server, `services.harken`; run: serve
+iced/nix/default.nix     harken-iced; run: iced
+iced/nix/web.nix         harken-web; run: web, web-build
+mobile/nix/default.nix   mobile.name, the hashes, the gradle version; the petros-js module
+mobile/nix/eas.nix       mobile.eas.profiles
 ```
 
-Three files in the tree are generated rather than written, because each would
-otherwise repeat something nix already knows: `Cargo.toml` from
-`Cargo.toml.in`, with the engine's revision from `flake.lock`; `expo/eas.json`,
-with the Rust version and the Android targets an EAS container installs; and
-the turbo module's `ubrn.config.yaml`, with the ABIs the APK is built for.
+What a directory contributes to the workspace — libraries the checks need to
+compile it, tools and a hook for the shell, a path a cross-compile reads —
+goes through the `petros.*` options the engine's `workspace.nix` declares;
+`flake.nix` names no directory and no directory names another.
+
+**`Cargo.toml` is the one place the engine is pinned.** The engine's
+`workspace.nix` reads the revision back and fetches petros at it — the crates
+for the `[patch]`, `petros-codegen` for the module, `rust-toolchain.toml` for
+the toolchain. The `petros` input in `flake.nix` is only the code that does
+that reading, so bumping the engine is editing `Cargo.toml`; `nix flake
+update petros` moves the nix and nothing else. The phone is pinned the same
+way: `mobile/nix` imports petros-js's mobile module from the `@petros/client`
+revision `mobile/package.json` names, the same repository as the client the
+screens call.
+
+Three files in `mobile/` are generated rather than written, because each
+would otherwise repeat what nix knows: `eas.json`, with the Rust version, the
+targets and the engine revision an EAS container installs; `eas-rust.sh`, the
+hook that installs them and builds the module and the engine there; and the
+turbo module's `ubrn.config.yaml`, with the ABIs the APK is built for.
 `nix run .#write-files` writes them and `nix flake check` fails while a
-committed copy differs from what nix would write — that is the `files`
-module, `github:mightyiam/files`. Moving the engine pin is therefore
-`nix flake update petros` and `nix run .#write-files`, and nothing else.
+committed copy differs from what nix would write — the `files` module,
+`github:mightyiam/files`, which the engine's flake carries.
 
-Everything reusable about building for a phone lives elsewhere and arrives
-through two inputs. `petros` brings the engine's nix — the crate list, the
-`[patch]` that makes the lockfile resolvable, the code generator.
-`petros-js` brings `ubrn`, the two-layer cross-compile and `mkApp`, and
-carries `expo.nix` (node_modules, `expo prebuild`, `APP_VARIANT`, the gradle
-state layer's source) and `android.nix` (the SDK, gradle, the Maven
-recording, the layer mechanism, emulation) as inputs of its own. Each of
-those flakes follows the one above it for nixpkgs, and the top of the chain
-is this file — so `flake.lock` has one nixpkgs, and the SDK is composed from
-the same one as the server. `expo/flake-module.nix` is the whole of what this
-app has to say about Android: its files, its hashes, which crates are its
-own. Read the three libraries' `README.md`s for how the pieces work; the
-traps below are still true and still worth knowing, they are just fixed in
-those repositories now.
+Everything reusable about building for a phone lives elsewhere. `petros-js`
+brings `ubrn`, the two-layer cross-compile and the mobile module, and carries
+`expo.nix` (node_modules, `expo prebuild`, `APP_VARIANT`, the gradle state
+layer's source) and `android.nix` (the SDK, gradle, the Maven recording, the
+layer mechanism, emulation), each pinned by its `flake.lock`. Read the three
+libraries' `README.md`s for how the pieces work; the traps below are still
+true and still worth knowing, they are just fixed in those repositories now.
 
 The package names are unchanged — `apk`, `apk-debug`, `apk-release`,
 `gradleState`, `androidEngine`, `androidDeps`, `expoModules`, `ubrn`,
@@ -166,7 +177,7 @@ Three consequences worth knowing:
 
 - **`nix flake check` skips when nothing it reads has changed.** What it reads
   is `engineSrc`: `domain`, `server`, `iced`, `Cargo.toml`, `Cargo.lock`, and
-  the module's config under `expo/modules`. A `.tsx` edit or a workflow
+  the module's config under `mobile/modules`. A `.tsx` edit or a workflow
   change does not run it. An engine pin bump does, because that is
   `Cargo.toml`.
 - **A check's output is an empty directory.** What is cached is that it passed,
@@ -181,19 +192,18 @@ Three consequences worth knowing:
 
 It did, in three places, and each one was pinned differently:
 
-- **gradle's Maven graph** is `expo/gradle-deps.json` — 1642 artifacts across
+- **gradle's Maven graph** is `mobile/gradle-deps.json` — 1642 artifacts across
   `dl.google.com`, `maven.google.com`, `plugins.gradle.org` and Maven Central,
   replayed through nixpkgs' `mitm-cache` instead of fetched. Regenerate it with
-  the `gradle-deps` workflow button (`nix run .#gradle-deps`, or `harken
-  gradle-deps`), not on a laptop: recording runs both assembles, and a store
+  the `gradle-deps` workflow button (`nix run .#gradle-deps`), not on a laptop: recording runs both assembles, and a store
   plus two Android builds is about twenty gigabytes.
-- **the mutator module** is a derivation. `domain/mutators.sh` falls back to
-  `cargo install --git` when there is no sibling checkout; `nix build .#mutators`
-  builds `petros-codegen` from the pinned engine instead.
+- **the mutator module** is a derivation, and `petros-codegen` with it, both
+  from the engine `Cargo.toml` pins. The EAS hook, which has no nix, installs
+  the generator with `cargo install --git … --rev` at the same revision.
 - **`ubrn`** is compiled from a crate inside `node_modules`, and the npm package
-  ships no `Cargo.lock` at all. `expo/ubrn-Cargo.lock` is committed here
+  ships no `Cargo.lock` at all. `mobile/ubrn-Cargo.lock` is committed here
   and the vendored result is hashed. Do not trust the lockfile that appears at
-  `expo/node_modules/uniffi-bindgen-react-native/Cargo.lock`: cargo
+  `mobile/node_modules/uniffi-bindgen-react-native/Cargo.lock`: cargo
   writes it whenever it runs under this tree, and it comes out carrying the
   engine's seven crates because `[patch]` applies to whatever cargo resolves
   there. It is a local artifact wearing upstream's name.
@@ -242,7 +252,7 @@ ABI. None of that has anything to do with this app.
 
 `gradleState` does it once. What it is *not* built from is the point: its source
 is the Expo project's manifests and nothing else — no Rust, no TypeScript, no
-`expo/modules/harken-native` — so changing a mutation cannot invalidate a gradle
+`mobile/modules/harken-native` — so changing a mutation cannot invalidate a gradle
 build that never saw one. The APK restores `GRADLE_USER_HOME` and every `build`,
 `.cxx` and `.gradle` directory under the project and under `node_modules`, adds
 the engine, and assembles.
@@ -324,8 +334,8 @@ at all. That is worth remembering as a shape: a layer whose inputs are too wide
 is indistinguishable from a layer that does not work, because both present as
 "the step got longer". The task counts tell them apart and the clock does not.
 
-The layer's source is `expo` minus an exclusion list for that reason.
-Written as `${src}/expo/…` it takes the whole cleaned repository as an
+The layer's source is `mobile` minus an exclusion list for that reason.
+Written as `${src}/mobile/…` it takes the whole cleaned repository as an
 input, so every commit rebuilds it. Written as six named files it was correct
 until the seventh: a new `babel.config.js` or `react-native.config.js` would
 have been read by the build and unknown to the layer until someone remembered
@@ -342,7 +352,7 @@ compiled state behind — the build cache was covering for it.
 ## Two apps: `dev.harken.koon.us` beside `harken.koon.us`
 
 A development build and a release build are different apps to Android, so
-both can be installed at once. `expo/app.config.ts` is the whole app
+both can be installed at once. `mobile/app.config.ts` is the whole app
 config — there is no `app.json` — and decides which from `APP_VARIANT`:
 `production` is `harken.koon.us`, "Harken", the icon as drawn; anything else
 is `dev.harken.koon.us`, "Harken Dev", with a DEV banner across the bottom of
@@ -354,7 +364,7 @@ rather than listed under `plugins`, which `ExpoConfig` types as names only,
 so its props are checked against the plugin's own type too.
 
 The banner is drawn by `app-icon-badge`, but not by its config plugin.
-`expo/plugins/with-dev-badge.js` calls the package's `addBadge` from a dangerous
+`mobile/plugins/with-dev-badge.js` calls the package's `addBadge` from a dangerous
 mod and waits for each file to be readable before pointing the config at it.
 The package's own plugin starts the drawing and returns at once — the promise
 is dropped, `addBadge` does not await its write, and the iOS branch writes to
@@ -424,14 +434,9 @@ declares `App::SCHEMA` and never names a database library.
 
 Changing a mutation does **not** need a native build: `nix run .#mutators` rebuilds
 the module and rewrites the base64 `.ts` Metro pushes. Changing the *engine*
-does, and that is what EAS is for.
-
-`domain/mutators.sh` is the one thing that builds it outside nix, and `nix run
-.#mutators` and the EAS hook both call it — only one of them has the devshell.
-The single difference between them is where `petros-codegen` comes from: the
-checkout beside this one when there is one, so an engine edit needs no commit,
-and the published branch otherwise, because a build container has no sibling
-directory. CI is `nix build .#mutators`, the same two steps as a derivation.
+does, and that is what EAS is for. The generated `mobile/eas-rust.sh` runs the
+same two steps in a container with no nix, and CI is `nix build .#mutators`,
+the same two steps as a derivation.
 
 ## The bindings are generated, and are a feature rather than a package
 
@@ -879,10 +884,11 @@ first. The engine's own decisions are in `../petros/docs/decisions.md`.
   Android device, and it is under ten milliseconds however many are made in a
   row. See "Verified on a device" above for the three causes.
 - **The layout is four directories, each with its nix.** `domain/`, `server/`,
-  `iced/` and `expo/` each carry a `flake-module.nix` for what is in them and
-  the `nix run` programs that belong to them; `flake.nix` holds what they
-  share. There is no `scripts/`, no `docs/`, no justfile, and no
-  `rust-toolchain.toml`. What would repeat a fact nix holds — the engine's
-  revision, the Rust version, the ABIs — is generated from it instead. The two scripts that survive do so because something without
-  nix runs them: `domain/mutators.sh` for the EAS hook, and `expo/eas-rust.sh`
-  which is that hook.
+  `iced/` and `mobile/` each carry a `nix/` for what is in them and
+  the `nix run` programs that belong to them; the engine's `lib.mkApp` holds
+  what they share, so `flake.nix` is four lines that would serve any Petros
+  app. There is no `scripts/`, no `docs/`, no justfile, and no
+  `rust-toolchain.toml`. What would repeat a fact nix holds — the Rust
+  version, the targets, the ABIs, the engine revision an EAS container needs
+  — is generated from it instead, and the one script left, the EAS hook, is
+  one of the generated files.
