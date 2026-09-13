@@ -4,10 +4,10 @@
 //! `apply`: this one links it, the phone loads it as a module. Neither of them
 //! contains a line of domain logic.
 //!
-//!   terminal 1:  harken serve
-//!   terminal 2:  harken iced alice     # this, on the desktop
-//!   terminal 3:  harken iced bob       # …and again, as someone else
-//!   browser:     harken web            # this, at http://localhost:8080
+//!   terminal 1:  nix run .#serve
+//!   terminal 2:  nix run .#iced alice     # this, on the desktop
+//!   terminal 3:  nix run .#iced bob       # …and again, as someone else
+//!   browser:     nix run .#web            # this, at http://localhost:8080
 //!   a phone:     the Expo app, same server
 //!
 //! All of them are peers of one server, so a song favourited in the browser

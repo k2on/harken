@@ -4,7 +4,7 @@
 # it.
 #
 # It exists as a script because two different things need it and only one of
-# them has the devshell: a laptop running `harken mutators`, and the EAS build
+# them has the devshell: a laptop running `nix run .#mutators`, and the EAS build
 # hook (`expo/eas-rust.sh`). CI does not: `nix build .#mutators` is the same
 # two steps as a derivation.
 #

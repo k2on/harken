@@ -17,19 +17,19 @@ the first time they disagree the replicas diverge silently. So there is one.
 the Rust and run:
 
 ```sh
-harken bindings     # regenerate, then typecheck the app against the result
+nix run .#bindings     # regenerate, then typecheck the app against the result
 ```
 
 That reads the UniFFI metadata out of a host build of the crate, so it needs
-no NDK and no Xcode. `harken mutators` rebuilds the wasm module a mutation
-lives in and hands it to Metro; `harken mutators-watch` does it on every save.
+no NDK and no Xcode. `nix run .#mutators` rebuilds the wasm module a mutation
+lives in and hands it to Metro; `nix run .#mutators-watch` does it on every save.
 
 ## Running it
 
 ```sh
-harken serve                              # the server, on 8787
+nix run .#serve                              # the server, on 8787
 export ANDROID_HOME=~/Android/Sdk         # your SDK; the devshell does not ship one
-nix develop .#android -c harken expo-android
+nix develop .#android -c nix run .#expo-android
 ```
 
 Or let nix build the whole APK, SDK and all: `nix build .#apk` at the

@@ -43,7 +43,7 @@ jobs:
           df -h /
 
       - name: Record
-        run: nix run .#harken -- gradle-deps
+        run: nix run .#gradle-deps
 
       - name: What changed
         run: |

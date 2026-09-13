@@ -42,5 +42,5 @@ example
 /ios
 /android
 
-# Generated from the domain crate by `harken mutators`.
+# Generated from the domain crate by `nix run .#mutators`.
 src/mutators.gen.ts

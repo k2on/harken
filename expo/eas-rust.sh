@@ -8,8 +8,8 @@
 # during post-install is still found, and gradle is what runs next.
 #
 #   pre    install the toolchain `eas.json` names in `RUST_VERSION`, with the
-#          Android targets. No node_modules yet, so nothing else can happen
-#          here.
+#          targets in `RUST_TARGETS`. No node_modules yet, so nothing else
+#          can happen here.
 #   post   build the mutator module, hand it to the bundler, then cross-compile
 #          the engine and generate the turbo module for gradle to pick up.
 #
@@ -43,12 +43,12 @@ case "$stage" in
       | sh -s -- -y --default-toolchain none --profile minimal --no-modify-path
     # shellcheck disable=SC1091
     . "$HOME/.cargo/env"
-    # The version is `flake.nix`'s, carried here as `RUST_VERSION` in
-    # `eas.json` because a build container has no nix to read it from. The
-    # two have to agree; the flake is the one place it is decided.
+    # The version and the targets are `flake.nix`'s, carried here as
+    # `RUST_VERSION` and `RUST_TARGETS` in `eas.json` — which nix generates,
+    # so they cannot disagree.
+    # shellcheck disable=SC2086
     rustup toolchain install "${RUST_VERSION:?set RUST_VERSION in eas.json}" \
-      --profile minimal \
-      --target aarch64-linux-android --target x86_64-linux-android
+      --profile minimal $(for t in ${RUST_TARGETS:?set RUST_TARGETS in eas.json}; do printf ' --target %s' "$t"; done)
     rustup default "$RUST_VERSION"
     cargo install cargo-ndk --locked --version '^3'
     echo "--- $(rustc --version)"
@@ -68,7 +68,7 @@ case "$stage" in
     echo "--- ndk: ${ANDROID_NDK_HOME:-<none>}"
 
     echo "--- building the mutator module"
-    # The same script `harken mutators` runs. It writes src/mutators.gen.ts,
+    # The same script `nix run .#mutators` runs. It writes src/mutators.gen.ts,
     # which is gitignored and therefore not in the upload — the bundler needs
     # it to exist before it runs, which is now. There is no sibling petros
     # checkout here, so the script installs the generator from the published

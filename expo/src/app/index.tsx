@@ -7,7 +7,7 @@
  *
  * The default, the first time and only then, is guessed from whatever host
  * Metro is being served from, because that is almost always the machine running
- * `harken serve` too — and a phone cannot reach that machine's `127.0.0.1`. In a
+ * `nix run .#serve` too — and a phone cannot reach that machine's `127.0.0.1`. In a
  * release build there is no Metro and the guess is worth little, which is the
  * other half of why the answer is remembered.
  *
@@ -110,7 +110,7 @@ export default function Connect() {
         />
         <Text style={s.hint}>
           Stamped on every row this peer authors, and it picks the database — the same thing
-          `harken iced alice` means.
+          `nix run .#iced alice` means.
         </Text>
 
         <Text style={s.label}>server</Text>
@@ -127,7 +127,7 @@ export default function Connect() {
           onSubmitEditing={join}
         />
         <Text style={s.hint}>
-          `harken serve` listens on {PORT}. An Android emulator reaches the host as 10.0.2.2; a real
+          `nix run .#serve` listens on {PORT}. An Android emulator reaches the host as 10.0.2.2; a real
           device needs the machine&apos;s address on your network.
         </Text>
 

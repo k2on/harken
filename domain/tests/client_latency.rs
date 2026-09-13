@@ -7,7 +7,7 @@
 //! Measurements rather than assertions, so they are `#[ignore]`d: the suite has
 //! to stay under thirty seconds and the depth sweep alone takes a minute.
 //!
-//!     harken latency
+//!     nix run .#latency
 //!
 //! They are checked in because the numbers decided real changes — rendering on
 //! the tick rather than the tap, `synchronous = FULL`, a thread per wasm call —
@@ -25,7 +25,7 @@ fn median(mut v: Vec<f64>) -> f64 {
 
 /// How much of a mutation is the thread, and how much is the work?
 #[test]
-#[ignore = "a measurement, not an assertion: run it with `harken latency`"]
+#[ignore = "a measurement, not an assertion: run it with `nix run .#latency`"]
 fn the_cost_of_the_thread() {
     use petros_wasm_host::Mutators;
 
@@ -60,7 +60,7 @@ fn the_cost_of_the_thread() {
 /// explains why — and in WAL mode `synchronous = FULL` fsyncs on each of those.
 /// This times the same mutation with the pragma at each setting.
 #[test]
-#[ignore = "a measurement, not an assertion: run it with `harken latency`"]
+#[ignore = "a measurement, not an assertion: run it with `nix run .#latency`"]
 fn fsync_or_wasm() {
     println!("\n  one mutation on a file-backed database, by durability setting:");
     for sync in ["FULL", "NORMAL", "OFF"] {
@@ -98,7 +98,7 @@ fn fsync_or_wasm() {
 /// is acked, so pending grows under the benchmark and the median mixes depths.
 /// Each sample here builds its own peer to the depth, then times a single tap.
 #[test]
-#[ignore = "a measurement, not an assertion: run it with `harken latency`"]
+#[ignore = "a measurement, not an assertion: run it with `nix run .#latency`"]
 fn one_tap_at_a_fixed_depth() {
     fn one(sync: &str, depth: usize, n: usize) -> f64 {
         let mut ts = vec![];
@@ -152,7 +152,7 @@ fn one_tap_at_a_fixed_depth() {
 /// it if the loop is affordable, and on the phone every row in it crosses the
 /// sandbox boundary. This measures both sides at three library sizes.
 #[test]
-#[ignore = "a measurement, not an assertion: run it with `harken latency`"]
+#[ignore = "a measurement, not an assertion: run it with `nix run .#latency`"]
 fn a_bulk_mutation_row_by_row() {
     use petros::backend::SqliteStore;
     use petros_wasm_host::Mutators;
@@ -211,7 +211,7 @@ fn a_bulk_mutation_row_by_row() {
 /// date, and produce the list a screen renders — against the same thing done by
 /// re-running the query, which is what it did before.
 #[test]
-#[ignore = "a measurement, not an assertion: run it with `harken latency`"]
+#[ignore = "a measurement, not an assertion: run it with `nix run .#latency`"]
 fn maintained_against_re_read_on_the_client_path() {
     use petros::Changes;
 
@@ -294,7 +294,7 @@ fn maintained_against_re_read_on_the_client_path() {
 /// values with ciborium, which is not UniFFI's format — it is a stand-in with
 /// the same shape, and what matters is how it scales rather than its constant.
 #[test]
-#[ignore = "a measurement, not an assertion: run it with `harken latency`"]
+#[ignore = "a measurement, not an assertion: run it with `nix run .#latency`"]
 fn what_crosses_the_boundary() {
     use harken::Peer;
 

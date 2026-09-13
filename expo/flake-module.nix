@@ -3,12 +3,19 @@
 # layer, the SDK — and what is left here is what only this app knows: its
 # files, its hashes, and which of its crates are its own.
 #
-# Every derivation on the way is a package, because each is worth building
-# alone when something is slow or broken; the names are what the workflows
-# gc-root, so they stay.
+# Two files in this directory are generated from here rather than written,
+# because they would otherwise repeat what nix already knows: `eas.json`
+# (the Rust version and targets an EAS container installs) and the turbo
+# module's `ubrn.config.yaml` (the ABIs the APK is built for).
 { inputs, ... }: {
-  perSystem = { pkgs, toolchain, petrosJs, sources, self', ... }:
+  perSystem = { pkgs, lib, toolchain, rustVersion, petrosJs, sources, script, self', ... }:
     let
+      # arm64 covers every device made this decade; x86_64 is what an emulator
+      # on a normal laptop runs. Named once: the APK's gradle builds C++ for
+      # these, `ubrn` builds the Rust for them, and EAS installs the targets.
+      abis = [ "arm64-v8a" "x86_64" ];
+      rustTarget = { arm64-v8a = "aarch64-linux-android"; x86_64 = "x86_64-linux-android"; };
+
       app = petrosJs.mkApp {
         name = "harken";
         crate = "harken";
@@ -17,6 +24,7 @@
         appDir = "expo";
         appSrc = ./.;
         appCrates = [ "domain" "server" "iced" ];
+        archs = abis;
 
         inherit toolchain;
         petrosSrc = inputs.petros;
@@ -40,7 +48,7 @@
         ubrnLock = ./ubrn-Cargo.lock;
         ubrnHash = "sha256-YdwO0AOhoQjRbo5psMAxSSCRM7Ok8OsrjcAE13QMXP0=";
 
-        # Gradle's Maven graph, recorded by `harken gradle-deps`.
+        # Gradle's Maven graph, recorded by `nix run .#gradle-deps`.
         gradleDeps = ./gradle-deps.json;
 
         # Gradle 9.3.1, and the version is not negotiable: `pkgs.gradle_9`
@@ -63,6 +71,10 @@
           "src/app/index.tsx" = "export default function Index() { return null; }\n";
         };
       };
+
+      # `bun install` is the app's; the library's binaries are hoisted here.
+      ubrn = "./expo/node_modules/.bin/ubrn";
+      expoInstall = "(cd expo && bun install)";
     in
     {
       packages = {
@@ -75,26 +87,126 @@
         androidDeps-debug = app.deps-debug;
       };
 
+      files.file = {
+        "expo/eas.json".source = (pkgs.formats.json { }).generate "eas.json" {
+          cli = { version = ">= 12.0.0"; appVersionSource = "remote"; };
+          build = {
+            base = {
+              android.image = "latest";
+              env = {
+                RUST_VERSION = rustVersion;
+                RUST_TARGETS = lib.concatMapStringsSep " " (abi: rustTarget.${abi}) abis;
+                CARGO_TERM_COLOR = "never";
+              };
+            };
+            development = {
+              extends = "base";
+              developmentClient = true;
+              distribution = "internal";
+              android.buildType = "apk";
+              env.APP_VARIANT = "development";
+            };
+            preview = {
+              extends = "base";
+              distribution = "internal";
+              android.buildType = "apk";
+              env.APP_VARIANT = "production";
+            };
+            production = {
+              extends = "base";
+              autoIncrement = true;
+              android.buildType = "app-bundle";
+              env.APP_VARIANT = "production";
+            };
+          };
+          submit.production = { };
+        };
+        # How the generated turbo module is wired to the Rust: the domain crate
+        # itself, with the binding layer switched on. `--features foreign` is
+        # off by default so the desktop client and the server do not build
+        # uniffi and a wasm interpreter to reach the same `apply`.
+        "expo/modules/harken-native/ubrn.config.yaml".source = (pkgs.formats.yaml { }).generate "ubrn.config.yaml" {
+          rust = { directory = "../../.."; manifestPath = "domain/Cargo.toml"; };
+          bindings = { cpp = "cpp/generated"; ts = "src/generated"; };
+          android = {
+            directory = "android";
+            targets = abis;
+            apiLevel = 24;
+            cargoExtras = [ "--features" "foreign" ];
+          };
+          ios = {
+            directory = "ios";
+            targets = [ "aarch64-apple-ios" "aarch64-apple-ios-sim" ];
+            cargoExtras = [ "--features" "foreign" ];
+          };
+        };
+      };
+
+      apps = {
+        # Regenerate the client's TypeScript and C++ from a host build of the
+        # domain crate, then typecheck the app against it — no NDK, no Xcode,
+        # a couple of seconds. ubrn writes new files and never removes old
+        # ones, so what was generated before is wiped first.
+        bindings.program = script "bindings" {
+          runtimeInputs = [ pkgs.bun pkgs.nodejs_22 ];
+          text = ''
+            ${expoInstall}
+            cargo build -p harken --features foreign
+            case "$(uname -s)" in Darwin) lib=libharken.dylib ;; *) lib=libharken.so ;; esac
+            rm -rf expo/modules/harken-native/{src/generated,cpp/generated,android/src/main/java}
+            ${ubrn} generate jsi bindings "target/debug/$lib" --library --no-format \
+              --ts-dir expo/modules/harken-native/src/generated \
+              --cpp-dir expo/modules/harken-native/cpp/generated
+            (cd expo/modules/harken-native && ../../node_modules/.bin/ubrn generate jsi turbo-module \
+              --config ubrn.config.yaml --native-bindings harken)
+            (cd expo && ./node_modules/.bin/tsc --noEmit)
+          '';
+        };
+        # Build the Rust for a phone, regenerate, and run the app. Needs the
+        # SDK and the NDK: `nix develop .#android -c nix run .#expo-android`.
+        expo-android.program = script "expo-android" {
+          runtimeInputs = [ pkgs.bun pkgs.nodejs_22 pkgs.cargo-ndk ];
+          text = ''
+            ${expoInstall}
+            (cd expo/modules/harken-native && ../../node_modules/.bin/ubrn build android \
+              --config ubrn.config.yaml --and-generate --release)
+            (cd expo && bunx expo prebuild --platform android --clean && bunx expo run:android)
+          '';
+        };
+        expo-ios.program = script "expo-ios" {
+          runtimeInputs = [ pkgs.bun pkgs.nodejs_22 ];
+          text = ''
+            ${expoInstall}
+            (cd expo/modules/harken-native && ../../node_modules/.bin/ubrn build ios \
+              --config ubrn.config.yaml --and-generate --release)
+            (cd expo && bunx expo prebuild --platform ios --clean && bunx expo run:ios)
+          '';
+        };
+        # Re-record gradle's Maven graph into `expo/gradle-deps.json`. Working
+        # out what a gradle build fetches is a Turing-complete question, so
+        # nixpkgs runs the build once behind a recording proxy and keeps what
+        # came back; this drives that. It needs the network and costs a full
+        # build, which is why the `gradle-deps` workflow runs it on a runner.
+        # Anything after `--` goes to `nix build`.
+        gradle-deps.program = pkgs.writeShellApplication {
+          name = "gradle-deps";
+          runtimeInputs = [ pkgs.git ];
+          text = ''
+            cd "$(git rev-parse --show-toplevel)"
+            [ -s expo/gradle-deps.json ] || echo '{}' > expo/gradle-deps.json
+            script=$(nix build --no-link --print-out-paths ".#apk-debug.mitmCache.updateScript" "$@")
+            # Without bubblewrap: it clears the environment, which on a
+            # machine behind a proxy leaves nix unable to fetch.
+            USE_BWRAP=0 "$script"
+            echo "wrote expo/gradle-deps.json"
+          '';
+        };
+      };
+
+      # Metro and the Expo CLI are node programs even when bun runs them.
+      workspace.packages = [ pkgs.bun pkgs.nodejs_22 pkgs.eas-cli ];
+
       devShells = {
-        # Everything the default shell has, plus the two tools that turn Rust
-        # into an Android library.
-        #
-        #     nix develop .#android -c harken expo-android
-        #
-        # The SDK and the NDK are *not* here, and that is deliberate. This
-        # flake once composed them with `androidenv`; gradle then failed with
-        # "The SDK directory is not writable", because the Android Gradle
-        # Plugin resolves versions against the SDK directory and installs
-        # whatever is missing — and a nix store path is read-only by
-        # construction. Pinning every version to match Expo's exactly would
-        # postpone that fight rather than win it: Expo moves its `compileSdk`
-        # and `ndkVersion` on its own schedule, and nixpkgs moves on another.
-        #
-        # So the SDK comes from where it comes from for every other React
-        # Native project — Android Studio locally, the runner image in CI —
-        # and nix pins the part that is actually ours: the Rust toolchain, its
-        # Android targets, cargo-ndk and bun. `crates/ffi` cross-compiles
-        # identically either way.
         android = pkgs.mkShell {
           inputsFrom = [ self'.devShells.default ];
 
@@ -123,7 +235,7 @@
               if [ -z "''${ANDROID_NDK_HOME:-}" ] && [ -d "$ANDROID_HOME/ndk" ]; then
                 export ANDROID_NDK_HOME="$(ls -d "$ANDROID_HOME"/ndk/* | sort -V | tail -1)"
               fi
-              echo "harken android shell — harken expo-android"
+              echo "harken android shell — nix run .#expo-android"
               echo "  sdk: $ANDROID_HOME"
               echo "  ndk: ''${ANDROID_NDK_HOME:-<none found>}"
             fi

@@ -1,6 +1,6 @@
-# The sync server: the package, and the NixOS service that runs it.
+# The sync server: the package, `nix run .#serve`, and the NixOS service.
 { inputs, ... }: {
-  perSystem = { rustPlatform, sources, ... }:
+  perSystem = { pkgs, rustPlatform, sources, script, ... }:
     let
       inherit (sources) workspace cargoDeps;
 
@@ -24,6 +24,14 @@
         inherit harken-server;
         default = harken-server;
       };
+
+      # Pass 0.0.0.0:8787 to reach it from a phone on the same network.
+      apps.serve.program = script "serve" {
+        text = ''cargo run -p harken-server -- "''${1:-127.0.0.1:8787}"'';
+      };
+
+      # sqlite for looking at a log; ffmpeg for the audio server's transcoding.
+      workspace.packages = [ pkgs.sqlite pkgs.ffmpeg ];
     };
 
   # `services.harken.enable = true` and there is a music system on a port:
@@ -98,7 +106,7 @@
             # The log is the whole of the state, so it wants a real place
             # rather than the temp dir the demo uses. `TMPDIR` is what the
             # server reads for it, which is why this is set rather than a
-            # flag: the same binary serves `harken serve` and this.
+            # flag: the same binary serves `nix run .#serve` and this.
             DynamicUser = true;
             StateDirectory = "harken";
             Environment = [ "TMPDIR=%S/harken" ];

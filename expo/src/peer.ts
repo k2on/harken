@@ -20,7 +20,7 @@ import { usePeer as usePetrosPeer } from '@petros/client/react';
 import { Peer as NativePeer, PatchOp, type PeerLike, type Song } from 'harken-native';
 
 import { install, watch } from './mutators';
-// Generated from the module's own schema section by `harken mutators`. A call
+// Generated from the module's own schema section by `nix run .#mutators`. A call
 // site naming a verb the module does not have, or passing the wrong arguments
 // to one it does, is a `tsc` error — which is where the engine's deliberately
 // generic `mutate(kind, args)` gives up its opinion and this picks it back up.

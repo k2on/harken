@@ -12,7 +12,7 @@ use petros::backend::SqliteStore;
 use petros::{AutoCtx, Connection};
 use petros_wasm_host::Mutators;
 
-/// The module under test, read straight from where `harken mutators` puts it.
+/// The module under test, read straight from where `nix run .#mutators` puts it.
 /// A test fixture rather than part of the crate: `petros-wasm-host` runs
 /// modules and has no idea which one you mean.
 const MODULE: &[u8] = include_bytes!("../../target/wasm32-unknown-unknown/mutators/harken.wasm");

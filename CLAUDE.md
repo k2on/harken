@@ -30,20 +30,22 @@ domain/                  the domain — the ONLY apply
   src/lib.rs             …and, under `cfg(wasm32)`, the module's ABI
   src/foreign_client.rs  the client a foreign caller sees (feature `foreign`)
   src/wasm_app.rs        the App whose `apply` is a module (feature `foreign`)
-  mutators.sh            builds the module and its TypeScript types
-  flake-module.nix       the same two steps as derivations
+  mutators.sh            builds the module and its TypeScript types, outside nix
+  flake-module.nix       the same two steps as derivations, and `nix run .#mutators`
 server/                  axum, with one Petros handler mounted on it
   flake-module.nix       the package, and the NixOS service
 iced/                    the desktop and browser client
   src/heart.rs           the heart, drawn as a path (see below)
-  web/                   the browser shell `harken web` serves
+  web/                   the browser shell `nix run .#web` serves
   flake-module.nix       the desktop package, and the wasm build with its shell
 expo/                    the phone client; src/ is UI and a socket, nothing else
   modules/harken-native/ the turbo module — generated, gitignored, not authored
   gradle-deps.json       gradle's Maven graph, recorded, replayed by the APK build
+  eas.json               generated: the profiles, with the Rust version nix names
   eas-rust.sh            the Rust half of an EAS build, for a container with no nix
   flake-module.nix       the APK, and everything on the way to it
-flake.nix                the inputs, then everything the four share (see below)
+Cargo.toml.in            the workspace; `Cargo.toml` is generated from it
+flake.nix                the inputs, then what the four directories share (see below)
 ```
 
 The engine's own decisions — the rebase, the log, the wasm ABI, the schema
@@ -52,51 +54,66 @@ at the bottom of this file.
 
 ## Running it
 
-Everything is a subcommand of `harken`, which the devshell carries and which
-`nix run .#harken` runs without it. There is no justfile and no
-`rust-toolchain.toml`: the toolchain is named once, in `flake.nix`, and a
-contributor works inside `nix develop`.
+Every developer task is `nix run .#<name>`, defined in the directory it
+belongs to; `nix develop` carries the tools they need. There is no justfile
+and no `rust-toolchain.toml`: the toolchain is named once, in `flake.nix`.
 
 ```
-harken                  # fmt, lint, test — what a laptop runs
-nix flake check         # …the same three, as derivations. What CI runs
+nix run .#fmt               # cargo fmt
+nix run .#lint              # clippy over everything, warnings are errors; fmt --check
+nix run .#test              # the whole suite. Must stay under 30 seconds
+nix flake check             # …the same three, as derivations. What CI runs
+nix run .#latency           # the measurements: fsync, the sandbox, the maintained view
+nix run .#mutators          # rebuild the domain module and hand it to Metro (~0.35s)
+nix run .#mutators-watch    # …on every save. Leave it running beside `bun start`.
+nix run .#serve             # the sync server…
+nix run .#iced alice        # …a desktop peer…
+nix run .#iced bob          # …and another, to watch them sync
+nix run .#web               # …a browser peer, at localhost:8080
+nix run .#bindings          # regenerate the Expo client's TS from the domain crate
+nix run .#expo-android      # …and a phone. Needs `nix develop .#android`.
+nix run .#write-files       # regenerate Cargo.toml, eas.json, ubrn.config.yaml (see below)
 nix build .#harken-server   # …and .#harken-iced, .#harken-web
-harken latency          # the measurements: fsync, the sandbox, the maintained view
-harken mutators         # rebuild the domain module and hand it to Metro (~0.35s)
-harken mutators-watch   # …on every save. Leave it running beside `bun start`.
-harken serve            # the sync server…
-harken iced alice       # …a desktop peer…
-harken iced bob         # …and another, to watch them sync
-harken web              # …a browser peer, at localhost:8080
-harken bindings         # regenerate the Expo client's TS from the domain crate
-harken expo-android     # …and a phone. Needs `nix develop .#android`.
-harken engine <rev>     # move the engine pin in Cargo.toml
-nix build .#apk         # …or the whole APK, toolchain and all
+nix build .#apk             # the whole APK, toolchain and all
 nix build .#ndk-check       # …does the NDK *start* here? Twenty seconds
 nix build .#apk-release     # …the release build (debug-signed, see below)
-harken gradle-deps          # re-record gradle's Maven graph (or the CI button)
+nix run .#gradle-deps       # re-record gradle's Maven graph (or the CI button)
 ```
 
-`harken mutators` runs the generator out of `../petros`, so that repository has
-to be checked out beside this one. `nix build .#mutators` does not: it builds
-`petros-codegen` from the engine `flake.lock` pins, which is what the Android
-build and the checks use.
+`nix run .#mutators` runs the generator out of `../petros`, so that repository
+has to be checked out beside this one. `nix build .#mutators` does not: it
+builds `petros-codegen` from the engine `flake.lock` pins, which is what the
+Android build and the checks use.
 
-## The flake is four modules and a tail
+## The flake is four modules, and what they share
 
-`flake.nix` names its inputs, imports one `flake-module.nix` from each of the
-four directories, and then holds what none of them owns: one nixpkgs and one
-toolchain for all four, the source trees, the workspace-wide checks, the
-devshell and the `harken` command. Each directory's module is what is true
-about that directory and nothing else:
+`flake.nix` names its inputs and imports one `flake-module.nix` from each of
+the four directories. What it holds itself is what none of them owns: one
+nixpkgs and one toolchain, the source trees, the three whole-workspace checks
+and their `nix run` twins, and the devshell — which it assembles from what the
+directories contribute through one option, `workspace`: tools for the shell,
+libraries the checks need, a shell hook. So `flake.nix` names no directory
+beyond importing it, and adding a program is adding an `apps.<name>` where it
+belongs.
 
 ```
-domain/flake-module.nix   mutators and petros-codegen, via the engine's lib
-server/flake-module.nix   harken-server; `services.harken`
-iced/flake-module.nix     harken-iced, harken-web, the iced runtime libraries
-expo/flake-module.nix     the phone: one call to `petrosJs.mkApp`, and the android shell
-flake.nix (the tail)      pkgs, toolchain, sources, check-*, devShells.default, harken
+domain/flake-module.nix   mutators, petros-codegen; run: mutators, mutators-watch, latency
+server/flake-module.nix   harken-server, `services.harken`; run: serve
+iced/flake-module.nix     harken-iced, harken-web; run: iced, web, web-build
+expo/flake-module.nix     the phone: one call to `petrosJs.mkApp`; run: bindings,
+                          expo-android, expo-ios, gradle-deps; the `android` shell
+flake.nix                 pkgs, toolchain, sources, check-*; run: fmt, lint, test
 ```
+
+Three files in the tree are generated rather than written, because each would
+otherwise repeat something nix already knows: `Cargo.toml` from
+`Cargo.toml.in`, with the engine's revision from `flake.lock`; `expo/eas.json`,
+with the Rust version and the Android targets an EAS container installs; and
+the turbo module's `ubrn.config.yaml`, with the ABIs the APK is built for.
+`nix run .#write-files` writes them and `nix flake check` fails while a
+committed copy differs from what nix would write — that is the `files`
+module, `github:mightyiam/files`. Moving the engine pin is therefore
+`nix flake update petros` and `nix run .#write-files`, and nothing else.
 
 Everything reusable about building for a phone lives elsewhere and arrives
 through two inputs. `petros` brings the engine's nix — the crate list, the
@@ -118,12 +135,7 @@ The package names are unchanged — `apk`, `apk-debug`, `apk-release`,
 `androidSdk`, `gradle9`, `mutators`, `ndk-check`, the three checks — because
 the workflows gc-root them by name.
 
-The toolchain is `rust-bin.stable."1.90.0"` with the Android, iOS and wasm
-targets, in `flake.nix`. The one other place the version is written is
-`RUST_VERSION` in `expo/eas.json`, because an EAS container has no nix to read
-it from; `expo/eas-rust.sh` installs that with rustup. Move them together.
-
-## `harken` is for a laptop; `nix flake check` is what CI runs
+## `nix run` is for a laptop; `nix flake check` is what CI runs
 
 There are two CI files and they run the same two commands.
 `.github/workflows/android.yml` runs on GitHub's hosted runners, which start
@@ -138,15 +150,16 @@ the host's collector walks around them.
 
 
 They are the same three things — fmt, clippy, the suite — and only one of them
-is pinned. `harken` runs cargo against whatever `target/` is lying around; the
-checks are derivations over the narrow Rust tree and the vendored dependencies.
+is pinned. `nix run .#test` runs cargo against whatever `target/` is lying
+around; the checks are derivations over the narrow Rust tree and the vendored
+dependencies.
 CI ran the justfile behind `Swatinem/rust-cache` until that cache served a `target/`
 whose fingerprints claimed a build script was fresh and whose binary it had
 pruned:
 
     could not execute process …/build-script-build (never executed)
 
-The identical `harken` passed on a laptop. Two places, same command, different
+The identical command passed on a laptop. Two places, same command, different
 answers — which is the whole argument for the derivations.
 
 Three consequences worth knowing:
@@ -160,10 +173,9 @@ Three consequences worth knowing:
   and that is the entire skip mechanism — so the outputs have to be gc-rooted
   before the CI cache saves, or the collection takes them and the next run
   learns what it already knew.
-- **`harken` alone never actually checks formatting.** It runs `cargo fmt
-  --all` first, which rewrites the tree, so the `--check` in `lint` measures
-  what it has just written. `check-fmt` is the thing that can fail on
-  formatting, and `harken lint` on its own does too.
+- **Formatting is checked, not applied.** The justfile ran `cargo fmt --all`
+  before `--check`, so the check measured what it had just written.
+  `check-fmt` and `nix run .#lint` both only check; `nix run .#fmt` writes.
 
 ## The Android build does not reach the network
 
@@ -404,18 +416,18 @@ The cost is that a bulk mutation is a loop: `favorite_all` was one
 `INSERT ... SELECT` with a window function and is now a write per song, because
 a statement that inserts a thousand rows reports one result and not which rows
 they were — which is exactly what an incremental view cannot work from.
-`harken latency` measures it. A thousand songs is 35ms natively and 73ms through
+`nix run .#latency` measures it. A thousand songs is 35ms natively and 73ms through
 the sandbox; a hundred is 2ms and 16ms.
 
 Petros still uses Diesel internally; that is the engine's business. An app
 declares `App::SCHEMA` and never names a database library.
 
-Changing a mutation does **not** need a native build: `harken mutators` rebuilds
+Changing a mutation does **not** need a native build: `nix run .#mutators` rebuilds
 the module and rewrites the base64 `.ts` Metro pushes. Changing the *engine*
 does, and that is what EAS is for.
 
-`domain/mutators.sh` is the one thing that builds it outside nix, and `harken
-mutators` and the EAS hook both call it — only one of them has the devshell.
+`domain/mutators.sh` is the one thing that builds it outside nix, and `nix run
+.#mutators` and the EAS hook both call it — only one of them has the devshell.
 The single difference between them is where `petros-codegen` comes from: the
 checkout beside this one when there is one, so an engine edit needs no commit,
 and the published branch otherwise, because a build container has no sibling
@@ -701,7 +713,7 @@ so the Expo screen just writes `♥`.
 `iced` holds a `petros::ivm::View`, hydrates it once at boot, and
 splices its `Vec<Song>` from the patches the view reports. A tap costs the rows
 that moved rather than the whole library — flat, where re-reading grew:
-`harken latency` prints the numbers and the decisions below explain them.
+`nix run .#latency` prints the numbers and the decisions below explain them.
 
 The Expo client still calls `library()` on every change, and that is deliberate
 rather than unfinished. Its cost is the list crossing the UniFFI bridge, not the
@@ -738,7 +750,7 @@ so the path exists; nobody has walked it. Adding a `macos-15` job back is the
 whole of what it would take.
 
 The JavaScript half of the bridge is unmeasured too. What crosses is measured —
-`harken latency` prints it, and the decisions below explain why it is seventy
+`nix run .#latency` prints it, and the decisions below explain why it is seventy
 bytes rather than seventy kilobytes — but what React Native then does with those
 values on a device is not.
 
@@ -760,7 +772,7 @@ first. The engine's own decisions are in `../petros/docs/decisions.md`.
   the replicas diverge silently. So the domain crate's `foreign` feature
   exports the client over UniFFI and `uniffi-bindgen-react-native` generates
   the TypeScript. The generated files are gitignored rather than committed, so
-  nobody can hand-edit them, and `harken bindings` regenerates and then runs
+  nobody can hand-edit them, and `nix run .#bindings` regenerates and then runs
   `tsc`, which turns "the app still calls the API the Rust used to have" into
   a compile error. There is no UDL file: `#[uniffi::export]` on the Rust *is*
   the interface definition.
@@ -819,7 +831,7 @@ first. The engine's own decisions are in `../petros/docs/decisions.md`.
   generates both directions, and a read returns a tree already grouped. Which
   end you read from decides the join. What it cost: `favorite_all` was one
   `INSERT ... SELECT` and is a write per song now, because typed writes must
-  say *what* changed. `harken latency` runs it:
+  say *what* changed. `nix run .#latency` runs it:
 
   ```
     favorite_all, as a loop over N songs:
@@ -867,10 +879,10 @@ first. The engine's own decisions are in `../petros/docs/decisions.md`.
   Android device, and it is under ten milliseconds however many are made in a
   row. See "Verified on a device" above for the three causes.
 - **The layout is four directories, each with its nix.** `domain/`, `server/`,
-  `iced/` and `expo/` each carry a `flake-module.nix` for what is in them;
-  `flake.nix` holds what they share. There is no `scripts/` — the developer
-  tasks are `harken`, in the devshell — no `docs/`, no justfile, and no
-  `rust-toolchain.toml`, because a version written in two files is a version
-  that drifts. The two scripts that survive do so because something without
+  `iced/` and `expo/` each carry a `flake-module.nix` for what is in them and
+  the `nix run` programs that belong to them; `flake.nix` holds what they
+  share. There is no `scripts/`, no `docs/`, no justfile, and no
+  `rust-toolchain.toml`. What would repeat a fact nix holds — the engine's
+  revision, the Rust version, the ABIs — is generated from it instead. The two scripts that survive do so because something without
   nix runs them: `domain/mutators.sh` for the EAS hook, and `expo/eas-rust.sh`
   which is that hook.

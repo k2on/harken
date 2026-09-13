@@ -14,9 +14,9 @@
 //! exactly what it was, and says so.
 //!
 //! ```text
-//! harken serve                     # 127.0.0.1:8787, a file in the temp dir
-//! harken serve 0.0.0.0:8787        # reachable from a phone on the same network
-//! HARKEN_WEB=iced/web harken serve   # …with the browser client on /
+//! nix run .#serve                     # 127.0.0.1:8787, a file in the temp dir
+//! nix run .#serve 0.0.0.0:8787        # reachable from a phone on the same network
+//! HARKEN_WEB=iced/web nix run .#serve   # …with the browser client on /
 //! ```
 
 use std::sync::Arc;
@@ -35,7 +35,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "127.0.0.1:8787".to_string());
-    // The same path the demo peers use, so `harken serve` and `harken iced` meet
+    // The same path the demo peers use, so `nix run .#serve` and `nix run .#iced` meet
     // without being told where.
     let path = std::env::temp_dir().join("harken-server.db");
 
