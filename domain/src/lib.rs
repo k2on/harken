@@ -37,14 +37,20 @@ petros::app!(HarkenApp {
 // The wasm ABI: `apply` and `fill_auto` behind the entry points the interpreter
 // calls, and a store made of imported functions.
 //
-// Only on wasm, and it is the whole of what a separate `harken-wasm` crate used
-// to be. A separate crate bought nothing: what keeps SQLite and the engine out
-// of the module is `--no-default-features`, a flag on the build rather than a
-// property of a package.
+// Only in the module build, and it is the whole of what a separate
+// `harken-wasm` crate used to be. A separate crate bought nothing: what keeps
+// SQLite and the engine out of the module is `--no-default-features`, a flag
+// on the build rather than a property of a package.
+//
+// `wasm32` alone is not the condition: the browser client is wasm32 too, with
+// `storage` on, and linking this there imports the host's functions from a
+// wasm module named `petros` — which wasm-bindgen renders as
+// `import … from "petros"` and the browser refuses as a bare specifier
+// before a line of the app runs.
 //
 // `//` and not `///` — a doc comment cannot attach to a macro invocation, and
 // the warning for that only appears on the one target this is compiled for.
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", not(feature = "storage")))]
 petros_wasm_guest::export!(functions);
 
 // At the crate root because that is where it defines `UniFfiTag`, which every
