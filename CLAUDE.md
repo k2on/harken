@@ -53,6 +53,17 @@ iced/                    the desktop and browser client
   nix/web.nix            the wasm build, `web` and `web-build`
 mobile/                  the phone client; src/ is UI and a socket, nothing else
   src/auth.ts            …and signing in, through a browser sheet and `harken://`
+  src/peer.ts            the database, the maintained library, and what a
+                         screen may ask of either
+  src/player.tsx         what is playing — `expo-audio`, the queue, and the
+                         transport on the lock screen
+  src/media.ts           …and the one place a `file` becomes a URL
+  src/theme.ts           the palette: light, dark, and the gold. The only place
+                         in this directory a colour is written down
+  src/ui/icon.tsx        every glyph, as an SF Symbol, a Material Symbol, and a
+                         character to fall back to (see below)
+  src/ui/                the rest of the screen: the chips, the row, the bar,
+                         the player sheet, the composer
   nix/readme.nix         its section of README.md
   modules/harken-native/ the turbo module — generated, gitignored, not authored
   gradle-deps.json       gradle's Maven graph, recorded, replayed by the APK build
@@ -534,8 +545,16 @@ written down as "the heart needs an SVG" instead of as what it was. `«`, `»`
 and `·` are in the font; `▶`, `❚`, `♥` and `▂` are not. `iced/src/icon.rs`
 draws all of them.
 
-React Native uses the system font, which has the glyphs, so the Expo screen
-just writes `♥`.
+React Native has the same problem wearing different clothes. The system font
+does have `♥`, and the screen used to just write it — but a transport drawn in
+text characters looks like a transport drawn in text characters, so the phone
+uses `expo-symbols` now: SF Symbols on iOS and Google's Material Symbols on
+Android, two names for one idea, both stated in `mobile/src/ui/icon.tsx`. A
+name either platform does not have draws nothing at all, which is the identical
+failure — so every glyph there also gives `SymbolView` a `fallback` of the
+character, and the worst case is a plain arrow rather than a blank square where
+the play button should be. `tsc` checks both names against the platform's own
+union, which catches the misspelling and not the omission.
 
 It was a `canvas` for a while, and that is the trap worth keeping. **A canvas
 inside a `scrollable` is not translated to the row it belongs to under the
@@ -752,6 +771,17 @@ against one of them.
   The pattern is worth stating once: **anything Google's build downloads for
   itself is unpatched and will not run; anything nixpkgs packaged is patched and
   will.** Every such component has to be pinned and pointed at.
+- **A new dependency moves two pinned things, and one of them is not local.**
+  `nodeModulesHash` in `mobile/nix/default.nix` is the hash of the installed
+  tree, per platform, and each can only be computed on the machine it belongs
+  to — a stale one fails the build and nix prints the right one, which is the
+  whole mechanism. A new *native* module moves `mobile/gradle-deps.json` as
+  well: gradle's Maven graph is recorded and replayed offline, so an artifact
+  nobody recorded is not a slow download but a build that cannot reach it.
+  Re-record with the `gradle-deps` workflow button (`nix run .#gradle-deps`),
+  not on a laptop — recording runs both assembles, and a store plus two Android
+  builds is about twenty gigabytes. `expo-audio` is the case that made this
+  worth writing down: it brings androidx.media3, which nothing here had.
 - **nix does not supply the Android SDK** for the *devshell*, on purpose:
   gradle installs missing
   components into the SDK directory and the store is read-only. Bring your own
@@ -939,19 +969,36 @@ the status line carries the pane and anything half-typed — a swallowed `5`,
 or a `g` still waiting for its pair — because invisible pending input is the
 one thing that makes a modal keymap feel broken.
 
-## The desktop client maintains its list; the phone does not yet
+## Both clients maintain their list; only one of them re-reads anything
 
 `iced` holds a `petros::ivm::View`, hydrates it once at boot, and
-splices its `Vec<Song>` from the patches the view reports. A tap costs the rows
+splices its `Vec<Item>` from the patches the view reports. A tap costs the rows
 that moved rather than the whole library — flat, where re-reading grew:
 `nix run .#latency` prints the numbers and the decisions below explain them.
 
-The Expo client still calls `library()` on every change, and that is deliberate
-rather than unfinished. Its cost is the list crossing the UniFFI bridge, not the
-query, so maintaining the query alone would save the cheap half. The engine side
-is ready — a module's writes report what they changed — but the bridge has not
-been measured on a device, and designing for it unmeasured is how the desktop's
-O(n) decode was missed the first time.
+The phone does the same thing across the bridge. `Peer` holds the views, the
+macro settles them after every mutation and every frame, and `libraryUpdate()`
+hands back the rows that moved — seventy bytes, flat, where the whole list was
+seventy kilobytes and growing. `mobile/src/peer.ts` splices a list held in the
+session's `scratch`, which is where it has to live: the view reports what moved
+*since it was last asked*, so a list held in a component starts empty on the
+second mount and then receives patches against a list nobody has.
+
+What is *not* maintained, in either client, is the list a playlist, an album or
+an artist is showing. That is one query per change and deliberately so: the
+maintained view is the list you are looking at most of the time, and re-reading
+a single album when something moves is a hundred rows rather than the library.
+Both clients do it at the same moment for the same reason — `reload_shown` on
+the desktop, and the selection folded into the phone's `query`, re-run by a
+`run(() => {})` when a chip is tapped.
+
+A reader is what makes the second one subtle: the phone's read happens inside
+`usePeer`'s `query`, which `run` calls synchronously, *before* React has
+re-rendered. So the selection is held in a ref beside its state — state alone
+answers with the selection that was just replaced. Reading it through the hook's
+`run` from a `useMemo` instead does something worse: `run` snapshots, the
+snapshot is a new object, the memo's dependency moves, and it reads again,
+forever.
 
 ## Verified on a device: sub-10ms mutations, held under spamming
 
@@ -1135,3 +1182,52 @@ first. The engine's own decisions are in `../petros/docs/decisions.md`.
   version, the targets, the ABIs, the engine revision an EAS container needs
   — is generated from it instead, and the one script left, the EAS hook, is
   one of the generated files.
+- **The phone plays, and the platform is what plays it.** `expo-audio` gets a
+  URL and gives back streaming, buffering, range requests, seeking and a lock
+  screen — the same trade `iced/src/player.rs` makes with an `<audio>` element,
+  and the same reason: those are five problems that would each have to be
+  solved again in a language that is not the platform's. `mobile/src/player.tsx`
+  is the provider, and it is at the *root* rather than on the library screen
+  because `useAudioPlayer` releases its player when the component holding it
+  unmounts, and music that stops when you leave a screen is not music.
+  What crosses from the library is a `Track` and a queue, and the queue is a
+  snapshot of what was on screen when play was pressed — the desktop's rule,
+  for the desktop's reason: a list that is a live reference gets silently
+  redirected by somebody else's edit arriving.
+- **`media.file` is a name, so the client resolves it.** The column has always
+  been "the file in the media store… the bytes travel over HTTP and only the
+  name of them is synced", and the demo's Wikimedia recordings are absolute
+  URLs, which is why the desktop can hand the string straight to an element and
+  get away with it. `mobile/src/media.ts` is the one place that decision is
+  written down: an absolute URL is already an answer, anything else is resolved
+  against the server this peer is pointed at, and a peer working alone has no
+  URL for a relative name and says so rather than handing the player something
+  it will fail on in silence.
+- **A sidebar becomes two rows of chips, and nothing else moves.** The phone
+  shows the same four choices the desktop's sidebar does, in the same order,
+  from the same four queries — headings on the first row, what is under the
+  chosen heading on the second. That the grouping lives in the domain is what
+  makes this a rearrangement rather than a second design: a client that folded
+  the library itself would fold it differently, and the two would disagree
+  about what an album is the first time one of them met a track with two
+  artists.
+- **No component library, and the animations are the ones already pinned.**
+  A kit was the obvious answer and it is the wrong one twice over: what makes
+  this look like a music app is a gold palette, a bar that expands and a bar
+  that can be dragged, none of which a Material or Tailwind kit gives you — and
+  every one of them arrives as a babel plugin, a metro wrapper, a peer-version
+  range against Reanimated 4, or all three, in a tree where a dependency change
+  moves two pinned hashes and, for a native one, a recorded Maven graph. So the
+  animations are `react-native-reanimated` and `react-native-gesture-handler`
+  directly, which every such kit is a wrapper over and which `expo-router`
+  already requires; the icons are `expo-symbols`, which was already here; and
+  the palette is `mobile/src/theme.ts`, which is forty lines. The two
+  dependencies that were added are the two that buy something nothing here can
+  do: `expo-audio` and `expo-linear-gradient`.
+- **The gold is not one colour.** Every background and every text colour comes
+  from `theme.ts` and none from a component, which is the phone's version of
+  the rule that makes the desktop work in dark mode — but the two themes do not
+  share the accent. A dark sheet can take a bright leaf gold; a warm white one
+  cannot, because `onAccent` has to be legible *on* it and nothing is legible
+  on bright gold. That asymmetry is the only one in the file, and it is there
+  rather than in a component so that it stays the only one.

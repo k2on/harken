@@ -1,31 +1,37 @@
 /**
- * The library, and the hearts.
+ * The library, the browser, and the player.
  *
  * The same library the iced window shows, because it is the same `apply` — see
- * `domain`. Take it offline with the pill, heart a few songs, heart some
- * on another peer too, come back: your favourites land *after* whatever arrived
- * while you were away, because "add to favourites" reads the end of the
- * playlist rather than naming a position. That is the rebase.
+ * `domain`. Take it offline with the pill, heart a few tracks, heart some on
+ * another peer too, come back: your hearts land *after* whatever arrived while
+ * you were away, because "add to the playlist" reads the end of it rather than
+ * naming a position. That is the rebase, and it is the one thing this app is
+ * really demonstrating.
+ *
+ * What this screen owns is the arrangement. The peer owns the data and the
+ * reads (`src/peer.ts`), the player owns what is sounding (`src/player.tsx`),
+ * and the domain owns everything either of them means.
  */
 
-import { useState } from 'react';
-import { Redirect, router, Stack, useLocalSearchParams } from 'expo-router';
+import { useCallback, useMemo, useRef, useState } from 'react';
+import { Redirect, router, useLocalSearchParams } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Login } from '@petros/client';
-import type { Song } from 'harken-native';
-import {
-  FlatList,
-  KeyboardAvoidingView,
-  Platform,
-  Pressable,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import type { Item } from 'harken-native';
+import { Alert, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import Animated, { FadeIn, LinearTransition } from 'react-native-reanimated';
 
 import { recallServer, remembered, signIn, signOut } from '@/auth';
-import { usePeer } from '@/peer';
-import { useTheme } from '@/theme';
+import { mediaUrl } from '@/media';
+import { sourceTitle, usePeer, type Peer } from '@/peer';
+import { usePlayer, type Track } from '@/player';
+import { radius, space, useTheme, type Theme } from '@/theme';
+import { Browse } from '@/ui/browse';
+import { Composer } from '@/ui/composer';
+import { Icon } from '@/ui/icon';
+import { MiniPlayer } from '@/ui/miniplayer';
+import { NowPlaying } from '@/ui/nowplaying';
+import { TrackRow } from '@/ui/trackrow';
 
 export default function Library() {
   const params = useLocalSearchParams<{ server?: string; online?: string }>();
@@ -45,13 +51,73 @@ function Signed(props: { server: string; login: Login; online: boolean }) {
   // The login can change under a running peer — turned away and signed in
   // again — and the new token reconnects the same database.
   const [login, setLogin] = useState(props.login);
+  const theme = useTheme();
+  const insets = useSafeAreaInsets();
   // "offline" is a choice and not a failed connection: no socket at all,
   // rather than a URL nothing answers on.
-  const theme = useTheme();
   const peer = usePeer(login, props.online ? server : null);
-  const [title, setTitle] = useState('');
-  const [artist, setArtist] = useState('');
+  const player = usePlayer();
+
+  const [composing, setComposing] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [scrub, setScrub] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
+
+  const rows = peer.shown;
+
+  /**
+   * A library row as the player needs it.
+   *
+   * `file` is a name in the media store, or a whole URL for something already
+   * on the web — `src/media.ts` is the one place that is decided.
+   */
+  const trackOf = useCallback(
+    (item: Item): Track => ({
+      id: item.id,
+      title: item.title,
+      creator: item.creator,
+      album: peer.albumOf[item.id] ?? '',
+      ms: Number(item.durationMs),
+      url: mediaUrl(item.file, server),
+    }),
+    [peer.albumOf, server],
+  );
+
+  // The three row callbacks are built once and read the current list through
+  // refs. Built per render instead, every row in the list would re-render on
+  // every tick of the player — which is the opposite of what maintaining the
+  // view was for.
+  const latest = useRef({ rows, trackOf, peer });
+  latest.current = { rows, trackOf, peer };
+
+  const onPress = useCallback(
+    (item: Item) => {
+      const { rows: list, trackOf: make } = latest.current;
+      // The queue is what is on screen, taken now: skipping follows the list
+      // you pressed play in, even after the browser moves somewhere else.
+      player.play(make(item), list.map(make));
+    },
+    [player.play],
+  );
+
+  const onHeart = useCallback((item: Item) => {
+    latest.current.peer.setOnPlaylist(item.id, !item.onPlaylist);
+  }, []);
+
+  const onLongPress = useCallback((item: Item) => {
+    Alert.alert(item.title, 'Take this out of the library, and off every playlist holding it?', [
+      { text: 'Keep it', style: 'cancel' },
+      {
+        text: 'Remove',
+        style: 'destructive',
+        onPress: () => latest.current.peer.removeMedia(item.id),
+      },
+    ]);
+  }, []);
+
+  // Stable, because the player sheet builds its drag gesture from it and the
+  // status ticks four times a second.
+  const closePlayer = useCallback(() => setOpen(false), []);
 
   const again = async () => {
     if (busy) return;
@@ -64,191 +130,277 @@ function Signed(props: { server: string; login: Login; online: boolean }) {
     }
   };
 
-  const leave = async () => {
-    await signOut(server);
-    router.replace('/');
+  const leave = () => {
+    Alert.alert('Sign out?', `${login.user.name || login.user.id} on ${server}`, [
+      { text: 'Stay', style: 'cancel' },
+      {
+        text: 'Sign out',
+        style: 'destructive',
+        onPress: async () => {
+          await signOut(server);
+          router.replace('/');
+        },
+      },
+    ]);
   };
 
-  const submit = () => {
-    if (!title.trim()) return;
-    peer.addSong(title, artist);
-    setTitle('');
-    setArtist('');
-  };
+  // The engine showing through: `cursor` is how much of the server's log has
+  // been applied, `pending` is what this peer has done that no server has
+  // confirmed yet.
+  const status = useMemo(
+    () =>
+      [
+        `cursor ${peer.cursor}`,
+        `${peer.pending} pending`,
+        `mutators v${peer.mutators}`,
+        peer.lastMutationMs === null ? null : `${peer.lastMutationMs.toFixed(1)}ms in rust`,
+        peer.note || null,
+      ]
+        .filter(Boolean)
+        .join('  ·  '),
+    [peer.cursor, peer.pending, peer.mutators, peer.lastMutationMs, peer.note],
+  );
 
-  const favourites = peer.songs.filter((s) => s.favorited).length;
+  const playingId = player.track?.id;
+  const heartedNow = useMemo(
+    () => (playingId ? (peer.items.find((i) => i.id === playingId)?.onPlaylist ?? false) : false),
+    [peer.items, playingId],
+  );
+
   const s = styles(theme);
   return (
-    <KeyboardAvoidingView
-      style={s.page}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
-    >
-      <Stack.Screen options={{ title: `harken · ${login.user.name || login.user.id}` }} />
-
-      <View style={s.entry}>
-        <View style={s.inputs}>
-          <TextInput
-            style={s.input}
-            value={title}
-            onChangeText={setTitle}
-            placeholder="title"
-            placeholderTextColor={theme.dim}
-            onSubmitEditing={submit}
-            returnKeyType="next"
-            blurOnSubmit={false}
-          />
-          <TextInput
-            style={s.input}
-            value={artist}
-            onChangeText={setArtist}
-            placeholder="artist"
-            placeholderTextColor={theme.dim}
-            onSubmitEditing={submit}
-            returnKeyType="done"
-            blurOnSubmit={false}
-          />
-        </View>
-        <Pressable style={s.add} onPress={submit}>
-          <Text style={s.addText}>add</Text>
-        </Pressable>
-      </View>
-
-      {/* Not a special case in the engine or in this file. It is a verb name
-          the wasm module understands, reached through the one generic entry
-          point — so adding it needed a module rebuild and this line, and no
-          native build at all. */}
-      <View style={s.verbs}>
-        {peer.songs.length > favourites ? (
-          <Pressable onPress={() => peer.mutate('FavoriteAll')}>
-            <Text style={s.verb}>heart everything</Text>
-          </Pressable>
-        ) : null}
-        <Pressable onPress={leave}>
-          <Text style={s.verb}>sign out</Text>
-        </Pressable>
-      </View>
-
-      <FlatList
-        data={peer.songs}
-        keyExtractor={(song) => song.id}
-        contentContainerStyle={peer.songs.length === 0 && s.emptyBox}
-        ListEmptyComponent={<Text style={s.empty}>nothing here yet</Text>}
-        renderItem={({ item }: { item: Song }) => (
-          <View style={s.row}>
-            <Pressable
-              onPress={() => peer.setFavorite(item.id, !item.favorited)}
-              hitSlop={10}
-              accessibilityRole="button"
-              accessibilityLabel={item.favorited ? `unheart ${item.title}` : `heart ${item.title}`}
-            >
-              <Text style={[s.heart, item.favorited ? s.hearted : s.unhearted]}>♥</Text>
-            </Pressable>
-            <View style={s.rowText}>
-              <Text style={s.title} numberOfLines={1}>
-                {item.title}
-              </Text>
-              <Text style={s.meta} numberOfLines={1}>
-                {item.artist} · {item.actor}
-                {/* Its place in the playlist, recomputed from `MAX(pos) + 1` on
-                    every replay — so watching it move is watching the rebase. */}
-                {item.favorited ? ` · #${String(item.favoritePos)}` : ''}
-              </Text>
-            </View>
-            <Pressable onPress={() => peer.removeSong(item.id)} hitSlop={8}>
-              <Text style={s.remove}>remove</Text>
-            </Pressable>
-          </View>
-        )}
+    <View style={[s.page, { paddingTop: insets.top }]}>
+      <Header
+        peer={peer}
+        theme={theme}
+        who={login.user.name || login.user.id}
+        tracks={rows.length}
+        busy={busy}
+        onAdd={() => setComposing(true)}
+        onSignIn={again}
+        onSignOut={leave}
       />
 
-      {/* The engine showing through: `cursor` is how much of the server's log
-          has been applied, `pending` is what this peer has done that no server
-          has confirmed yet. */}
-      <View style={s.status}>
-        {/* Turned away by the server — an expired token, a revoked session.
-            The database and the pending edits stay; signing in again as the
-            same person offers them. Not the online pill, because knocking
-            again with the same token is only refused again. */}
-        {peer.denied !== null ? (
-          <Pressable style={[s.pill, { backgroundColor: theme.danger }]} onPress={again}>
-            <Text style={s.pillText}>{busy ? 'signing in…' : 'sign in again'}</Text>
-          </Pressable>
-        ) : (
-          <Pressable
-            style={[s.pill, { backgroundColor: peer.online ? theme.good : theme.dim }]}
-            onPress={peer.toggleLink}
-          >
-            <Text style={s.pillText}>{peer.online ? 'online' : 'offline'}</Text>
-          </Pressable>
-        )}
-        <Text style={s.statusText} numberOfLines={2}>
-          {peer.songs.length} songs · {favourites} hearted · cursor {peer.cursor} ·{' '}
-          {peer.pending} pending · mutators v{peer.mutators}
-          {peer.lastMutationMs !== null ? ` · ${peer.lastMutationMs.toFixed(1)}ms in rust` : ''}
-          {peer.note ? `  ·  ${peer.note}` : ''}
-        </Text>
-      </View>
-    </KeyboardAvoidingView>
+      <Browse
+        source={peer.source}
+        onSelect={peer.setSource}
+        playlists={peer.playlists}
+        albums={peer.albums}
+        artists={peer.artists}
+        libraryCount={peer.items.length}
+        theme={theme}
+      />
+
+      <Animated.View style={s.list} layout={LinearTransition.duration(180)}>
+        <FlatList
+          data={rows}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={rows.length === 0 ? s.emptyBox : s.rows}
+          ListEmptyComponent={<Empty theme={theme} onAdd={() => setComposing(true)} />}
+          // The whole point of the maintained view is that a change costs the
+          // rows that moved; a list that re-measures everything on every change
+          // would give it all back.
+          removeClippedSubviews
+          initialNumToRender={14}
+          windowSize={11}
+          renderItem={({ item }) => (
+            <TrackRow
+              item={item}
+              album={peer.albumOf[item.id] ?? ''}
+              playing={playingId === item.id}
+              theme={theme}
+              onPress={onPress}
+              onHeart={onHeart}
+              onLongPress={onLongPress}
+            />
+          )}
+        />
+      </Animated.View>
+
+      <MiniPlayer
+        player={player}
+        album={playingId ? (peer.albumOf[playingId] ?? '') : ''}
+        theme={theme}
+        bottom={insets.bottom}
+        onOpen={() => setOpen(true)}
+      />
+
+      {open && player.track ? (
+        <NowPlaying
+          player={player}
+          album={playingId ? (peer.albumOf[playingId] ?? '') : ''}
+          hearted={heartedNow}
+          onHeart={() => playingId && peer.setOnPlaylist(playingId, !heartedNow)}
+          onClose={closePlayer}
+          theme={theme}
+          status={status}
+          top={insets.top}
+          bottom={insets.bottom}
+          scrub={scrub}
+          onScrub={setScrub}
+        />
+      ) : null}
+
+      {composing ? (
+        <Composer
+          theme={theme}
+          bottom={insets.bottom}
+          onAdd={peer.addSong}
+          onClose={() => setComposing(false)}
+        />
+      ) : null}
+    </View>
   );
 }
 
-const styles = (t: ReturnType<typeof useTheme>) =>
+function Header({
+  peer,
+  theme,
+  who,
+  tracks,
+  busy,
+  onAdd,
+  onSignIn,
+  onSignOut,
+}: {
+  peer: Peer;
+  theme: Theme;
+  who: string;
+  tracks: number;
+  busy: boolean;
+  onAdd: () => void;
+  onSignIn: () => void;
+  onSignOut: () => void;
+}) {
+  const s = styles(theme);
+  // Turned away by the server — an expired token, a revoked session. The
+  // database and the pending edits stay; signing in again as the same person
+  // offers them. Not the online pill, because knocking again with the same
+  // token is only refused again.
+  const denied = peer.denied !== null;
+  return (
+    <View style={s.head}>
+      <View style={s.headText}>
+        <Text style={s.kicker} numberOfLines={1}>
+          {who}
+        </Text>
+        <Text style={s.h1} numberOfLines={1}>
+          {sourceTitle(peer.source)}
+        </Text>
+        <Text style={s.sub} numberOfLines={1}>
+          {tracks} {tracks === 1 ? 'track' : 'tracks'} · {peer.onPlaylist} hearted
+          {peer.pending > 0 ? ` · ${peer.pending} pending` : ''}
+        </Text>
+      </View>
+
+      <View style={s.actions}>
+        <Pressable
+          onPress={denied ? onSignIn : peer.toggleLink}
+          style={[s.pill, denied ? s.pillDenied : peer.online ? s.pillOn : s.pillOff]}
+          accessibilityRole="button"
+        >
+          <Icon
+            name={peer.online && !denied ? 'online' : 'offline'}
+            size={13}
+            tint={denied || peer.online ? theme.onAccent : theme.dim}
+          />
+          <Text style={[s.pillText, (denied || peer.online) && s.pillTextOn]}>
+            {denied ? (busy ? 'signing in…' : 'sign in again') : peer.online ? 'online' : 'offline'}
+          </Text>
+        </Pressable>
+
+        {/* Not a special case in the engine or in this file. One entry rather
+            than one per track, so a replica replaying it covers whatever else
+            was in the library by then. */}
+        {peer.items.length > peer.onPlaylist ? (
+          <Pressable onPress={peer.addAll} style={s.round} accessibilityLabel="heart everything">
+            <Icon name="addAll" size={19} tint={theme.dim} />
+          </Pressable>
+        ) : null}
+        <Pressable onPress={onAdd} style={s.round} accessibilityLabel="add a track">
+          <Icon name="add" size={19} tint={theme.dim} />
+        </Pressable>
+        <Pressable onPress={onSignOut} style={s.round} accessibilityLabel="sign out">
+          <Icon name="signOut" size={18} tint={theme.dim} />
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+function Empty({ theme, onAdd }: { theme: Theme; onAdd: () => void }) {
+  const s = styles(theme);
+  return (
+    <Animated.View entering={FadeIn.duration(200)} style={s.empty}>
+      <Icon name="note" size={34} tint={theme.faint} />
+      <Text style={s.emptyTitle}>Nothing here yet</Text>
+      <Text style={s.emptyBlurb}>
+        Add something with a URL and it plays here, on the desktop, and in a browser — the
+        library is one log, not three.
+      </Text>
+      <Pressable onPress={onAdd} style={s.emptyButton}>
+        <Text style={s.emptyButtonText}>add a track</Text>
+      </Pressable>
+    </Animated.View>
+  );
+}
+
+const styles = (t: Theme) =>
   StyleSheet.create({
     page: { flex: 1, backgroundColor: t.bg },
-    entry: { flexDirection: 'row', gap: 10, padding: 16, alignItems: 'center' },
-    inputs: { flex: 1, gap: 8 },
-    input: {
-      backgroundColor: t.card,
-      borderColor: t.border,
-      borderWidth: 1,
-      borderRadius: 10,
-      paddingHorizontal: 14,
-      paddingVertical: 11,
-      fontSize: 16,
-      color: t.text,
+    head: {
+      paddingHorizontal: space.lg,
+      paddingTop: space.md,
+      paddingBottom: space.md,
+      gap: space.md,
     },
-    add: {
+    headText: { gap: 2 },
+    kicker: {
+      fontSize: 11,
+      letterSpacing: 0.9,
+      textTransform: 'uppercase',
+      color: t.accent,
+      fontWeight: '700',
+    },
+    h1: { fontSize: 30, fontWeight: '800', color: t.text, letterSpacing: -0.5 },
+    sub: { fontSize: 12.5, color: t.dim },
+    actions: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+    pill: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      paddingHorizontal: space.md,
+      paddingVertical: 6,
+      borderRadius: radius.pill,
+      marginRight: 'auto',
+    },
+    pillOn: { backgroundColor: t.accent },
+    pillOff: { backgroundColor: t.card, borderWidth: StyleSheet.hairlineWidth, borderColor: t.border },
+    pillDenied: { backgroundColor: t.danger },
+    pillText: { fontSize: 12, fontWeight: '700', color: t.dim },
+    pillTextOn: { color: t.onAccent },
+    round: {
+      width: 36,
+      height: 36,
+      borderRadius: radius.pill,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: t.card,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: t.border,
+    },
+    list: { flex: 1 },
+    rows: { paddingTop: space.sm, paddingBottom: space.lg },
+    emptyBox: { flexGrow: 1, justifyContent: 'center' },
+    empty: { alignItems: 'center', gap: space.sm, paddingHorizontal: space.xl },
+    emptyTitle: { fontSize: 18, fontWeight: '700', color: t.text, marginTop: space.sm },
+    emptyBlurb: { fontSize: 13.5, lineHeight: 19, color: t.dim, textAlign: 'center' },
+    emptyButton: {
+      marginTop: space.md,
+      paddingHorizontal: space.xl,
+      paddingVertical: 12,
+      borderRadius: radius.pill,
       backgroundColor: t.accent,
-      borderRadius: 10,
-      paddingHorizontal: 18,
-      paddingVertical: 12,
     },
-    addText: { color: '#fff', fontWeight: '600' },
-    verbs: { flexDirection: 'row', gap: 18, paddingHorizontal: 16, paddingBottom: 10 },
-    verb: { color: t.accent, fontSize: 14, fontWeight: '600' },
-    row: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 12,
-      backgroundColor: t.card,
-      borderColor: t.border,
-      borderTopWidth: StyleSheet.hairlineWidth,
-      paddingHorizontal: 16,
-      paddingVertical: 12,
-    },
-    // A character here, unlike the desktop peer: React Native draws with the
-    // system font, which has U+2665. The font iced embeds does not, which is
-    // why that one draws the heart as a path.
-    heart: { fontSize: 22, lineHeight: 26 },
-    hearted: { color: t.danger },
-    unhearted: { color: t.dim },
-    rowText: { flex: 1 },
-    title: { fontSize: 16, color: t.text },
-    meta: { fontSize: 11, color: t.dim, marginTop: 2 },
-    remove: { color: t.danger, fontSize: 14 },
-    emptyBox: { flexGrow: 1, alignItems: 'center', justifyContent: 'center' },
-    empty: { color: t.dim },
-    status: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 10,
-      padding: 14,
-      borderTopColor: t.border,
-      borderTopWidth: StyleSheet.hairlineWidth,
-      backgroundColor: t.card,
-    },
-    pill: { borderRadius: 20, paddingHorizontal: 12, paddingVertical: 5 },
-    pillText: { color: '#fff', fontSize: 12, fontWeight: '600' },
-    statusText: { flex: 1, fontSize: 12, color: t.dim },
+    emptyButtonText: { color: t.onAccent, fontWeight: '700', fontSize: 14.5 },
   });

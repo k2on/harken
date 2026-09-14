@@ -64,6 +64,23 @@ const config: ExpoConfig = {
       { backgroundColor: '#208AEF', image: './assets/images/splash-icon.png', imageWidth: 76 },
     ],
     ['expo-build-properties', { android: { usePrecompiledHeaders: true } }],
+    [
+      // Playback only. This app never records, so the microphone permission is
+      // declined here rather than asked for at run time and denied — a music
+      // app that asks to hear you is a music app people uninstall.
+      //
+      // Background playback is what puts the transport in the notification
+      // shade and on the lock screen. Without it Android stops the audio after
+      // about three minutes in the background, which reads as the app being
+      // broken rather than as a policy.
+      'expo-audio',
+      {
+        microphonePermission: false,
+        recordAudioAndroid: false,
+        enableBackgroundRecording: false,
+        enableBackgroundPlayback: true,
+      },
+    ],
   ],
   experiments: {
     typedRoutes: true,

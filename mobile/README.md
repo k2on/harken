@@ -6,6 +6,56 @@ browser sheet at whatever provider the server uses, coming back on
 `harken://` — and the second is the music library. Who you are is what the
 server says; `src/auth.ts` is the whole of it here.
 
+## What the library screen is
+
+The desktop client's arrangement, in a phone's idiom. Its sidebar — Library,
+then the playlists, then the albums, then the artists — is two rows of chips
+here: the headings on the first, what is under the chosen heading on the
+second. Its table of Name, Artist, Album and Time is a stacked row. Its
+now-playing bar is a bar above the bottom inset that expands, on a tap or a
+drag, into a full-screen player with the seek bar and the heart.
+
+Tapping a row plays it and makes the list on screen the queue, exactly as the
+desktop does: a snapshot taken when play was pressed, so changing what is
+shown — or somebody else's edit arriving — cannot silently redirect what plays
+next.
+
+The grouping is not this directory's idea of how to fold a library. `albums`,
+`artists`, `playlists`, `album` and `artist` are queries in `../domain`, and
+both clients ask them rather than each inventing a way to group by album.
+
+## What plays it
+
+`expo-audio` — ExoPlayer on Android, AVPlayer on iOS. `src/player.tsx` hands
+it a URL and gets streaming, buffering, range requests and seeking from the
+platform, which is the same trade `iced/src/player.rs` makes with an `<audio>`
+element in a browser. Neither client decodes anything.
+
+`media.file` is the name of a file and not a URL, so `src/media.ts` is the one
+place a name becomes something a player can open: an absolute URL is already
+an answer, and anything else is resolved against the server this peer is
+pointed at.
+
+The transport is on the lock screen, which on Android is also what keeps
+playback alive in the background past about three minutes. `app.config.ts`
+configures the plugin for that and declines the microphone permission, because
+this app never records.
+
+## The look
+
+Light and dark, following the system, with a gold accent. `src/theme.ts` is
+the only place a colour is written down — the same rule the desktop keeps by
+asking iced for `extended_palette()` — and the two themes do not use the same
+gold, because a bright leaf gold takes no text on a white sheet.
+
+There is no component library. The animations are `react-native-reanimated`
+and `react-native-gesture-handler`, both already here because `expo-router`
+wants them, and the icons are `expo-symbols`, which was already here too: SF
+Symbols on iOS and Google's Material Symbols on Android, from one name each in
+`src/ui/icon.tsx`. Every glyph also states a character to fall back to, for the
+reason `iced/src/icon.rs` exists — a missing glyph lays out fine and draws
+nothing, so the button looks broken rather than unfontable.
+
 ## There is no domain logic in this directory
 
 The hand-written TypeScript is a stack of screens, a WebSocket and a pump, and

@@ -10,6 +10,12 @@
       server's address, tap sign in, and the provider opens in a sheet that
       closes itself when the login comes back on `harken://`.
 
+      It plays, too. The library is the same one the desktop shows, browsed
+      by playlist, album or artist; tapping a row starts it and the list
+      becomes the queue. Playback is `expo-audio` — ExoPlayer on Android,
+      AVPlayer on iOS — with the transport on the lock screen, so it keeps
+      going when the screen does not.
+
       ```
       nix build .#apk             # the development APK, toolchain and all
       nix build .#apk-release     # the release build (debug-signed; see CLAUDE.md)
