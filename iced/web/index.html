@@ -5,10 +5,19 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>harken</title>
     <style>
-      html, body { margin: 0; height: 100%; background: #fff; font-family: system-ui, sans-serif; }
+      /* iced picks light or dark from the system; the page behind it has to
+         agree, or a dark window is loaded over a white flash and the boot
+         line is black on black. `color-scheme` makes the default canvas and
+         text follow the same preference the app is reading. */
+      html, body {
+        margin: 0;
+        height: 100%;
+        color-scheme: light dark;
+        font-family: system-ui, sans-serif;
+      }
       /* iced appends its canvas to <body> and sizes it to 100%. */
       canvas { display: block; }
-      #boot { padding: 24px; color: #555; }
+      #boot { padding: 24px; opacity: 0.6; }
     </style>
   </head>
   <body>

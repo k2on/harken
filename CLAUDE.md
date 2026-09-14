@@ -539,6 +539,12 @@ widget's own bounds rather than from geometry in a shared layer. Same path —
 two cubics down each side, filled when the song is on the playlist and stroked
 when it is not — and it costs the `svg` feature instead of `canvas`.
 
+Its colour is **not** in the file. The `fill` and `stroke` there are
+placeholders that the `svg` style's colour filter replaces, because a heart
+with a red baked into it is the same red on a white row, a dark row and the
+accent-coloured row under the cursor — three backgrounds, and a colour chosen
+against one of them.
+
 ## Traps in the client toolchain
 
 - **The NDK is x86_64-only, and the build brings its own qemu.** Google
@@ -787,6 +793,40 @@ when it is not — and it costs the `svg` feature instead of `canvas`.
   `std::env::temp_dir()`, so a server started inside `nix develop --command`
   does not share a database with one started under direnv.
 
+## The table, and where its colours come from
+
+The track list is a table — Name, Artist, Album, Time, under headings — and
+every row is one line. Four things about it are load-bearing:
+
+- **The row's background belongs to a `container` spanning the full width**,
+  not to a `button` wrapped around the title. A stripe that stops where the
+  text does is not a row. The click comes from a `mouse_area` around that
+  container, so the whole line is the target.
+- **Nothing is a literal colour.** Every background and every text colour is
+  asked of `theme.extended_palette()`, which is the entire reason dark mode
+  works: iced already picks Light or Dark from the system, so the only way to
+  get it wrong is to write a colour down. The zebra is `background.base`
+  alternating with `background.weak`; the cursor is `primary.base` with
+  `primary.base.text` on it.
+- **A row under the cursor is painted in the accent colour, so text on it has
+  exactly one legible colour** — the one that accent was paired with. A
+  dimmed column there gets the same hue at lower alpha, never a grey that was
+  chosen against the window instead.
+- **The two highlights mean different things and are drawn differently.** The
+  sidebar's is a *selection* — what the table is showing — so it persists when
+  the keyboard is elsewhere. The table's is a *cursor*, only ever "where the
+  next `j` goes", so it is not drawn at all unless its pane has the keyboard:
+  a dimmed one would sit one shade from the zebra and mean something else
+  entirely. The playing track is the one row drawn in the accent *colour*
+  rather than filled with it, so it stays findable under either.
+
+The Album column is the interesting one, because `album` is on the `song`
+side table and the library row is deliberately kind-neutral. Rather than widen
+`Item` — which would put a join behind every list, the thing `media` exists to
+avoid — `track_albums()` returns the pairs and the client joins them in memory
+while drawing. A screen that wants the column asks for it; one that does not,
+does not pay.
+
 ## The sidebar browses; the now-playing bar plays, in a browser
 
 The client is a library with a sidebar: playlists, then albums, then artists.
@@ -843,6 +883,14 @@ others and mixing them is what makes keyboard code untestable:
   means, what `/` matches against. None of that generalises, so none of it is
   in `vim.rs`.
 
+There are two panes, the sidebar and the table, and **the now-playing bar is
+not one of them**: everything it does has a key of its own (`p`, `{`, `}`), so
+making it a third place the cursor can be would only add a stop to `<Tab>`
+that nobody needs to pass through. In the sidebar the cursor *is* the
+selection — moving onto a row shows it, with no `<Enter>` in between, because
+needing a key to confirm what you have already moved onto is a keystroke that
+only ever means "yes, that one". `<Enter>` there steps into the table instead.
+
 **`step` returning `None` means "not mine", and that is the whole pane
 mechanism.** A vertical `List` refuses `h` and `l` because it has no
 horizontal axis, so `Pane::beyond` is free to read a refused `l` in the
@@ -852,10 +900,12 @@ and clamping are different answers to different questions, and keeping them
 apart is what lets one grammar drive a list, a row and a grid. The bar is the
 `Row`: `h` and `l` walk the transport, and `k` is what leaves it.
 
-Nothing here is a grid, so nothing constructs `Grid`. It is kept and tested
-anyway, because a hook with one implementation is not a hook — `List` alone
-could not tell you whether `Navigate` was a general shape or a description of
-the track list.
+Every pane is a vertical list, so `List` is the only shape with a caller.
+`Row` and `Grid` are kept and tested anyway, because a hook with one
+implementation is not a hook — `List` alone could not tell you whether
+`Navigate` was a general shape or a description of the track list, and `Grid`
+is what makes the difference between *refusing* a motion and *clamping* it
+visible.
 
 Two things that are easy to get wrong and cost a round each:
 
@@ -868,7 +918,9 @@ Two things that are easy to get wrong and cost a round each:
   went nowhere until something had been clicked — which reads exactly like
   "the keymap does not work". iced gives its canvas `tabindex=0`, so it can
   take focus; `iced/web/index.html` tells it to, on load and whenever the
-  window comes back.
+  window comes back. That file also sets `color-scheme: light dark`, so the
+  page behind the canvas agrees with the theme iced picked rather than
+  flashing white under a dark window.
 
 `?` draws the keymap. A keymap nobody can guess is a keymap nobody uses, and
 the status line carries the pane and anything half-typed — a swallowed `5`,

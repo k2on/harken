@@ -397,6 +397,22 @@ pub fn artists(db: &mut Db) -> Result<Vec<crate::schema::Artist>> {
         .collect())
 }
 
+/// Every track that is on an album, and which one.
+///
+/// The column a table draws beside the artist. Read from the song end, so a
+/// kind with no albums contributes nothing and needs no case here.
+#[query]
+pub fn track_albums(db: &mut Db) -> Result<Vec<crate::schema::TrackAlbum>> {
+    Ok(db
+        .select(Song::all())
+        .into_iter()
+        .map(|s| crate::schema::TrackAlbum {
+            media_id: s.media_id,
+            album: s.album,
+        })
+        .collect())
+}
+
 /// One album's tracks, in library order, read against a playlist.
 ///
 /// The same `Item` the library list renders, so a screen showing an album is

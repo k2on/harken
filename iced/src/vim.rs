@@ -290,6 +290,10 @@ impl Navigate for List {
 }
 
 /// One row, left to right. The mirror of [`List`]: `j` and `k` are refused.
+///
+/// See the note on [`Grid`]: nothing in this window is laid out sideways
+/// either, since the now-playing bar stopped taking the cursor.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy)]
 pub struct Row {
     pub cells: usize,
@@ -319,11 +323,13 @@ impl Navigate for Row {
 /// that proves [`Navigate`] is not shaped around the one caller: a grid accepts
 /// every motion and clamps at its edges, where a list refuses two of them
 /// outright, and the same `Keys` drives both without knowing which it has.
-// Nothing in this window is a grid, so nothing constructs one. It is kept —
-// and tested — because a hook with one implementation is not a hook: `List`
-// alone could not tell you whether `Navigate` was a general shape or a
-// description of the track list. `Grid` is what makes the difference between
-// refusing a motion and clamping it visible, and it is twenty lines.
+// Every pane in this window is a vertical list, so `List` is the only shape
+// with a caller. `Row` and `Grid` are kept — and tested — because a hook with
+// one implementation is not a hook: `List` alone could not tell you whether
+// `Navigate` was a general shape or a description of the track list. `Grid` in
+// particular is what makes the difference between *refusing* a motion and
+// *clamping* it visible, and that distinction is the whole pane mechanism.
+// Between them they are forty lines and nine assertions.
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy)]
 pub struct Grid {

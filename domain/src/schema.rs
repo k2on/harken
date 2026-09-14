@@ -89,6 +89,18 @@ petros_schema::row! {
         tracks: i64,
     };
 
+    /// Which album a track is on, for a client drawing a column of them.
+    ///
+    /// A pair rather than a field on [`Item`], and that is the whole point:
+    /// `album` is true of the *song* kind and lives on `song`, so folding it
+    /// into the kind-neutral library row would put a join behind every list —
+    /// the thing `media` exists to avoid. A screen that wants the column asks
+    /// for it and joins in memory; a screen that does not, does not pay.
+    TrackAlbum => {
+        media_id: Id<tables::Media> => String { |id| id.to_string() },
+        album: String,
+    };
+
     /// Whoever made something, as a sidebar lists them.
     ///
     /// `media.creator`, so this one *is* kind-neutral: a podcast's show and a
