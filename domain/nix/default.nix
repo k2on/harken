@@ -7,6 +7,9 @@
       # when the lock moves.
       cargoVendorHash = "sha256-rdkdTsilXfgzYgXPAFWACDzkH1Psn/8wHLRmJRHYIuw=";
       mutators.crate = "harken";
+      # Beside the domain rather than at the root, because it describes what is
+      # in `functions.rs`. `nix flake check` holds every build to it.
+      mutators.log = "domain/mutations.txt";
     };
 
     # Where the time goes in one mutation. Not part of the suite: it is a
