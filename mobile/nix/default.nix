@@ -25,7 +25,7 @@ in
       # belongs to. When one goes stale, nix prints the right one.
       nodeModulesHash = {
         aarch64-linux = "sha256-Lo8p11fynW14olU8Sz5HAPQFrwtEe/xS/4t5v9qj5Hc=";
-        x86_64-linux = "sha256-j7ey0jpuzi5eb2Inql4ttpcckfw1QSZlaOUwHh677z0=";
+        x86_64-linux = "sha256-yWRiNJ/Gdz1Myklic5zqmXtScEIBZNp9zVbxCXzbLbA=";
       };
 
       # The generator ships no lockfile — the npm package is the built CLI and
