@@ -69,6 +69,24 @@ pub fn add_song(
     if db.exists::<Media>(&Media::key_of(&id)) {
         return Ok(());
     }
+    // And the same *file* arriving twice is a no-op too, which is what makes
+    // rescanning safe.
+    //
+    // This has to be here rather than in whatever is scanning, because `id` is
+    // chosen fresh at the originating client: a second scan authors a new id
+    // for a file the library already has, and nothing above would catch it.
+    // Deciding it inside `apply` means every peer replaying the log reaches
+    // the same answer — the first entry for a path wins, wherever the rescan
+    // happened. An empty `file` is not a path and does not collide: a song
+    // typed in by hand has no file, and two of those are two songs.
+    let file = file.trim().to_string();
+    if !file.is_empty()
+        && !db
+            .select(Media::all().filter(Media::file.eq(file.clone())))
+            .is_empty()
+    {
+        return Ok(());
+    }
     // `pos` is read out of current state: an intent, not a fact. It is what
     // makes the rebase visible when an entry lands underneath yours.
     let last = last_pos(db);
@@ -78,7 +96,7 @@ pub fn add_song(
         title: title.trim().to_string(),
         creator: artist.trim().to_string(),
         duration_ms,
-        file: file.trim().to_string(),
+        file,
         pos: last + 1,
         added_ms,
         user_id: ctx.user.id.clone(),

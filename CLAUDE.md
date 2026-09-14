@@ -36,6 +36,9 @@ domain/                  the domain — the ONLY apply
   nix/default.nix        which crate is the module; the vendored-deps hash; `latency`
 server/                  axum, with one Petros handler mounted on it, and the
                          sign-in routes beside it
+  src/library.rs         the music directory, as a peer: walk it, watch it,
+                         author what it finds
+  tests/library.rs       …a directory of real files becoming songs, once
   nix/default.nix        the package, `serve`, and the NixOS service — where
                          the OpenID Connect provider is configured
   nix/readme.nix         its section of README.md
@@ -877,6 +880,51 @@ accounts and no server), no typing a song in, no bulk favouriting, no per-row
 remove. Those are `#[cfg(not(feature = "demo"))]` rather than deleted, because
 against a real server they are the only way to sign in, add anything, or take
 it back out.
+
+## The music directory is a peer, and a rescan is free
+
+`services.harken.music` points at a directory. The server walks it at startup,
+watches it after, and authors each track as an ordinary mutation.
+
+**It is a peer, not a writer.** `server/src/library.rs` holds a real
+`petros::Client` with its own database and its own pending queue, and reaches
+the hub through `Hub::exchange` instead of a socket. Writing rows directly
+would have been fewer moving parts and a second definition of what "add a
+song" means — and the first time it disagreed with `apply`, the replicas would
+diverge with nothing to say so. Being a peer also means the entry carries an
+actor and a session like every other: the server mints one for the `library`
+account at startup, because "the server wrote it" is not an exemption.
+
+**Idempotency is in `apply`, not in the scanner.** `add_song` refuses a
+non-empty `file` the library already has. It has to be there rather than in
+the scanner, because the id is chosen fresh per authoring call: a second scan
+produces a *different* id for the same path and the id check cannot see it.
+Deciding it inside `apply` means every peer replaying reaches the same answer
+— the first entry for a path wins, wherever the rescan happened. An empty
+`file` does not collide, because a song typed in by hand has no path and two
+of those are two songs.
+
+**The log carries the path relative to the music root**, and `/media/` serves
+that same path back. One string, so a client plays what the scanner wrote
+without either knowing where the directory is — and the log does not freeze
+this machine's layout into it forever.
+
+Two things the test found that reading the code would not have:
+
+- **A new *directory* is the case that matters, and it is not a new file.**
+  Dropping an album folder in creates the directory and its tracks in the same
+  breath, and a recursive watch has to add a watch for the new directory
+  before it can report anything inside it — so the tracks land in the gap and
+  are never announced. What *is* announced is the directory, so a directory
+  event walks it rather than trying to index it as a file.
+- **`ProtectHome = true` masks `/home` outright**, so a library under there is
+  not merely unreadable but invisible, and `ReadOnlyPaths` cannot reach past
+  it. The unit uses `BindReadOnlyPaths` for the one directory instead, which
+  overrides the mask without opening the rest.
+
+A removal is deliberately not handled. The log is permanent, and a file
+disappearing is not evidence anybody meant to delete the song — an unplugged
+disk looks exactly the same.
 
 ## The keyboard is vim's, and a component opts in by saying what shape it is
 

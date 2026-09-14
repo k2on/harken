@@ -26,6 +26,31 @@ nix run .#serve 0.0.0.0:8787    # …reachable from a phone on the same network
 nix build .#harken-server       # the binary, at result/bin/harken-server
 ```
 
+### The music
+
+Point it at a directory and it fills the library from it:
+
+```
+HARKEN_MUSIC=/srv/music nix run .#serve
+```
+
+It walks the directory at startup, watches it after — a file copied in
+appears without a rescan — and reads each track's tags rather than
+guessing them from the folder names. Every track is added as an
+ordinary mutation, through the same `apply` each peer runs, so the
+server is a peer here and not a special case.
+
+Rescanning is free. Adding a file the library already has is refused
+inside `apply`, so restarting the service costs nothing however large
+the directory, and two servers scanning the same share agree.
+
+The bytes are served from `/media/`, with range requests, so seeking
+works. What the log carries is each path *relative to the directory* —
+which is the same path `/media/` serves, so moving the directory moves
+the music and nothing in the log has to change.
+
+On NixOS that is {option}`services.harken.music`.
+
 A dev server takes your word for who you are — `nix run .#iced alice`
 is a login for a name — and says so every time it starts. It refuses to
 run that way unless told to (`HARKEN_DEV_AUTH=1`), because on a machine

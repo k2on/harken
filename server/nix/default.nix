@@ -143,6 +143,32 @@
           '';
         };
 
+        music = lib.mkOption {
+          type = lib.types.nullOr lib.types.path;
+          default = null;
+          example = "/srv/music";
+          description = ''
+            A directory of music to put in the library and serve.
+
+            The server walks it at startup and watches it after, so a file
+            copied in appears without a rescan, and authors each track as an
+            ordinary mutation — through the same `apply` every peer runs, so
+            there is no second definition of what adding a song means. A
+            rescan adds nothing: `apply` refuses a path the library already
+            has, which makes restarting the service free however large the
+            directory is.
+
+            Each track's path *relative to this directory* is what goes in
+            the log, and the same path is served under `/media/`. So moving
+            the directory moves the music; renaming a file inside it makes a
+            new song and leaves the old one pointing at nothing.
+
+            The service reads it and never writes to it. It has to be
+            readable by a dynamic user, which for most libraries means
+            world-readable.
+          '';
+        };
+
         package = lib.mkOption {
           type = lib.types.package;
           default = harken.harken-server;
@@ -175,6 +201,8 @@
           environment = {
             HARKEN_PUBLIC_URL = cfg.publicUrl;
             HARKEN_REDIRECTS = lib.concatStringsSep "," cfg.redirects;
+          } // lib.optionalAttrs (cfg.music != null) {
+            HARKEN_MUSIC = "${cfg.music}";
           } // lib.optionalAttrs (cfg.web != null) {
             HARKEN_WEB = "${cfg.web}";
           } // lib.optionalAttrs (cfg.oidc != null) {
@@ -202,6 +230,14 @@
             DynamicUser = true;
             StateDirectory = "harken";
             Environment = [ "TMPDIR=%S/harken" ];
+
+            # The music, and nothing else of the filesystem. A bind mount
+            # rather than `ReadOnlyPaths`, because `ProtectHome` below masks
+            # `/home` outright and a library under there would simply not be
+            # visible — a bind overrides that for the one directory, without
+            # opening the rest. Read-only: the server indexes and serves the
+            # files, and has no business changing them.
+            BindReadOnlyPaths = lib.optional (cfg.music != null) cfg.music;
 
             # Nothing here needs any of it.
             NoNewPrivileges = true;

@@ -41,14 +41,14 @@ ciborium = "0.2"
 #
 # A branch whose engine changes is broken for everyone but the person who has
 # both checkouts, and the local patch hides that perfectly.
-petros = { git = "https://github.com/k2on/petros", rev = "f2a2ffbaf216c656bbaded4ebe9a6cc0711b8823" }
-petros-wasm-host = { git = "https://github.com/k2on/petros", rev = "f2a2ffbaf216c656bbaded4ebe9a6cc0711b8823" }
-petros-schema = { git = "https://github.com/k2on/petros", rev = "f2a2ffbaf216c656bbaded4ebe9a6cc0711b8823" }
-petros-sql = { git = "https://github.com/k2on/petros", rev = "f2a2ffbaf216c656bbaded4ebe9a6cc0711b8823" }
-petros-testkit = { git = "https://github.com/k2on/petros", rev = "f2a2ffbaf216c656bbaded4ebe9a6cc0711b8823" }
-petros-wasm-guest = { git = "https://github.com/k2on/petros", rev = "f2a2ffbaf216c656bbaded4ebe9a6cc0711b8823" }
-petros-axum = { git = "https://github.com/k2on/petros", rev = "f2a2ffbaf216c656bbaded4ebe9a6cc0711b8823" }
-petros-auth = { git = "https://github.com/k2on/petros", rev = "f2a2ffbaf216c656bbaded4ebe9a6cc0711b8823" }
+petros = { git = "https://github.com/k2on/petros", rev = "3e8ae34a989809d148274e6a1305739b11de2eb2" }
+petros-wasm-host = { git = "https://github.com/k2on/petros", rev = "3e8ae34a989809d148274e6a1305739b11de2eb2" }
+petros-schema = { git = "https://github.com/k2on/petros", rev = "3e8ae34a989809d148274e6a1305739b11de2eb2" }
+petros-sql = { git = "https://github.com/k2on/petros", rev = "3e8ae34a989809d148274e6a1305739b11de2eb2" }
+petros-testkit = { git = "https://github.com/k2on/petros", rev = "3e8ae34a989809d148274e6a1305739b11de2eb2" }
+petros-wasm-guest = { git = "https://github.com/k2on/petros", rev = "3e8ae34a989809d148274e6a1305739b11de2eb2" }
+petros-axum = { git = "https://github.com/k2on/petros", rev = "3e8ae34a989809d148274e6a1305739b11de2eb2" }
+petros-auth = { git = "https://github.com/k2on/petros", rev = "3e8ae34a989809d148274e6a1305739b11de2eb2" }
 harken = { path = "domain", default-features = false }
 # `fira-sans` embeds a default font. Without it iced asks the system for
 # one, which works on a desktop and gets you nothing at all in a browser:

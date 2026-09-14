@@ -34,6 +34,7 @@ use axum::extract::State;
 use axum::routing::get;
 use axum::Router;
 use harken::HarkenApp;
+use harken_server::library;
 use petros_auth::oidc::Provider;
 use petros_auth::server::{Auth, Mode};
 use petros_auth::session::SessionStore;
@@ -52,7 +53,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // are not part of the log and never leave this machine.
     let dir = std::env::temp_dir();
     let path = dir.join("harken-server.db");
-    let sessions = SessionStore::open(petros::open_path(dir.join("harken-sessions.db"))?)?;
+    let mut sessions = SessionStore::open(petros::open_path(dir.join("harken-sessions.db"))?)?;
+
+    // The scanner signs in like everything else. The engine holds every entry
+    // to a session, and "the server wrote it" is not an exemption — so the
+    // server mints one for itself, here, while it still has the store.
+    let library_login = sessions.issue(&petros_auth::Account {
+        id: library::ACCOUNT.to_string(),
+        name: "Library".into(),
+        email: String::new(),
+    })?;
 
     // Where a browser reaches this server, which is where the provider sends
     // people back to. Behind a reverse proxy it is the proxy's address.
@@ -69,11 +79,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let auth = Arc::new(auth);
 
     let hub = Hub::<HarkenApp>::open(petros::open_path(&path)?, auth.authenticator())?;
+
+    // The music, if there is any. Two halves that have to agree on one string:
+    // the scanner writes each track's path *relative to this directory* into
+    // `file`, and `/media/` serves that same path back — so a client plays
+    // what the scanner wrote without either of them knowing where the
+    // directory is. `ServeDir` answers range requests, which is what makes
+    // seeking work rather than re-downloading.
+    let music = env("HARKEN_MUSIC").map(std::path::PathBuf::from);
     let mut app = Router::new()
         .route("/sync", get(petros_axum::sync::<HarkenApp>))
         .route("/healthz", get(healthz))
-        .with_state(hub)
+        .with_state(hub.clone())
         .merge(petros_auth::server::router(auth.clone()));
+    if let Some(dir) = &music {
+        app = app.nest_service("/media", ServeDir::new(dir));
+    }
+
+    // Kept alive for the life of the process: dropping it stops the watch.
+    let _scanner = match &music {
+        Some(dir) => Some(library::Scanner::start(
+            dir.clone(),
+            hub.clone(),
+            path.with_extension("library.db"),
+            library_login,
+        )?),
+        None => None,
+    };
 
     // The routes above are matched first, so `/sync` stays the socket however
     // the directory is laid out. Anything else falls through to the files, and
@@ -92,6 +124,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Loudly, every time: a server that takes people's word for who they
         // are is fine on a laptop and nowhere else.
         Mode::Dev => println!("  DEV AUTH: anyone is whoever they say they are"),
+    }
+    match &music {
+        Some(dir) => println!("  music from {}", dir.display()),
+        // Said out loud for the same reason as the client below: a server with
+        // no music looks exactly like one whose directory is misconfigured.
+        None => println!("  no music: set HARKEN_MUSIC to a directory"),
     }
     match &web {
         Some(dir) => println!(

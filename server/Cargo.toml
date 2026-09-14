@@ -18,3 +18,9 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal
 # `fs` only: no compression, no tracing, no cors — the point is a handler beside
 # the sync one, not a web framework.
 tower-http = { version = "0.6", features = ["fs"] }
+# The library scanner. `lofty` reads the tags out of a file — a scanner that
+# guessed them from the path would be wrong for every library that is not laid
+# out the way it expected. `notify` is the watch, so a file added after boot
+# does not wait for a rescan that may never come.
+lofty = "0.25"
+notify = { version = "8", default-features = false, features = ["macos_fsevent"] }
