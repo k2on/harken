@@ -10,10 +10,17 @@
       and works offline; the server is where it syncs and where it signs in.
 
       A sidebar down the left browses the library: the playlists, then the
-      albums, then the artists. A now-playing bar sits along the bottom. The
-      bar sounds nothing on the desktop — there is no audio device wired up,
-      and it says so rather than pretending — so playback is the browser's
-      today. See `CLAUDE.md` for what closing that would take.
+      albums, then the artists. A now-playing bar sits along the bottom.
+
+      It is driven from the keyboard, with vim's motions: `j` and `k` move,
+      `h` and `l` cross between the sidebar, the track list and the player,
+      `5j` and `gg` and `7G` do what they do in vim, `/` searches the pane
+      you are in, `<Enter>` opens and `<Space>` hearts. Press `?` for the
+      rest.
+
+      The bar sounds nothing on the desktop — there is no audio device wired
+      up, and it says so rather than pretending — so playback is the
+      browser's today. See `CLAUDE.md` for what closing that would take.
 
       ```
       nix run github:k2on/harken#harken-iced -- --server https://harken.example.com

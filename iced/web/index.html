@@ -19,6 +19,26 @@
       await init();
       document.getElementById("boot")?.remove();
 
+      // The keyboard only reaches the app while its canvas has the focus, and
+      // a freshly loaded page focuses <body> — so `j` did nothing at all until
+      // something had been clicked. iced gives the canvas `tabindex=0`, so it
+      // can take focus; it just has to be told to. Focused on arrival and
+      // again whenever the window comes back, which is what a reader who
+      // alt-tabs away and types `j` expects.
+      const grab = () => document.querySelector("canvas")?.focus();
+      grab();
+      addEventListener("focus", grab);
+      // The canvas is appended by the wasm module, so it may not exist yet on
+      // the first try. One observer, disconnected as soon as it has one.
+      if (!document.querySelector("canvas")) {
+        const watch = new MutationObserver(() => {
+          if (document.querySelector("canvas")) {
+            grab();
+            watch.disconnect();
+          }
+        });
+        watch.observe(document.body, { childList: true });
+      }
     </script>
   </body>
 </html>

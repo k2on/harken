@@ -42,6 +42,8 @@ server/                  axum, with one Petros handler mounted on it, and the
 iced/                    the desktop and browser client
   src/main.rs            …and how each target signs in: a loopback port, or the page
   src/heart.rs           the heart, drawn as an SVG (see below)
+  src/vim.rs             the keyboard: vim's grammar, and the one trait a
+                         component implements to get it
   src/player.rs          what is playing — an <audio> element in a browser,
                          and nothing at all on the desktop
   nix/readme.nix         its section of README.md
@@ -823,6 +825,55 @@ accounts and no server), no typing a song in, no bulk favouriting, no per-row
 remove. Those are `#[cfg(not(feature = "demo"))]` rather than deleted, because
 against a real server they are the only way to sign in, add anything, or take
 it back out.
+
+## The keyboard is vim's, and a component opts in by saying what shape it is
+
+`iced/src/vim.rs` is a small library with its own tests and no idea what a
+song is. Three things are kept apart, because each is useful without the
+others and mixing them is what makes keyboard code untestable:
+
+- **`Keys` turns presses into an `Action`.** It knows `5j` is five downs and
+  `gg` is the top, and nothing about what is on screen. Tested by pressing
+  letters at it.
+- **`Navigate` turns a `Motion` into a new cursor.** This is the hook: a
+  component says how many cells it has and where a motion lands, and gets
+  counts, `gg`, `G` and `{count}G` for free without ever seeing a key.
+  `List`, `Row` and `Grid` are the three shapes.
+- **`main.rs` does the rest** — which pane holds the cursor, what `Activate`
+  means, what `/` matches against. None of that generalises, so none of it is
+  in `vim.rs`.
+
+**`step` returning `None` means "not mine", and that is the whole pane
+mechanism.** A vertical `List` refuses `h` and `l` because it has no
+horizontal axis, so `Pane::beyond` is free to read a refused `l` in the
+sidebar as "the track list". A `Grid` accepts all four and *clamps* at its
+edges, because it does have both axes and the motion was its own. Refusing
+and clamping are different answers to different questions, and keeping them
+apart is what lets one grammar drive a list, a row and a grid. The bar is the
+`Row`: `h` and `l` walk the transport, and `k` is what leaves it.
+
+Nothing here is a grid, so nothing constructs `Grid`. It is kept and tested
+anyway, because a hook with one implementation is not a hook — `List` alone
+could not tell you whether `Navigate` was a general shape or a description of
+the track list.
+
+Two things that are easy to get wrong and cost a round each:
+
+- **`keyboard::listen()` reports only the presses no widget took.** That is
+  what makes a modeless vim layer safe beside a `text_input`: a focused entry
+  box consumes its own keys and none reach the subscription, so typing a song
+  title cannot also walk the cursor down the list. There is no insert mode
+  because there is nothing to get stuck in.
+- **A freshly loaded page focuses `<body>`, not the canvas**, so every key
+  went nowhere until something had been clicked — which reads exactly like
+  "the keymap does not work". iced gives its canvas `tabindex=0`, so it can
+  take focus; `iced/web/index.html` tells it to, on load and whenever the
+  window comes back.
+
+`?` draws the keymap. A keymap nobody can guess is a keymap nobody uses, and
+the status line carries the pane and anything half-typed — a swallowed `5`,
+or a `g` still waiting for its pair — because invisible pending input is the
+one thing that makes a modal keymap feel broken.
 
 ## The desktop client maintains its list; the phone does not yet
 

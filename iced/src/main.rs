@@ -28,6 +28,7 @@
 
 mod heart;
 mod player;
+mod vim;
 
 use std::time::Duration;
 
@@ -204,10 +205,68 @@ enum Source {
 }
 
 impl Source {
+    /// The heading this source belongs under, or `None` for the one line that
+    /// needs no heading. What makes the sidebar a flat list of choices with
+    /// headings *derived* rather than interleaved — so a cursor can address
+    /// line N without counting past decoration.
+    fn heading(&self) -> Option<&'static str> {
+        match self {
+            Source::Library => None,
+            Source::Playlist(..) => Some("Playlists"),
+            Source::Album(_) => Some("Albums"),
+            Source::Artist(_) => Some("Artists"),
+        }
+    }
+
     fn title(&self) -> &str {
         match self {
             Source::Library => "Library",
             Source::Playlist(_, name) | Source::Album(name) | Source::Artist(name) => name,
+        }
+    }
+}
+
+// The demo drives only a few of these: it has no accounts to sign in or out
+// of, no entry box to type a song into, and no remove button. The variants
+// stay so that the one `update` serves both builds.
+#[cfg_attr(feature = "demo", allow(dead_code))]
+/// Which part of the window the cursor is in.
+///
+/// The panes and what leaving one means are the application's business, not
+/// the grammar's: `vim` knows a motion was refused, and this decides that a
+/// refused `l` in the sidebar means the track list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Pane {
+    Sidebar,
+    Tracks,
+    /// The transport in the now-playing bar, which is a `vim::Row` — the one
+    /// place `h` and `l` move *within* a pane rather than out of it.
+    Bar,
+}
+
+impl Pane {
+    /// Where a motion this pane refused should take the cursor, if anywhere.
+    ///
+    /// Only ever called with a motion the pane's own shape returned `None`
+    /// for, which is what "not mine" was for.
+    fn beyond(self, motion: vim::Motion) -> Option<Pane> {
+        use vim::Motion::{Down, Left, Right, Up};
+        match (self, motion) {
+            (Pane::Sidebar, Right(_)) => Some(Pane::Tracks),
+            (Pane::Tracks, Left(_)) => Some(Pane::Sidebar),
+            // The bar is a row, so it is what refuses the vertical.
+            (Pane::Bar, Up(_)) => Some(Pane::Tracks),
+            (Pane::Bar, Down(_)) => None,
+            _ => None,
+        }
+    }
+
+    /// `<Tab>` order.
+    fn next(self) -> Pane {
+        match self {
+            Pane::Sidebar => Pane::Tracks,
+            Pane::Tracks => Pane::Bar,
+            Pane::Bar => Pane::Sidebar,
         }
     }
 }
@@ -238,8 +297,19 @@ enum Message {
     /// The sign-in came back, one way or the other.
     SignedIn(Result<Login, String>),
     SignOut,
+    /// A key nothing on screen wanted. See `subscription`.
+    Key(iced::keyboard::Key, iced::keyboard::Modifiers),
     /// Pump the transport. Nothing else drives a sans-io client.
     Tick,
+}
+
+/// One line of the sidebar: somewhere the cursor can be and something it can
+/// open.
+struct Choice {
+    source: Source,
+    label: String,
+    /// The tally drawn on the right, where there is one to draw.
+    count: Option<i64>,
 }
 
 /// Seconds as `m:ss`, which is how long a piece of music is written down.
@@ -286,13 +356,28 @@ struct Peer {
     source: Source,
     shown: Vec<Item>,
     /// The sidebar, rebuilt when the library changes rather than per frame.
-    playlists: Vec<harken::Playlist>,
-    albums: Vec<harken::Album>,
-    artists: Vec<harken::Artist>,
+    ///
+    /// One flat list of the lines a cursor can sit on, in the order they are
+    /// drawn. Headings are derived from it while drawing rather than stored in
+    /// it, so "line 9" means the same thing to the keyboard and to the eye.
+    choices: Vec<Choice>,
     pending: usize,
 }
 
 struct App {
+    /// Which pane the cursor is in, and where it is in each of them.
+    ///
+    /// A cursor per pane rather than one shared one, so that leaving the
+    /// sidebar and coming back does not lose your place — which is what a
+    /// window manager does and what anyone who types `h` twice expects.
+    pane: Pane,
+    cursors: [usize; 3],
+    /// Half-typed keys: a count, a `g`, a `/` search. See `vim.rs`.
+    keys: vim::Keys,
+    /// The last accepted `/` search, for `n` and `N`.
+    search: String,
+    /// `?` — a keymap nobody can guess is a keymap nobody uses.
+    help: bool,
     /// What is playing, and whether this build can sound it. See `player.rs`.
     player: Player,
     /// What `Skip` moves through: the list as it stood when play was pressed.
@@ -351,9 +436,7 @@ impl Peer {
             playlist,
             source: Source::Library,
             shown: Vec::new(),
-            playlists: Vec::new(),
-            albums: Vec::new(),
-            artists: Vec::new(),
+            choices: Vec::new(),
             items: Vec::new(),
             pending: 0,
         };
@@ -426,9 +509,32 @@ impl Peer {
     /// the same order rather than each inventing a way to fold the library.
     fn reload_sidebar(&mut self) {
         let mut store = self.client.store();
-        self.playlists = harken::playlists(&mut store).unwrap_or_default();
-        self.albums = harken::albums(&mut store).unwrap_or_default();
-        self.artists = harken::artists(&mut store).unwrap_or_default();
+        let playlists = harken::playlists(&mut store).unwrap_or_default();
+        let albums = harken::albums(&mut store).unwrap_or_default();
+        let artists = harken::artists(&mut store).unwrap_or_default();
+        drop(store);
+
+        let mut choices = vec![Choice {
+            source: Source::Library,
+            label: "Library".into(),
+            count: Some(self.items.len() as i64),
+        }];
+        choices.extend(playlists.into_iter().map(|p| Choice {
+            source: Source::Playlist(p.id, p.name.clone()),
+            label: p.name,
+            count: None,
+        }));
+        choices.extend(albums.into_iter().map(|a| Choice {
+            source: Source::Album(a.name.clone()),
+            label: a.name,
+            count: Some(a.tracks),
+        }));
+        choices.extend(artists.into_iter().map(|a| Choice {
+            source: Source::Artist(a.name.clone()),
+            label: a.name,
+            count: Some(a.tracks),
+        }));
+        self.choices = choices;
     }
 
     /// The list under the header, for whatever the sidebar picked.
@@ -739,12 +845,10 @@ impl App {
                 .client
                 .mutate(mutators::create_playlist((*name).into()));
             peer.refresh();
-            let Some(list) = peer
-                .playlists
-                .iter()
-                .find(|p| p.name == *name)
-                .map(|p| p.id)
-            else {
+            let Some(list) = peer.choices.iter().find_map(|c| match &c.source {
+                Source::Playlist(id, n) if n == name => Some(*id),
+                _ => None,
+            }) else {
                 continue;
             };
             let ids: Vec<harken::Id<harken::tables::Media>> = titles
@@ -769,6 +873,11 @@ impl App {
             let mut peer = Peer::open(&login);
             Self::seed(&mut peer);
             let app = App {
+                pane: Pane::Tracks,
+                cursors: [0; 3],
+                keys: vim::Keys::new(),
+                search: String::new(),
+                help: false,
                 player: Player::new(),
                 queue: Vec::new(),
                 login: Some(login),
@@ -787,6 +896,11 @@ impl App {
         {
             let (server, user) = config();
             let mut app = App {
+                pane: Pane::Tracks,
+                cursors: [0; 3],
+                keys: vim::Keys::new(),
+                search: String::new(),
+                help: false,
                 player: Player::new(),
                 queue: Vec::new(),
                 login: remembered::recall(&server),
@@ -895,6 +1009,229 @@ impl App {
         self.login = Some(login);
     }
 
+    // The two scrollables the cursor has to keep itself inside of.
+    const SIDEBAR: &'static str = "sidebar";
+    const TRACKS: &'static str = "tracks";
+
+    /// Where the cursor is in a pane.
+    fn at(&self, pane: Pane) -> usize {
+        self.cursors[pane as usize]
+    }
+
+    /// What shape a pane is, which is all `vim` needs to know about it.
+    ///
+    /// The only place the application says "this one is a list and that one is
+    /// a row". Everything else — counts, `gg`, whether `h` leaves the pane —
+    /// falls out of the shape.
+    fn shape(&self, pane: Pane) -> Box<dyn vim::Navigate> {
+        let peer = self.peer.as_ref();
+        match pane {
+            Pane::Sidebar => Box::new(vim::List {
+                cells: peer.map_or(0, |p| p.choices.len()),
+            }),
+            Pane::Tracks => Box::new(vim::List {
+                cells: peer.map_or(0, |p| p.rows().len()),
+            }),
+            // Three transport buttons, side by side.
+            Pane::Bar => Box::new(vim::Row { cells: 3 }),
+        }
+    }
+
+    /// The text `/` searches, for whichever pane has the cursor.
+    fn labels(&self, pane: Pane) -> Vec<String> {
+        let Some(peer) = &self.peer else {
+            return Vec::new();
+        };
+        match pane {
+            Pane::Sidebar => peer.choices.iter().map(|c| c.label.clone()).collect(),
+            // Both halves of the row, so `/bach` finds a Bach track whether the
+            // word is in the title or the composer.
+            Pane::Tracks => peer
+                .rows()
+                .iter()
+                .map(|i| format!("{} {}", i.title, i.creator))
+                .collect(),
+            Pane::Bar => Vec::new(),
+        }
+    }
+
+    /// Do what a finished command asked for.
+    ///
+    /// The only place that knows both halves: `vim` produced the action from
+    /// keys, and this is what the action means in a music library.
+    fn act(&mut self, action: vim::Action) -> Task<Message> {
+        match action {
+            vim::Action::Move(motion) => self.travel(motion),
+            vim::Action::Activate => self.activate(),
+            vim::Action::Cycle => {
+                self.pane = self.pane.next();
+                self.reveal()
+            }
+            vim::Action::Toggle => {
+                let at = self.at(self.pane);
+                match self.pane {
+                    // A heart, which is what a row's own toggle is here.
+                    Pane::Tracks => {
+                        let row = self
+                            .peer
+                            .as_ref()
+                            .and_then(|p| p.rows().get(at))
+                            .map(|i| (i.id, i.on_playlist()));
+                        match row {
+                            Some((id, on)) => self.update(Message::ToggleFavorite(id, on)),
+                            None => Task::none(),
+                        }
+                    }
+                    Pane::Sidebar => self.activate(),
+                    Pane::Bar => self.update(Message::PlayPause),
+                }
+            }
+            vim::Action::Search(query) => {
+                self.search = query;
+                // From one before the cursor, so that a search finds a match
+                // on the line you are already on rather than skipping it.
+                self.cursors[self.pane as usize] = self.at(self.pane).saturating_sub(1);
+                self.seek(1)
+            }
+            vim::Action::Match(delta) => self.seek(delta),
+            vim::Action::Cancel => {
+                self.help = false;
+                self.note.clear();
+                Task::none()
+            }
+            // Keys this application binds for itself. Kept out of the grammar
+            // so that a music player's conveniences cannot collide with a
+            // motion by accident: anything unclaimed here simply does nothing.
+            vim::Action::Key(c) => match c {
+                '?' => {
+                    self.help = !self.help;
+                    Task::none()
+                }
+                'p' => self.update(Message::PlayPause),
+                '}' => self.update(Message::Skip(1)),
+                '{' => self.update(Message::Skip(-1)),
+                _ => Task::none(),
+            },
+        }
+    }
+
+    /// Move the cursor, letting a refused motion change pane instead.
+    ///
+    /// This is the whole of what the application adds to `vim`: the grammar
+    /// said which way, the shape said whether it could, and this decides that
+    /// "it could not, and there was no axis for it" means the next pane along.
+    fn travel(&mut self, motion: vim::Motion) -> Task<Message> {
+        let pane = self.pane;
+        match self.shape(pane).step(self.at(pane), motion) {
+            Some(at) => self.cursors[pane as usize] = at,
+            None => match pane.beyond(motion) {
+                Some(next) => self.pane = next,
+                None => return Task::none(),
+            },
+        }
+        self.reveal()
+    }
+
+    /// Keep the cursor on screen.
+    ///
+    /// A relative offset rather than a measured one: rows here are a uniform
+    /// height, so cell `n` of `len` is `n / (len - 1)` down the scrollable, and
+    /// that is close enough to keep it in view without the widget having to
+    /// report its own geometry back.
+    fn reveal(&self) -> Task<Message> {
+        let (id, len) = match self.pane {
+            Pane::Sidebar => (Self::SIDEBAR, self.shape(Pane::Sidebar).cells()),
+            Pane::Tracks => (Self::TRACKS, self.shape(Pane::Tracks).cells()),
+            Pane::Bar => return Task::none(),
+        };
+        if len < 2 {
+            return Task::none();
+        }
+        let y = self.at(self.pane) as f32 / (len - 1) as f32;
+        // `advanced` is on for exactly this: keeping a keyboard cursor inside
+        // its scrollable is a widget operation, and there is no other way to
+        // ask a scrollable to move.
+        iced::advanced::widget::operate(iced::advanced::widget::operation::scrollable::snap_to(
+            iced::advanced::widget::Id::new(id),
+            scrollable::RelativeOffset {
+                x: Some(0.0),
+                y: Some(y.clamp(0.0, 1.0)),
+            },
+        ))
+    }
+
+    /// Jump to the first label matching the last search, `delta` matches on
+    /// from where the cursor is. `n` and `N`, and the `/` that started it.
+    fn seek(&mut self, delta: isize) -> Task<Message> {
+        if self.search.is_empty() {
+            return Task::none();
+        }
+        let pane = self.pane;
+        let needle = self.search.to_lowercase();
+        let labels = self.labels(pane);
+        let hits: Vec<usize> = labels
+            .iter()
+            .enumerate()
+            .filter(|(_, l)| l.to_lowercase().contains(&needle))
+            .map(|(i, _)| i)
+            .collect();
+        if hits.is_empty() {
+            self.note = format!("no match for {}", self.search);
+            return Task::none();
+        }
+        let at = self.at(pane);
+        // Wrap, the way vim does, and say so rather than stopping silently.
+        let next = match delta {
+            d if d >= 0 => hits.iter().find(|&&h| h > at).copied(),
+            _ => hits.iter().rev().find(|&&h| h < at).copied(),
+        };
+        let next = next.unwrap_or_else(|| {
+            if delta >= 0 {
+                hits[0]
+            } else {
+                hits[hits.len() - 1]
+            }
+        });
+        self.cursors[pane as usize] = next;
+        self.reveal()
+    }
+
+    /// Open what the cursor is on.
+    fn activate(&mut self) -> Task<Message> {
+        let at = self.at(self.pane);
+        match self.pane {
+            Pane::Sidebar => {
+                let source = self
+                    .peer
+                    .as_ref()
+                    .and_then(|p| p.choices.get(at))
+                    .map(|c| c.source.clone());
+                if let (Some(source), Some(peer)) = (source, &mut self.peer) {
+                    peer.source = source;
+                    peer.reload_shown();
+                    self.cursors[Pane::Tracks as usize] = 0;
+                }
+                Task::none()
+            }
+            Pane::Tracks => {
+                let id = self
+                    .peer
+                    .as_ref()
+                    .and_then(|p| p.rows().get(at))
+                    .map(|i| i.id);
+                if let Some(id) = id {
+                    return self.update(Message::PlayItem(id));
+                }
+                Task::none()
+            }
+            Pane::Bar => self.update(match at {
+                0 => Message::Skip(-1),
+                2 => Message::Skip(1),
+                _ => Message::PlayPause,
+            }),
+        }
+    }
+
     /// Move through the queue, and stop at either end rather than wrapping —
     /// a list that loops silently is hard to tell from one that is stuck.
     fn skip(&mut self, delta: i32) {
@@ -963,6 +1300,14 @@ impl App {
                 self.peer = None;
                 self.note = "signed out".into();
                 Ok(())
+            }
+            Message::Key(key, mods) => {
+                let Some(action) = self.keys.press(&key, mods) else {
+                    // Still typing: a count, a `g`, a search. Drawn in the
+                    // status line so it is never a mystery what was swallowed.
+                    return Task::none();
+                };
+                return self.act(action);
             }
             Message::PlayPause => {
                 self.player.toggle();
@@ -1114,76 +1459,55 @@ impl App {
     /// Playlists, then albums, then artists — each read back by the domain, so
     /// both clients would fold the library the same way.
     fn view_sidebar(&self, peer: &'_ Peer) -> Element<'_, Message> {
-        fn heading(label: &str) -> Element<'_, Message> {
-            text(label).size(12).style(text::secondary).into()
-        }
-
-        let entry = |label: String, count: Option<i64>, source: Source, current: &Source| {
-            let selected = *current == source;
-            button(
-                row![
-                    text(label).width(Length::Fill).size(14),
-                    text(count.map(|n| n.to_string()).unwrap_or_default())
-                        .size(11)
-                        .style(text::secondary),
-                ]
-                .spacing(6),
-            )
-            .style(if selected {
-                button::primary
-            } else {
-                button::text
-            })
-            .padding([4, 8])
-            .width(Length::Fill)
-            .on_press(Message::Select(source))
-        };
-
-        let mut side = column![
-            entry(
-                "Library".into(),
-                Some(peer.items.len() as i64),
-                Source::Library,
-                &peer.source
-            ),
-            heading("Playlists"),
-        ]
-        .spacing(2)
-        .padding(iced::Padding {
+        let cursor = (self.pane == Pane::Sidebar).then_some(self.at(Pane::Sidebar));
+        let mut side = column![].spacing(2).padding(iced::Padding {
             top: 0.0,
             right: 14.0,
             bottom: 0.0,
             left: 4.0,
         });
 
-        for p in &peer.playlists {
-            side = side.push(entry(
-                p.name.clone(),
-                None,
-                Source::Playlist(p.id, p.name.clone()),
-                &peer.source,
-            ));
-        }
-        side = side.push(heading("Albums"));
-        for a in &peer.albums {
-            side = side.push(entry(
-                a.name.clone(),
-                Some(a.tracks),
-                Source::Album(a.name.clone()),
-                &peer.source,
-            ));
-        }
-        side = side.push(heading("Artists"));
-        for a in &peer.artists {
-            side = side.push(entry(
-                a.name.clone(),
-                Some(a.tracks),
-                Source::Artist(a.name.clone()),
-                &peer.source,
-            ));
+        let mut under: Option<&str> = None;
+        for (i, choice) in peer.choices.iter().enumerate() {
+            // The heading is emitted when the kind changes rather than stored
+            // as a line, which is what keeps the cursor's idea of line N and
+            // the reader's the same.
+            let heading = choice.source.heading();
+            if heading.is_some() && heading != under {
+                side = side.push(
+                    text(heading.unwrap_or_default())
+                        .size(12)
+                        .style(text::secondary),
+                );
+            }
+            under = heading;
+
+            let selected = peer.source == choice.source;
+            side = side.push(
+                button(
+                    row![
+                        text(if cursor == Some(i) { "\u{203a}" } else { " " })
+                            .size(14)
+                            .style(text::primary),
+                        text(choice.label.clone()).width(Length::Fill).size(14),
+                        text(choice.count.map(|n| n.to_string()).unwrap_or_default())
+                            .size(11)
+                            .style(text::secondary),
+                    ]
+                    .spacing(6),
+                )
+                .style(match (selected, cursor == Some(i)) {
+                    (true, _) => button::primary,
+                    (false, true) => button::secondary,
+                    (false, false) => button::text,
+                })
+                .padding([4, 8])
+                .width(Length::Fill)
+                .on_press(Message::Select(choice.source.clone())),
+            );
         }
 
-        container(scrollable(side))
+        container(scrollable(side).id(Self::SIDEBAR))
             .width(Length::Fixed(220.0))
             .height(Length::Fill)
             .into()
@@ -1198,65 +1522,80 @@ impl App {
     /// out again — so they are compiled out here rather than deleted.
     fn view_list(&self, peer: &'_ Peer) -> Element<'_, Message> {
         let playing = self.player.track().map(|t| t.id);
-        let rows = peer.rows().iter().fold(column![].spacing(4), |col, item| {
-            let favorited = item.on_playlist();
-            let is_playing = playing == Some(item.id);
-            #[cfg_attr(feature = "demo", allow(unused_mut))]
-            let mut line = Row::new()
-                .spacing(12)
-                .align_y(iced::Alignment::Center)
-                .push(
-                    // An svg rather than a character or a canvas — see
-                    // `heart.rs` for why it is neither.
-                    button(heart::heart(favorited))
-                        .style(button::text)
-                        .padding(4)
-                        .on_press(Message::ToggleFavorite(item.id, favorited)),
-                )
-                .push(
-                    button(
-                        column![
-                            text(item.title.clone()).size(14).style(if is_playing {
-                                text::primary
-                            } else {
-                                text::default
-                            }),
-                            text(item.creator.clone()).size(12).style(text::secondary),
-                        ]
-                        .spacing(2),
-                    )
-                    .style(button::text)
-                    .padding(2)
-                    .width(Length::Fill)
-                    .on_press(Message::PlayItem(item.id)),
-                )
-                .push(
-                    text(clock(item.duration_ms as f64 / 1000.0))
-                        .size(12)
-                        .style(text::secondary),
-                );
-            #[cfg(not(feature = "demo"))]
-            {
-                line = line
+        let cursor = (self.pane == Pane::Tracks).then_some(self.at(Pane::Tracks));
+        let rows = peer
+            .rows()
+            .iter()
+            .enumerate()
+            .fold(column![].spacing(4), |col, (i, item)| {
+                let favorited = item.on_playlist();
+                let is_playing = playing == Some(item.id);
+                let under_cursor = cursor == Some(i);
+                #[cfg_attr(feature = "demo", allow(unused_mut))]
+                let mut line = Row::new()
+                    .spacing(12)
+                    .align_y(iced::Alignment::Center)
                     .push(
-                        // Where it sits in the playlist, which is the number
-                        // that moves when someone else favourites something
-                        // first.
-                        text(match item.playlist_pos {
-                            Some(pos) => format!("#{pos}"),
-                            None => String::new(),
-                        })
-                        .size(12)
-                        .style(text::secondary),
+                        text(if under_cursor { "\u{203a}" } else { " " })
+                            .size(14)
+                            .style(text::primary),
                     )
                     .push(
-                        button("remove")
+                        // An svg rather than a character or a canvas — see
+                        // `heart.rs` for why it is neither.
+                        button(heart::heart(favorited))
                             .style(button::text)
-                            .on_press(Message::RemoveSong(item.id)),
+                            .padding(4)
+                            .on_press(Message::ToggleFavorite(item.id, favorited)),
+                    )
+                    .push(
+                        button(
+                            column![
+                                text(item.title.clone()).size(14).style(if is_playing {
+                                    text::primary
+                                } else {
+                                    text::default
+                                }),
+                                text(item.creator.clone()).size(12).style(text::secondary),
+                            ]
+                            .spacing(2),
+                        )
+                        .style(if under_cursor {
+                            button::secondary
+                        } else {
+                            button::text
+                        })
+                        .padding(2)
+                        .width(Length::Fill)
+                        .on_press(Message::PlayItem(item.id)),
+                    )
+                    .push(
+                        text(clock(item.duration_ms as f64 / 1000.0))
+                            .size(12)
+                            .style(text::secondary),
                     );
-            }
-            col.push(line)
-        });
+                #[cfg(not(feature = "demo"))]
+                {
+                    line = line
+                        .push(
+                            // Where it sits in the playlist, which is the number
+                            // that moves when someone else favourites something
+                            // first.
+                            text(match item.playlist_pos {
+                                Some(pos) => format!("#{pos}"),
+                                None => String::new(),
+                            })
+                            .size(12)
+                            .style(text::secondary),
+                        )
+                        .push(
+                            button("remove")
+                                .style(button::text)
+                                .on_press(Message::RemoveSong(item.id)),
+                        );
+                }
+                col.push(line)
+            });
 
         #[cfg_attr(feature = "demo", allow(unused_mut))]
         let mut main = column![row![
@@ -1309,6 +1648,14 @@ impl App {
             main = main.push(entry).push(actions);
         }
 
+        if self.help {
+            // The status line stays: which pane has the cursor is exactly
+            // what somebody reading the keymap is trying to work out.
+            return main
+                .push(Self::view_help())
+                .push(self.view_status(peer))
+                .into();
+        }
         main.push(
             scrollable(rows.padding(iced::Padding {
                 top: 0.0,
@@ -1316,10 +1663,47 @@ impl App {
                 bottom: 0.0,
                 left: 0.0,
             }))
+            .id(Self::TRACKS)
             .height(Length::Fill),
         )
         .push(self.view_status(peer))
         .into()
+    }
+
+    /// The keymap, because one that has to be read in the source is one nobody
+    /// will find. `?` opens it and `?` or `<Esc>` closes it.
+    fn view_help() -> Element<'static, Message> {
+        const KEYS: &[(&str, &str)] = &[
+            ("j  k", "down, up"),
+            (
+                "h  l",
+                "left, right \u{2014} and out of a list, the next pane",
+            ),
+            ("{n}j", "a count: 5j is five down"),
+            ("gg  G", "first, last. 7G is the seventh"),
+            ("^d  ^u", "a page down, a page up"),
+            ("<Tab>", "cycle the panes: browse, tracks, player"),
+            ("<Enter>  o", "open \u{2014} show a source, play a track"),
+            ("<Space>", "heart the track under the cursor"),
+            ("/", "search this pane; <Enter> accepts, <Esc> drops it"),
+            ("n  N", "the next match, the one before"),
+            ("p", "play or pause"),
+            ("{  }", "the previous track, the next one"),
+            ("?", "this"),
+        ];
+        let rows = KEYS.iter().fold(column![].spacing(6), |col, (keys, what)| {
+            col.push(
+                row![
+                    text(*keys).size(13).width(Length::Fixed(110.0)),
+                    text(*what).size(13).style(text::secondary),
+                ]
+                .spacing(12),
+            )
+        });
+        container(column![text("keys").size(16), rows].spacing(12))
+            .padding(12)
+            .height(Length::Fill)
+            .into()
     }
 
     /// The engine showing through: `cursor` is how much of the server's log has
@@ -1358,7 +1742,31 @@ impl App {
         if !self.note.is_empty() {
             line = format!("{line}  ·  {}", self.note);
         }
-        text(line).size(12).style(text::secondary).into()
+        // Which pane has the cursor, and anything half-typed. Without this a
+        // swallowed `5`, or a `g` still waiting for its pair, is invisible —
+        // which is the one thing that makes a modal keymap feel broken.
+        let mode = match self.pane {
+            Pane::Sidebar => "browse",
+            Pane::Tracks => "tracks",
+            Pane::Bar => "player",
+        };
+        row![
+            text(line)
+                .size(12)
+                .style(text::secondary)
+                .width(Length::Fill),
+            // A search shows a caret, so a half-typed query does not look
+            // like a finished one that matched nothing.
+            text(match self.keys.mode() {
+                vim::Mode::Search(_) => format!("{}\u{2582}", self.keys.pending()),
+                vim::Mode::Normal => self.keys.pending(),
+            })
+            .size(12)
+            .style(text::primary),
+            text(mode).size(12).style(text::secondary),
+        ]
+        .spacing(12)
+        .into()
     }
 
     /// The now-playing bar. Pinned to the bottom, and honest about silence:
@@ -1382,15 +1790,36 @@ impl App {
 
         let position = self.player.position();
         let duration = self.player.duration().max(0.1);
+        // The bar is the one pane shaped as a `vim::Row`, so its cursor moves
+        // sideways under `h` and `l`, and `k` is what leaves it.
+        //
+        // While it holds the cursor every button goes flat except the one
+        // under it, so exactly one is filled and it is always the cursor.
+        // Otherwise play/pause is the filled one, because that is the button
+        // somebody reaching for the mouse is reaching for.
+        let cursor = (self.pane == Pane::Bar).then_some(self.at(Pane::Bar));
+        type Style = fn(&iced::Theme, button::Status) -> button::Style;
+        let key = |i: usize, base: Style| -> Style {
+            match cursor {
+                Some(c) if c == i => button::secondary,
+                Some(_) => button::text,
+                None => base,
+            }
+        };
         let transport = row![
-            button("«").style(button::text).on_press(Message::Skip(-1)),
+            button("«")
+                .style(key(0, button::text))
+                .on_press(Message::Skip(-1)),
             button(if self.player.is_playing() {
                 "❚❚"
             } else {
                 "▶"
             })
+            .style(key(1, button::primary))
             .on_press_maybe(Player::AUDIBLE.then_some(Message::PlayPause)),
-            button("»").style(button::text).on_press(Message::Skip(1)),
+            button("»")
+                .style(key(2, button::text))
+                .on_press(Message::Skip(1)),
         ]
         .spacing(4)
         .align_y(iced::Alignment::Center);
@@ -1437,9 +1866,26 @@ impl App {
         .into()
     }
 
-    /// A sans-io client has to be pumped by someone. This is that someone.
+    /// A sans-io client has to be pumped by someone. This is that someone —
+    /// and beside it, the keyboard.
+    ///
+    /// `keyboard::listen` reports only the presses **no widget took**, which is
+    /// what makes a modeless vim layer safe here: while a text input has the
+    /// focus it consumes its own keys and none of them reach this, so typing a
+    /// song title cannot also walk the cursor down the list. There is no
+    /// insert mode to get stuck in because there is nothing to get stuck in.
     fn subscription(&self) -> Subscription<Message> {
-        iced::time::every(Duration::from_millis(50)).map(|_| Message::Tick)
+        Subscription::batch([
+            iced::time::every(Duration::from_millis(50)).map(|_| Message::Tick),
+            iced::keyboard::listen().map(|event| match event {
+                iced::keyboard::Event::KeyPressed { key, modifiers, .. } => {
+                    Message::Key(key, modifiers)
+                }
+                // A release or a modifier change is not a command. `Tick` is
+                // the harmless message: it pumps the transport and nothing else.
+                _ => Message::Tick,
+            }),
+        ])
     }
 }
 
