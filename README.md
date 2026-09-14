@@ -90,6 +90,12 @@ The log and the sessions live under `/var/lib/harken`.
 The library in a window, on Linux and macOS. It keeps its own database
 and works offline; the server is where it syncs and where it signs in.
 
+A sidebar down the left browses the library: the playlists, then the
+albums, then the artists. A now-playing bar sits along the bottom. The
+bar sounds nothing on the desktop — there is no audio device wired up,
+and it says so rather than pretending — so playback is the browser's
+today. See `CLAUDE.md` for what closing that would take.
+
 ```
 nix run github:k2on/harken#harken-iced -- --server https://harken.example.com
 nix profile install github:k2on/harken#harken-iced   # …or keep it around
@@ -121,7 +127,12 @@ The client compiled to wasm with no server, no sign-in and a seeded
 library, published to GitHub Pages on every push to `main`. It is the
 real client — the same `apply`, the same maintained view, the same
 rebase — with a feature that removes the parts needing somewhere to
-connect to.
+connect to, and the parts that make no sense without one: there is no
+sign-in, nothing to type a song into, and no remove button.
+
+Its library is public-domain classical recordings streamed from
+Wikimedia Commons, so the bar plays. Pick a composer under Artists, or
+a work under Albums, and press a track.
 
 ```
 nix build .#harken-demo    # index.html and pkg/, ready to serve

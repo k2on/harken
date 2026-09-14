@@ -5,7 +5,7 @@
     petros = {
       # The hash of `cargo vendor` over `Cargo.lock`; nix prints the right one
       # when the lock moves.
-      cargoVendorHash = "sha256-rdkdTsilXfgzYgXPAFWACDzkH1Psn/8wHLRmJRHYIuw=";
+      cargoVendorHash = "sha256-d5z5CgV/OdptnKw0ZHuXR1BHSf3GjsPVPgpteddGF3Q=";
       mutators.crate = "harken";
       # Beside the domain rather than at the root, because it describes what is
       # in `functions.rs`. `nix flake check` holds every build to it.

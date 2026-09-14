@@ -41,7 +41,9 @@ server/                  axum, with one Petros handler mounted on it, and the
   nix/readme.nix         its section of README.md
 iced/                    the desktop and browser client
   src/main.rs            …and how each target signs in: a loopback port, or the page
-  src/heart.rs           the heart, drawn as a path (see below)
+  src/heart.rs           the heart, drawn as an SVG (see below)
+  src/player.rs          what is playing — an <audio> element in a browser,
+                         and nothing at all on the desktop
   nix/readme.nix         its section of README.md
   web/                   the browser shell `nix run .#web` serves
   nix/default.nix        the desktop package and `iced`
@@ -515,13 +517,25 @@ declaration: `petros_schema::row!` in `schema.rs` emits both, the `From`
 between them, and the `#[cfg]` on the far half. Neither file mentions bindings;
 the doc comments reach the generated TypeScript.
 
-## The heart is a path on the desktop and a character on the phone
+## The heart is an SVG on the desktop and a character on the phone
 
 Fira Sans, which iced embeds, has no U+2665, U+2661 or U+2764 in its cmap — a
-text heart lays out fine and draws nothing at all. So `iced/src/heart.rs` draws
-it with two cubics down each side, filled when the song is on the playlist and
-stroked when it is not. React Native uses the system font, which has the glyph,
-so the Expo screen just writes `♥`.
+text heart lays out fine and draws nothing at all. React Native uses the system
+font, which has the glyph, so the Expo screen just writes `♥`.
+
+It was a `canvas` for a while, and that is the trap worth keeping. **A canvas
+inside a `scrollable` is not translated to the row it belongs to under the
+WebGL renderer.** One per list row means every heart draws at very nearly the
+same place, so twenty of them stack into what looks like a single stray heart
+near the bottom of the list, and scrolling moves the pile rather than the
+hearts. It reads as "the heart does not render" — which is how it survived a
+demo, because one heart *was* rendering and it was all twenty of them. The tell
+is that scrolling changes *which* rows appear to have one.
+
+`iced/src/heart.rs` is an SVG now, which an image widget positions from the
+widget's own bounds rather than from geometry in a shared layer. Same path —
+two cubics down each side, filled when the song is on the playlist and stroked
+when it is not — and it costs the `svg` feature instead of `canvas`.
 
 ## Traps in the client toolchain
 
@@ -770,6 +784,45 @@ so the Expo screen just writes `♥`.
 - **`nix develop` sets `TMPDIR`.** The demo databases go to
   `std::env::temp_dir()`, so a server started inside `nix develop --command`
   does not share a database with one started under direnv.
+
+## The sidebar browses; the now-playing bar plays, in a browser
+
+The client is a library with a sidebar: playlists, then albums, then artists.
+Which of those a row belongs to is not a column on the library list — `album`
+lives on the `song` side table precisely so that `media` stays kind-neutral —
+so the grouping is four queries in the domain (`albums`, `artists`, `album`,
+`artist`) rather than a wider `Item`. Both clients would then fold the library
+the same way, and a screen that browses by album is asking a song-shaped
+question and gets a song-shaped answer.
+
+Only the library list is the maintained view. Picking a playlist, an album or
+an artist costs one query per change, which is the right trade: the list you
+are looking at most of the time is the maintained one, and re-reading a single
+album when something moves is a hundred rows rather than the library.
+
+**Audio is the browser's, and only the browser's.** `iced/src/player.rs` hands
+a URL to an `<audio>` element, which buys streaming, buffering, range requests
+and seeking from the platform — four problems that would each have to be solved
+again in Rust. The desktop build has no audio device wired up at all:
+`Player::AUDIBLE` is false there, the bar says so, and the transport is
+disabled rather than silently doing nothing. Closing that gap means a decoder
+and an output device (`rodio`, so `cpal`, so ALSA) plus an HTTP reader to feed
+them, and it is worth doing when the desktop client has a media store to stream
+from — which it does not yet.
+
+The demo's library is public-domain classical recordings from Wikimedia
+Commons, by way of the mp3 transcode Commons generates for every audio file:
+a browser plays mp3 everywhere, and Vorbis in an `.ogg` does not play in Safari
+at all. The URL goes in `file`, which is what that column has always been for,
+so nothing about the log changed to carry a recording. Every one was checked
+for a public-domain licence and a transcode that answers `audio/mpeg` to a
+range request — a dead link there is a silent demo.
+
+The demo is also a listening UI and nothing else: no sign-in (it has no
+accounts and no server), no typing a song in, no bulk favouriting, no per-row
+remove. Those are `#[cfg(not(feature = "demo"))]` rather than deleted, because
+against a real server they are the only way to sign in, add anything, or take
+it back out.
 
 ## The desktop client maintains its list; the phone does not yet
 

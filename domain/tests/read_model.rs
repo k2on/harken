@@ -437,3 +437,85 @@ where
         .unwrap();
     harken::playlists(&mut client.store()).unwrap()[0].id
 }
+
+/// The sidebar's three lists, and the lists they select.
+///
+/// The interesting one is albums: `album` lives on the `song` side table, not
+/// on `media`, precisely so the library list stays kind-neutral — so this is
+/// the query that has to reach across a relationship to answer at all.
+#[test]
+fn albums_and_artists_group_the_library_and_select_it_back() {
+    let mut c = Client::<harken::HarkenApp>::open(
+        petros::open_memory().unwrap(),
+        "alice",
+        AutoCtx::seeded(11),
+    )
+    .unwrap();
+    let favs = favourites(&mut c);
+
+    for (title, artist, album) in [
+        ("Für Elise", "Beethoven", "Bagatelles"),
+        ("Symphony No. 5 - I", "Beethoven", "Symphony No. 5"),
+        ("Symphony No. 5 - III", "Beethoven", "Symphony No. 5"),
+        ("Clair de lune", "Debussy", "Suite bergamasque"),
+    ] {
+        c.mutate(harken::add_song(
+            title.into(),
+            artist.into(),
+            album.into(),
+            0,
+            String::new(),
+        ))
+        .unwrap();
+    }
+
+    // Albums, by name, each counting its own tracks and naming who made it.
+    let albums = harken::albums(&mut c.store()).unwrap();
+    assert_eq!(
+        albums
+            .iter()
+            .map(|a| (a.name.as_str(), a.creator.as_str(), a.tracks))
+            .collect::<Vec<_>>(),
+        vec![
+            ("Bagatelles", "Beethoven", 1),
+            ("Suite bergamasque", "Debussy", 1),
+            ("Symphony No. 5", "Beethoven", 2),
+        ],
+        "one row per album, in name order, with the tracks counted"
+    );
+
+    let artists = harken::artists(&mut c.store()).unwrap();
+    assert_eq!(
+        artists
+            .iter()
+            .map(|a| (a.name.as_str(), a.tracks))
+            .collect::<Vec<_>>(),
+        vec![("Beethoven", 3), ("Debussy", 1)]
+    );
+
+    // Selecting one gives back the library's own rows, in library order.
+    let symphony = harken::album(&mut c.store(), favs, "Symphony No. 5".into()).unwrap();
+    assert_eq!(
+        symphony
+            .iter()
+            .map(|i| i.title.as_str())
+            .collect::<Vec<_>>(),
+        vec!["Symphony No. 5 - I", "Symphony No. 5 - III"]
+    );
+    let beethoven = harken::artist(&mut c.store(), favs, "Beethoven".into()).unwrap();
+    assert_eq!(beethoven.len(), 3);
+    assert!(harken::album(&mut c.store(), favs, "Nocturnes".into())
+        .unwrap()
+        .is_empty());
+
+    // Read against a playlist, like the library list is: a track's heart shows
+    // through the album view rather than being lost by it.
+    let id = symphony[0].id;
+    c.mutate(harken::add_to_playlist(favs, id)).unwrap();
+    let symphony = harken::album(&mut c.store(), favs, "Symphony No. 5".into()).unwrap();
+    assert!(
+        symphony[0].on_playlist(),
+        "the heart survives the album view"
+    );
+    assert!(!symphony[1].on_playlist());
+}

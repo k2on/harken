@@ -36,6 +36,11 @@ use crate::schema::tables::{Media, Playlist, PlaylistItem, Song};
 // Only the queries below use these, and a query is not built for the sandbox.
 #[cfg(feature = "storage")]
 use crate::schema::Item;
+// Grouping a sidebar's albums and artists, and the set an album's tracks are
+// picked out by. Ordered maps, so the lists come out in a stable order without
+// a sort — two peers showing the same library show it the same way.
+#[cfg(feature = "storage")]
+use std::collections::{BTreeMap, BTreeSet};
 
 // ------------------------------------------------------------------ mutations
 
@@ -348,6 +353,78 @@ pub fn patch(items: &mut Vec<Item>, patches: &[petros::ivm::Patch]) {
             }
         }
     }
+}
+
+/// Every album in the library, by name.
+///
+/// Grouped here rather than in SQL because the query builder has no GROUP BY
+/// and should not grow one for this: the rows are already being read, and a
+/// sidebar is built when a selection changes rather than on every frame.
+#[query]
+pub fn albums(db: &mut Db) -> Result<Vec<crate::schema::Album>> {
+    // A song carries its album; the media row beside it carries who made it.
+    // Reading from the song end is what makes this song-shaped: a kind with no
+    // albums contributes nothing and needs no case here.
+    let rows = db.select_with(Song::all(), Song::media, Media::all());
+    let mut by_name: BTreeMap<String, (String, i64)> = BTreeMap::new();
+    for row in &rows {
+        let Some(media) = row.one() else { continue };
+        let entry = by_name
+            .entry(row.row.album.clone())
+            .or_insert_with(|| (media.creator.clone(), 0));
+        entry.1 += 1;
+    }
+    Ok(by_name
+        .into_iter()
+        .map(|(name, (creator, tracks))| crate::schema::Album {
+            name,
+            creator,
+            tracks,
+        })
+        .collect())
+}
+
+/// Everyone who made something in the library, by name.
+#[query]
+pub fn artists(db: &mut Db) -> Result<Vec<crate::schema::Artist>> {
+    let mut by_name: BTreeMap<String, i64> = BTreeMap::new();
+    for media in db.select(Media::all()) {
+        *by_name.entry(media.creator).or_insert(0) += 1;
+    }
+    Ok(by_name
+        .into_iter()
+        .map(|(name, tracks)| crate::schema::Artist { name, tracks })
+        .collect())
+}
+
+/// One album's tracks, in library order, read against a playlist.
+///
+/// The same `Item` the library list renders, so a screen showing an album is
+/// the library screen with a different source and not a second row type.
+#[query]
+pub fn album(db: &mut Db, playlist_id: Id<Playlist>, name: String) -> Result<Vec<Item>> {
+    let ids: BTreeSet<Id<Media>> = db
+        .select(Song::all().filter(Song::album.eq(name)))
+        .into_iter()
+        .map(|s| s.media_id)
+        .collect();
+    let rows = db.select_with(library_query(), Media::playlist_item, items_on(playlist_id));
+    Ok(rows
+        .iter()
+        .filter(|r| ids.contains(&r.row.id))
+        .map(item_of)
+        .collect())
+}
+
+/// One artist's tracks, in library order, read against a playlist.
+#[query]
+pub fn artist(db: &mut Db, playlist_id: Id<Playlist>, name: String) -> Result<Vec<Item>> {
+    let rows = db.select_with(
+        library_query().filter(Media::creator.eq(name)),
+        Media::playlist_item,
+        items_on(playlist_id),
+    );
+    Ok(rows.iter().map(item_of).collect())
 }
 
 /// Every playlist, in the order they were made.

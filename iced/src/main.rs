@@ -27,14 +27,15 @@
 //! two lines: where the database lives, and which transport carries the bytes.
 
 mod heart;
+mod player;
 
 use std::time::Duration;
 
 use harken::{self as mutators, HarkenApp, Item};
-use heart::Heart;
-use iced::widget::{button, canvas, column, container, row, scrollable, text, text_input};
+use iced::widget::{button, column, container, row, rule, scrollable, slider, text, Row};
 use iced::{Element, Length, Subscription, Task};
 use petros::{AutoCtx, Changes, Client};
+use player::{Player, Track};
 
 /// A library item's id. The message carries what it identifies, so a playlist's
 /// id cannot be dropped into one of these by mistake.
@@ -187,6 +188,34 @@ mod remembered {
 
 // ------------------------------------------------------------------ the app
 
+/// What the main list is showing, which is what the sidebar picks.
+///
+/// Each variant carries the name it was selected by rather than an id to look
+/// up: the header draws it, and a library that changed underneath the
+/// selection should not make the header go blank.
+#[derive(Debug, Clone, PartialEq)]
+enum Source {
+    /// Everything, in library order. The only one served by the maintained
+    /// view rather than by a query — see `Peer::reload_shown`.
+    Library,
+    Playlist(harken::Id<harken::tables::Playlist>, String),
+    Album(String),
+    Artist(String),
+}
+
+impl Source {
+    fn title(&self) -> &str {
+        match self {
+            Source::Library => "Library",
+            Source::Playlist(_, name) | Source::Album(name) | Source::Artist(name) => name,
+        }
+    }
+}
+
+// The demo drives only a few of these: it has no accounts to sign in or out
+// of, no entry box to type a song into, and no remove button. The variants
+// stay so that the one `update` serves both builds.
+#[cfg_attr(feature = "demo", allow(dead_code))]
 #[derive(Debug, Clone)]
 enum Message {
     TypedTitle(String),
@@ -197,12 +226,29 @@ enum Message {
     FavoriteAll,
     RemoveSong(Id),
     ToggleLink,
+    /// The sidebar: show a playlist, an album, an artist, or everything.
+    Select(Source),
+    /// Start this one, and make what is on screen the queue it plays through.
+    PlayItem(Id),
+    PlayPause,
+    Skip(i32),
+    /// Dragging the bar's progress, in seconds.
+    Seek(f32),
     SignIn,
     /// The sign-in came back, one way or the other.
     SignedIn(Result<Login, String>),
     SignOut,
     /// Pump the transport. Nothing else drives a sans-io client.
     Tick,
+}
+
+/// Seconds as `m:ss`, which is how long a piece of music is written down.
+fn clock(secs: f64) -> String {
+    if !secs.is_finite() || secs < 0.0 {
+        return String::new();
+    }
+    let secs = secs as u64;
+    format!("{}:{:02}", secs / 60, secs % 60)
 }
 
 /// A database, a socket, and what is maintained over them. Exists once
@@ -226,11 +272,35 @@ struct Peer {
     /// How many items are on the playlist the hearts stand for.
     on_playlist: harken::PlaylistCount,
     /// Which playlist a heart means. The domain has no favourites of its own.
+    ///
+    /// Not the same thing as what the sidebar is *showing*: a heart always
+    /// means favourites, so hearting something while browsing an album puts it
+    /// where a heart has always put it.
     playlist: harken::Id<harken::tables::Playlist>,
+    /// What the sidebar picked, and the list that answers it.
+    ///
+    /// `Source::Library` is `items` itself, maintained. Everything else is one
+    /// query per change — the whole point of the maintained view is the list
+    /// you are looking at most of the time, and re-reading a single album when
+    /// something moves is a hundred rows, not the library.
+    source: Source,
+    shown: Vec<Item>,
+    /// The sidebar, rebuilt when the library changes rather than per frame.
+    playlists: Vec<harken::Playlist>,
+    albums: Vec<harken::Album>,
+    artists: Vec<harken::Artist>,
     pending: usize,
 }
 
 struct App {
+    /// What is playing, and whether this build can sound it. See `player.rs`.
+    player: Player,
+    /// What `Skip` moves through: the list as it stood when play was pressed.
+    ///
+    /// A snapshot rather than a reference to the shown list, so that changing
+    /// the sidebar selection — or somebody else's edit arriving — does not
+    /// silently redirect what plays next.
+    queue: Vec<Item>,
     server: String,
     /// A name to offer a dev server, so `nix run .#iced alice` needs no
     /// browser. Ignored by a real one.
@@ -279,6 +349,11 @@ impl Peer {
             library: harken::library_view(playlist),
             on_playlist: harken::playlist_count(playlist),
             playlist,
+            source: Source::Library,
+            shown: Vec::new(),
+            playlists: Vec::new(),
+            albums: Vec::new(),
+            artists: Vec::new(),
             items: Vec::new(),
             pending: 0,
         };
@@ -290,6 +365,8 @@ impl Peer {
         }
         peer.items = harken::items_of(&peer.library);
         let _ = peer.client.take_changes();
+        peer.reload_sidebar();
+        peer.reload_shown();
         peer.pending = peer.client.pending_len();
         peer
     }
@@ -336,7 +413,45 @@ impl Peer {
                 self.items = harken::items_of(&self.library);
             }
         }
+        self.reload_sidebar();
+        self.reload_shown();
         self.pending = self.client.pending_len();
+    }
+
+    /// The sidebar's three lists, read back.
+    ///
+    /// Three queries, and they run when something changed rather than when
+    /// something is drawn — `refresh` is only called for an edit or an arrival.
+    /// Grouping happens in the domain, so both clients get the same lists in
+    /// the same order rather than each inventing a way to fold the library.
+    fn reload_sidebar(&mut self) {
+        let mut store = self.client.store();
+        self.playlists = harken::playlists(&mut store).unwrap_or_default();
+        self.albums = harken::albums(&mut store).unwrap_or_default();
+        self.artists = harken::artists(&mut store).unwrap_or_default();
+    }
+
+    /// The list under the header, for whatever the sidebar picked.
+    ///
+    /// The library is the maintained one and costs nothing here. The others are
+    /// a query, because a filtered list is not what the view is maintaining —
+    /// and a selection is a click, so paying for it there is the right place.
+    fn reload_shown(&mut self) {
+        self.shown = match self.source.clone() {
+            Source::Library => return,
+            Source::Playlist(id, _) => harken::playlist(&mut self.client.store(), id),
+            Source::Album(name) => harken::album(&mut self.client.store(), self.playlist, name),
+            Source::Artist(name) => harken::artist(&mut self.client.store(), self.playlist, name),
+        }
+        .unwrap_or_default();
+    }
+
+    /// What the main list is showing, whichever side it came from.
+    fn rows(&self) -> &[Item] {
+        match self.source {
+            Source::Library => &self.items,
+            _ => &self.shown,
+        }
     }
 
     /// Move messages between the client and the wire. While offline the outbox
@@ -411,23 +526,167 @@ impl App {
         if !peer.items.is_empty() {
             return;
         }
-        const LIBRARY: &[(&str, &str, &str, i64)] = &[
-            ("Glue", "Bicep", "Bicep", 272_000),
-            ("Opal", "Bicep", "Bicep", 318_000),
-            ("Aura", "Bicep", "Isles", 289_000),
-            ("Gosh", "Jamie xx", "In Colour", 296_000),
-            ("Loud Places", "Jamie xx", "In Colour", 397_000),
-            ("Nightmarket", "Four Tet", "Sixteen Oceans", 256_000),
-            ("Baby", "Four Tet", "Sixteen Oceans", 191_000),
-            ("Teardrop", "Massive Attack", "Mezzanine", 330_000),
+        // Public-domain recordings on Wikimedia Commons, by way of the mp3
+        // Commons transcodes every audio file gets: a browser plays mp3
+        // everywhere, and Vorbis in an `.ogg` does not play in Safari at all.
+        //
+        // The URL goes in `file`, which is what that column has always been
+        // for — "the bytes travel over HTTP and only the name of them is
+        // synced". Nothing about the log changes to carry a recording.
+        //
+        // Every one of these was checked: public domain by Commons' own
+        // licence field, and a transcode that answers with `audio/mpeg` and a
+        // range request. A dead link here is a silent demo, so they are not
+        // taken on trust.
+        const LIBRARY: &[(&str, &str, &str, i64, &str)] = &[
+    (
+        "Air on the G String",
+        "Johann Sebastian Bach",
+        "Orchestral Suite No. 3",
+        260000,
+        "https://upload.wikimedia.org/wikipedia/commons/transcoded/1/1e/Air_%28Bach%29.ogg/Air_%28Bach%29.ogg.mp3",
+    ),
+    (
+        "Toccata and Fugue in D minor, BWV 565",
+        "Johann Sebastian Bach",
+        "Organ Works",
+        514000,
+        "https://upload.wikimedia.org/wikipedia/commons/transcoded/b/be/Toccata_et_Fugue_BWV565.ogg/Toccata_et_Fugue_BWV565.ogg.mp3",
+    ),
+    (
+        "Für Elise",
+        "Ludwig van Beethoven",
+        "Bagatelles",
+        177000,
+        "https://upload.wikimedia.org/wikipedia/commons/transcoded/7/7b/FurElise.ogg/FurElise.ogg.mp3",
+    ),
+    (
+        "Moonlight Sonata - I. Adagio sostenuto",
+        "Ludwig van Beethoven",
+        "Piano Sonata No. 14",
+        307000,
+        "https://upload.wikimedia.org/wikipedia/commons/transcoded/d/d0/Moonlight_Sonata.ogg/Moonlight_Sonata.ogg.mp3",
+    ),
+    (
+        "Symphony No. 5 - I. Allegro con brio",
+        "Ludwig van Beethoven",
+        "Symphony No. 5",
+        436000,
+        "https://upload.wikimedia.org/wikipedia/commons/transcoded/5/5b/Ludwig_van_Beethoven_-_Symphonie_5_c-moll_-_1._Allegro_con_brio.ogg/Ludwig_van_Beethoven_-_Symphonie_5_c-moll_-_1._Allegro_con_brio.ogg.mp3",
+    ),
+    (
+        "Symphony No. 5 - III. Allegro",
+        "Ludwig van Beethoven",
+        "Symphony No. 5",
+        336000,
+        "https://upload.wikimedia.org/wikipedia/commons/transcoded/5/5b/Ludwig_van_Beethoven_-_symphony_no._5_in_c_minor%2C_op._67_-_iii._allegro.ogg/Ludwig_van_Beethoven_-_symphony_no._5_in_c_minor%2C_op._67_-_iii._allegro.ogg.mp3",
+    ),
+    (
+        "Eine kleine Nachtmusik - I. Allegro",
+        "Wolfgang Amadeus Mozart",
+        "Eine kleine Nachtmusik",
+        253000,
+        "https://upload.wikimedia.org/wikipedia/commons/transcoded/6/68/Mozart_K525_Serenade_in_G_Major_1_-_Allegro.ogg/Mozart_K525_Serenade_in_G_Major_1_-_Allegro.ogg.mp3",
+    ),
+    (
+        "Eine kleine Nachtmusik - III. Minuet",
+        "Wolfgang Amadeus Mozart",
+        "Eine kleine Nachtmusik",
+        123000,
+        "https://upload.wikimedia.org/wikipedia/commons/transcoded/a/a0/Mozart_K525_Serenade_in_G_Major_3_-_Minuet.ogg/Mozart_K525_Serenade_in_G_Major_3_-_Minuet.ogg.mp3",
+    ),
+    (
+        "Eine kleine Nachtmusik - IV. Rondo",
+        "Wolfgang Amadeus Mozart",
+        "Eine kleine Nachtmusik",
+        194000,
+        "https://upload.wikimedia.org/wikipedia/commons/transcoded/3/3b/Mozart_K525_Serenade_in_G_Major_4_-_Rondo.ogg/Mozart_K525_Serenade_in_G_Major_4_-_Rondo.ogg.mp3",
+    ),
+    (
+        "Ballade No. 1 in G minor, Op. 23",
+        "Frédéric Chopin",
+        "Ballades",
+        679000,
+        "https://upload.wikimedia.org/wikipedia/commons/transcoded/3/33/Frederic_Chopin_-_ballade_no._1_in_g_minor%2C_op._23.ogg/Frederic_Chopin_-_ballade_no._1_in_g_minor%2C_op._23.ogg.mp3",
+    ),
+    (
+        "Ballade No. 2 in F major, Op. 38",
+        "Frédéric Chopin",
+        "Ballades",
+        420000,
+        "https://upload.wikimedia.org/wikipedia/commons/transcoded/c/cf/Frederic_Chopin_-_ballade_no._2_in_f_major%2C_op._38.ogg/Frederic_Chopin_-_ballade_no._2_in_f_major%2C_op._38.ogg.mp3",
+    ),
+    (
+        "Swan Lake - Dance of the Swans",
+        "Pyotr Ilyich Tchaikovsky",
+        "Swan Lake",
+        81000,
+        "https://upload.wikimedia.org/wikipedia/commons/transcoded/3/35/Tchaikovsky_Swan_Lake_Op.20_No.13._Danses_des_cygnes_IV.ogg/Tchaikovsky_Swan_Lake_Op.20_No.13._Danses_des_cygnes_IV.ogg.mp3",
+    ),
+    (
+        "Swan Lake - Scene",
+        "Pyotr Ilyich Tchaikovsky",
+        "Swan Lake",
+        150000,
+        "https://upload.wikimedia.org/wikipedia/commons/transcoded/1/1f/Tchaikovsky_Swan_Lake_Op.20_No.10._Sc%C3%A8ne.ogg/Tchaikovsky_Swan_Lake_Op.20_No.10._Sc%C3%A8ne.ogg.mp3",
+    ),
+    (
+        "Winter - I. Allegro non molto",
+        "Antonio Vivaldi",
+        "The Four Seasons",
+        198000,
+        "https://upload.wikimedia.org/wikipedia/commons/transcoded/0/04/Vivaldi_Winter_mvt_1_Allegro_non_molto_-_The_USAF_Concert.ogg/Vivaldi_Winter_mvt_1_Allegro_non_molto_-_The_USAF_Concert.ogg.mp3",
+    ),
+    (
+        "Water Music - Allegro",
+        "George Frideric Handel",
+        "Water Music",
+        125000,
+        "https://upload.wikimedia.org/wikipedia/commons/transcoded/d/de/Handel%27s_Water_Music_-_11._Allegro_-_Chamber_Orchestra_-_United_States_Marine_Band.opus/Handel%27s_Water_Music_-_11._Allegro_-_Chamber_Orchestra_-_United_States_Marine_Band.opus.mp3",
+    ),
+    (
+        "Water Music - Bourrée",
+        "George Frideric Handel",
+        "Water Music",
+        76000,
+        "https://upload.wikimedia.org/wikipedia/commons/transcoded/2/2d/Handel%27s_Water_Music_-_15._Bourree_-_Chamber_Orchestra_-_United_States_Marine_Band.opus/Handel%27s_Water_Music_-_15._Bourree_-_Chamber_Orchestra_-_United_States_Marine_Band.opus.mp3",
+    ),
+    (
+        "Impromptu in G-flat major, D. 899",
+        "Franz Schubert",
+        "Impromptus",
+        301000,
+        "https://upload.wikimedia.org/wikipedia/commons/transcoded/0/0b/Schubert_Gb_Impromptu_Andriy_Bondarenko_%28Live%29.ogg/Schubert_Gb_Impromptu_Andriy_Bondarenko_%28Live%29.ogg.mp3",
+    ),
+    (
+        "Hungarian Dance No. 1",
+        "Johannes Brahms",
+        "Hungarian Dances",
+        57000,
+        "https://upload.wikimedia.org/wikipedia/commons/transcoded/d/d6/Brahms_-_Hungarian_Dance_No._1_%28performed_by_the_composer%29.oga/Brahms_-_Hungarian_Dance_No._1_%28performed_by_the_composer%29.oga.mp3",
+    ),
+    (
+        "Hungarian Dance No. 5",
+        "Johannes Brahms",
+        "Hungarian Dances",
+        175000,
+        "https://upload.wikimedia.org/wikipedia/commons/transcoded/0/0a/Brahms_nikisch_hd5.ogg/Brahms_nikisch_hd5.ogg.mp3",
+    ),
+    (
+        "Clair de lune",
+        "Claude Debussy",
+        "Suite bergamasque",
+        304000,
+        "https://upload.wikimedia.org/wikipedia/commons/transcoded/b/be/Clair_de_lune_%28Claude_Debussy%29_Suite_bergamasque.ogg/Clair_de_lune_%28Claude_Debussy%29_Suite_bergamasque.ogg.mp3",
+    ),
         ];
-        for (title, artist, album, ms) in LIBRARY {
+        for (title, artist, album, ms, file) in LIBRARY {
             let _ = peer.client.mutate(mutators::add_song(
                 (*title).into(),
                 (*artist).into(),
                 (*album).into(),
                 *ms,
-                String::new(),
+                (*file).into(),
             ));
         }
         peer.refresh();
@@ -435,7 +694,12 @@ impl App {
         let hearted: Vec<harken::Id<harken::tables::Media>> = peer
             .items
             .iter()
-            .filter(|i| matches!(i.title.as_str(), "Glue" | "Gosh" | "Teardrop"))
+            .filter(|i| {
+                matches!(
+                    i.title.as_str(),
+                    "Clair de lune" | "Für Elise" | "Air on the G String"
+                )
+            })
             .map(|i| i.id)
             .collect();
         for id in hearted {
@@ -444,6 +708,55 @@ impl App {
                 .mutate(mutators::add_to_playlist(peer.playlist, id));
         }
         peer.refresh();
+
+        // Two more playlists, so the sidebar shows what a playlist *is* here:
+        // an ordered list somebody made, of which "Favourites" is one and not
+        // a special case. Made after the hearts above so that the first
+        // playlist — the one a heart means — stays Favourites.
+        const SETS: &[(&str, &[&str])] = &[
+            (
+                "Piano",
+                &[
+                    "Für Elise",
+                    "Moonlight Sonata - I. Adagio sostenuto",
+                    "Clair de lune",
+                    "Ballade No. 1 in G minor, Op. 23",
+                    "Impromptu in G-flat major, D. 899",
+                ],
+            ),
+            (
+                "Strings",
+                &[
+                    "Air on the G String",
+                    "Eine kleine Nachtmusik - I. Allegro",
+                    "Winter - I. Allegro non molto",
+                    "Swan Lake - Scene",
+                ],
+            ),
+        ];
+        for (name, titles) in SETS {
+            let _ = peer
+                .client
+                .mutate(mutators::create_playlist((*name).into()));
+            peer.refresh();
+            let Some(list) = peer
+                .playlists
+                .iter()
+                .find(|p| p.name == *name)
+                .map(|p| p.id)
+            else {
+                continue;
+            };
+            let ids: Vec<harken::Id<harken::tables::Media>> = titles
+                .iter()
+                .filter_map(|t| peer.items.iter().find(|i| i.title == *t))
+                .map(|i| i.id)
+                .collect();
+            for id in ids {
+                let _ = peer.client.mutate(mutators::add_to_playlist(list, id));
+            }
+            peer.refresh();
+        }
     }
 
     fn boot() -> (Self, Task<Message>) {
@@ -456,6 +769,8 @@ impl App {
             let mut peer = Peer::open(&login);
             Self::seed(&mut peer);
             let app = App {
+                player: Player::new(),
+                queue: Vec::new(),
                 login: Some(login),
                 server: String::new(),
                 user: None,
@@ -472,6 +787,8 @@ impl App {
         {
             let (server, user) = config();
             let mut app = App {
+                player: Player::new(),
+                queue: Vec::new(),
                 login: remembered::recall(&server),
                 server,
                 user,
@@ -578,6 +895,31 @@ impl App {
         self.login = Some(login);
     }
 
+    /// Move through the queue, and stop at either end rather than wrapping —
+    /// a list that loops silently is hard to tell from one that is stuck.
+    fn skip(&mut self, delta: i32) {
+        let Some(current) = self.player.track().map(|t| t.id) else {
+            return;
+        };
+        let Some(at) = self.queue.iter().position(|i| i.id == current) else {
+            return;
+        };
+        let next = at as i32 + delta;
+        if next < 0 || next as usize >= self.queue.len() {
+            return;
+        }
+        let item = self.queue[next as usize].clone();
+        self.player.play(
+            Track {
+                id: item.id,
+                title: item.title.clone(),
+                creator: item.creator.clone(),
+                ms: item.duration_ms,
+            },
+            &item.file,
+        );
+    }
+
     fn update(&mut self, message: Message) -> Task<Message> {
         // Typing, ticking and pulling the plug all leave the list alone.
         let edited = matches!(
@@ -622,7 +964,27 @@ impl App {
                 self.note = "signed out".into();
                 Ok(())
             }
-            Message::Tick => Ok(()),
+            Message::PlayPause => {
+                self.player.toggle();
+                Ok(())
+            }
+            Message::Seek(secs) => {
+                self.player.seek(secs as f64);
+                Ok(())
+            }
+            Message::Skip(delta) => {
+                self.skip(delta);
+                Ok(())
+            }
+            // The element runs on its own clock, so the end of a track arrives
+            // as "the tick that noticed" rather than as an event. Twenty times
+            // a second is plenty to move on by.
+            Message::Tick => {
+                if self.player.ended() {
+                    self.skip(1);
+                }
+                Ok(())
+            }
             other => match &mut self.peer {
                 None => Ok(()),
                 Some(peer) => match other {
@@ -638,6 +1000,32 @@ impl App {
                                 String::new(),
                             ))
                             .map(|_| ())
+                    }
+                    Message::Select(source) => {
+                        peer.source = source;
+                        peer.reload_shown();
+                        Ok(())
+                    }
+                    Message::PlayItem(id) => {
+                        // The queue is what is on screen, taken now: skipping
+                        // follows the list you pressed play in, even after the
+                        // sidebar moves somewhere else.
+                        self.queue = peer.rows().to_vec();
+                        if let Some(item) = self.queue.iter().find(|i| i.id == id) {
+                            self.player.play(
+                                Track {
+                                    id: item.id,
+                                    title: item.title.clone(),
+                                    creator: item.creator.clone(),
+                                    ms: item.duration_ms,
+                                },
+                                &item.file,
+                            );
+                            if item.file.is_empty() {
+                                self.note = "nothing to stream — this one has no file".into();
+                            }
+                        }
+                        Ok(())
                     }
                     Message::ToggleFavorite(id, favorited) => {
                         let m = if favorited {
@@ -701,123 +1089,332 @@ impl App {
         let Some(peer) = &self.peer else {
             return self.view_signed_out();
         };
-        let rows = peer.items.iter().fold(column![].spacing(6), |col, item| {
-            let favorited = item.on_playlist();
-            col.push(
-                row![
-                    // The heart is a button wrapping a canvas rather than a
-                    // label: the font has no heart in it, so a character would
-                    // draw nothing. See `heart.rs`.
-                    button(
-                        canvas(Heart { filled: favorited })
-                            .width(Heart::SIZE)
-                            .height(Heart::SIZE)
-                    )
-                    .style(button::text)
-                    .padding(4)
-                    .on_press(Message::ToggleFavorite(item.id, favorited)),
-                    column![
-                        text(item.title.clone()),
-                        text(item.creator.clone()).size(12).style(text::secondary),
-                    ]
-                    .spacing(2)
-                    .width(Length::Fill),
-                    // Where it sits in the playlist, which is the number that
-                    // moves when someone else favourites something first.
-                    text(match item.playlist_pos {
-                        Some(pos) => format!("#{pos}"),
-                        None => String::new(),
-                    })
-                    .size(12)
-                    .style(text::secondary),
-                    text(item.user_id.clone()).size(12).style(text::secondary),
-                    button("remove")
-                        .style(button::text)
-                        .on_press(Message::RemoveSong(item.id)),
-                ]
-                .spacing(12)
-                .align_y(iced::Alignment::Center),
-            )
-        });
-
-        let entry = row![
-            text_input("title…", &self.title)
-                .on_input(Message::TypedTitle)
-                .on_submit(Message::AddSong)
-                .width(Length::Fill),
-            text_input("artist…", &self.artist)
-                .on_input(Message::TypedArtist)
-                .on_submit(Message::AddSong)
-                .width(Length::Fill),
-            button("add").on_press(Message::AddSong),
-        ]
-        .spacing(12);
-
-        // Turned away by the server: the one button that helps is sign in.
-        let signed_out = self.login.as_ref().is_some_and(|l| l.token.is_empty());
-        let actions = row![
-            button("favourite everything").on_press(Message::FavoriteAll),
-            if signed_out {
-                button("sign in again")
-                    .on_press_maybe((!self.signing_in).then_some(Message::SignIn))
-            } else {
-                button(if peer.link.is_some() {
-                    "go offline"
-                } else {
-                    "go online"
-                })
-                .on_press(Message::ToggleLink)
-            },
-            button("sign out")
-                .style(button::text)
-                .on_press(Message::SignOut),
-        ]
-        .spacing(12);
-
-        // The engine showing through: `cursor` is how much of the server's log
-        // has been applied, `pending` is what this peer has done that no server
-        // has confirmed yet.
-        let favorites = peer.on_playlist.get();
-        let who = self
-            .login
-            .as_ref()
-            .map(|l| {
-                if l.user.name.is_empty() {
-                    l.user.id.clone()
-                } else {
-                    l.user.name.clone()
-                }
-            })
-            .unwrap_or_default();
-        let status = text(format!(
-            "{who} · {} · {} songs, {favorites} favourited · cursor {} · {} pending{}",
-            if peer.link.is_some() {
-                "online"
-            } else {
-                "offline"
-            },
-            peer.items.len(),
-            peer.client.cursor(),
-            peer.pending,
-            if self.note.is_empty() {
-                String::new()
-            } else {
-                format!("  ·  {}", self.note)
-            }
-        ))
-        .size(13);
 
         container(
             column![
-                text("harken").size(26),
-                entry,
-                actions,
-                scrollable(rows).height(Length::Fill),
-                status,
+                // The sidebar and the list share the height that is left once
+                // the bar has taken its own — so the bar stays at the bottom
+                // however long the list is, rather than being pushed off it.
+                row![
+                    self.view_sidebar(peer),
+                    rule::vertical(1),
+                    self.view_list(peer),
+                ]
+                .spacing(16)
+                .height(Length::Fill),
+                rule::horizontal(1),
+                self.view_bar(),
             ]
-            .spacing(16),
+            .spacing(12),
         )
-        .padding(24)
+        .padding(16)
+        .into()
+    }
+
+    /// Playlists, then albums, then artists — each read back by the domain, so
+    /// both clients would fold the library the same way.
+    fn view_sidebar(&self, peer: &'_ Peer) -> Element<'_, Message> {
+        fn heading(label: &str) -> Element<'_, Message> {
+            text(label).size(12).style(text::secondary).into()
+        }
+
+        let entry = |label: String, count: Option<i64>, source: Source, current: &Source| {
+            let selected = *current == source;
+            button(
+                row![
+                    text(label).width(Length::Fill).size(14),
+                    text(count.map(|n| n.to_string()).unwrap_or_default())
+                        .size(11)
+                        .style(text::secondary),
+                ]
+                .spacing(6),
+            )
+            .style(if selected {
+                button::primary
+            } else {
+                button::text
+            })
+            .padding([4, 8])
+            .width(Length::Fill)
+            .on_press(Message::Select(source))
+        };
+
+        let mut side = column![
+            entry(
+                "Library".into(),
+                Some(peer.items.len() as i64),
+                Source::Library,
+                &peer.source
+            ),
+            heading("Playlists"),
+        ]
+        .spacing(2)
+        .padding(iced::Padding {
+            top: 0.0,
+            right: 14.0,
+            bottom: 0.0,
+            left: 4.0,
+        });
+
+        for p in &peer.playlists {
+            side = side.push(entry(
+                p.name.clone(),
+                None,
+                Source::Playlist(p.id, p.name.clone()),
+                &peer.source,
+            ));
+        }
+        side = side.push(heading("Albums"));
+        for a in &peer.albums {
+            side = side.push(entry(
+                a.name.clone(),
+                Some(a.tracks),
+                Source::Album(a.name.clone()),
+                &peer.source,
+            ));
+        }
+        side = side.push(heading("Artists"));
+        for a in &peer.artists {
+            side = side.push(entry(
+                a.name.clone(),
+                Some(a.tracks),
+                Source::Artist(a.name.clone()),
+                &peer.source,
+            ));
+        }
+
+        container(scrollable(side))
+            .width(Length::Fixed(220.0))
+            .height(Length::Fill)
+            .into()
+    }
+
+    /// What the sidebar picked.
+    ///
+    /// The demo is a listening UI and nothing else: no sign-in (it has no
+    /// accounts and no server), no typing a song in, no bulk favouriting and
+    /// no per-row remove. The real client keeps all four, because against a
+    /// server they are the only way to sign in, add anything, or take it back
+    /// out again — so they are compiled out here rather than deleted.
+    fn view_list(&self, peer: &'_ Peer) -> Element<'_, Message> {
+        let playing = self.player.track().map(|t| t.id);
+        let rows = peer.rows().iter().fold(column![].spacing(4), |col, item| {
+            let favorited = item.on_playlist();
+            let is_playing = playing == Some(item.id);
+            #[cfg_attr(feature = "demo", allow(unused_mut))]
+            let mut line = Row::new()
+                .spacing(12)
+                .align_y(iced::Alignment::Center)
+                .push(
+                    // An svg rather than a character or a canvas — see
+                    // `heart.rs` for why it is neither.
+                    button(heart::heart(favorited))
+                        .style(button::text)
+                        .padding(4)
+                        .on_press(Message::ToggleFavorite(item.id, favorited)),
+                )
+                .push(
+                    button(
+                        column![
+                            text(item.title.clone()).size(14).style(if is_playing {
+                                text::primary
+                            } else {
+                                text::default
+                            }),
+                            text(item.creator.clone()).size(12).style(text::secondary),
+                        ]
+                        .spacing(2),
+                    )
+                    .style(button::text)
+                    .padding(2)
+                    .width(Length::Fill)
+                    .on_press(Message::PlayItem(item.id)),
+                )
+                .push(
+                    text(clock(item.duration_ms as f64 / 1000.0))
+                        .size(12)
+                        .style(text::secondary),
+                );
+            #[cfg(not(feature = "demo"))]
+            {
+                line = line
+                    .push(
+                        // Where it sits in the playlist, which is the number
+                        // that moves when someone else favourites something
+                        // first.
+                        text(match item.playlist_pos {
+                            Some(pos) => format!("#{pos}"),
+                            None => String::new(),
+                        })
+                        .size(12)
+                        .style(text::secondary),
+                    )
+                    .push(
+                        button("remove")
+                            .style(button::text)
+                            .on_press(Message::RemoveSong(item.id)),
+                    );
+            }
+            col.push(line)
+        });
+
+        #[cfg_attr(feature = "demo", allow(unused_mut))]
+        let mut main = column![row![
+            text(peer.source.title().to_string()).size(22),
+            text(format!("{} tracks", peer.rows().len()))
+                .size(12)
+                .style(text::secondary),
+        ]
+        .spacing(12)
+        .align_y(iced::Alignment::Center)]
+        .spacing(12)
+        .width(Length::Fill);
+
+        #[cfg(not(feature = "demo"))]
+        {
+            use iced::widget::text_input;
+            let entry = row![
+                text_input("title…", &self.title)
+                    .on_input(Message::TypedTitle)
+                    .on_submit(Message::AddSong)
+                    .width(Length::Fill),
+                text_input("artist…", &self.artist)
+                    .on_input(Message::TypedArtist)
+                    .on_submit(Message::AddSong)
+                    .width(Length::Fill),
+                button("add").on_press(Message::AddSong),
+            ]
+            .spacing(12);
+
+            // Turned away by the server: the one button that helps is sign in.
+            let signed_out = self.login.as_ref().is_some_and(|l| l.token.is_empty());
+            let actions = row![
+                button("favourite everything").on_press(Message::FavoriteAll),
+                if signed_out {
+                    button("sign in again")
+                        .on_press_maybe((!self.signing_in).then_some(Message::SignIn))
+                } else {
+                    button(if peer.link.is_some() {
+                        "go offline"
+                    } else {
+                        "go online"
+                    })
+                    .on_press(Message::ToggleLink)
+                },
+                button("sign out")
+                    .style(button::text)
+                    .on_press(Message::SignOut),
+            ]
+            .spacing(12);
+            main = main.push(entry).push(actions);
+        }
+
+        main.push(
+            scrollable(rows.padding(iced::Padding {
+                top: 0.0,
+                right: 16.0,
+                bottom: 0.0,
+                left: 0.0,
+            }))
+            .height(Length::Fill),
+        )
+        .push(self.view_status(peer))
+        .into()
+    }
+
+    /// The engine showing through: `cursor` is how much of the server's log has
+    /// been applied, `pending` is what this peer has done that no server has
+    /// confirmed yet. Kept in the demo — it is most of what the demo is for.
+    fn view_status(&self, peer: &'_ Peer) -> Element<'_, Message> {
+        let favorites = peer.on_playlist.get();
+        let mut line = format!(
+            "{} songs, {favorites} favourited · cursor {} · {} pending",
+            peer.items.len(),
+            peer.client.cursor(),
+            peer.pending,
+        );
+        #[cfg(not(feature = "demo"))]
+        {
+            let who = self
+                .login
+                .as_ref()
+                .map(|l| {
+                    if l.user.name.is_empty() {
+                        l.user.id.clone()
+                    } else {
+                        l.user.name.clone()
+                    }
+                })
+                .unwrap_or_default();
+            line = format!(
+                "{who} · {} · {line}",
+                if peer.link.is_some() {
+                    "online"
+                } else {
+                    "offline"
+                }
+            );
+        }
+        if !self.note.is_empty() {
+            line = format!("{line}  ·  {}", self.note);
+        }
+        text(line).size(12).style(text::secondary).into()
+    }
+
+    /// The now-playing bar. Pinned to the bottom, and honest about silence:
+    /// on a build with no audio device it says so rather than drawing a
+    /// transport that does nothing when pressed.
+    fn view_bar(&self) -> Element<'_, Message> {
+        let Some(track) = self.player.track() else {
+            return container(
+                text(if Player::AUDIBLE {
+                    "nothing playing — pick a track"
+                } else {
+                    "nothing playing — pick a track (the desktop build has no audio device; \
+                     the browser one streams)"
+                })
+                .size(12)
+                .style(text::secondary),
+            )
+            .padding([8, 4])
+            .into();
+        };
+
+        let position = self.player.position();
+        let duration = self.player.duration().max(0.1);
+        let transport = row![
+            button("«").style(button::text).on_press(Message::Skip(-1)),
+            button(if self.player.is_playing() {
+                "❚❚"
+            } else {
+                "▶"
+            })
+            .on_press_maybe(Player::AUDIBLE.then_some(Message::PlayPause)),
+            button("»").style(button::text).on_press(Message::Skip(1)),
+        ]
+        .spacing(4)
+        .align_y(iced::Alignment::Center);
+
+        container(
+            row![
+                transport,
+                column![
+                    text(track.title.clone()).size(14),
+                    text(track.creator.clone()).size(12).style(text::secondary),
+                ]
+                .spacing(2)
+                .width(Length::Fixed(260.0)),
+                text(clock(position)).size(11).style(text::secondary),
+                // Seeking is the element's job in a browser, and there is
+                // nothing to seek without one — so the slider only moves where
+                // a track can actually be moved to.
+                slider(0.0..=duration as f32, position as f32, Message::Seek).width(Length::Fill),
+                text(clock(duration)).size(11).style(text::secondary),
+            ]
+            .spacing(12)
+            .align_y(iced::Alignment::Center),
+        )
+        .padding([6, 4])
         .into()
     }
 

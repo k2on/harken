@@ -27,15 +27,27 @@ serde_json.workspace = true
 #
 # `canvas` because the heart is a path: Fira Sans, which iced embeds, has no
 # U+2665, so the character would lay out fine and draw nothing at all.
-iced = { workspace = true, features = ["smol", "canvas"] }
+iced = { workspace = true, features = ["smol", "svg"] }
 
 # In a browser: a panic that reaches the console beats one that reports
 # "unreachable executed".
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_error_panic_hook = "0.1"
-web-sys = { version = "0.3", features = ["Window", "Location"] }
+# `HtmlAudioElement` is the now-playing bar: handing a URL to the platform
+# buys streaming, buffering, range requests and seeking, none of which are
+# worth writing again in Rust. `Document` and `Element` are what it takes to
+# make one.
+web-sys = { version = "0.3", features = [
+  "Window",
+  "Location",
+  "Document",
+  "Element",
+  "HtmlAudioElement",
+  "HtmlMediaElement",
+] }
+wasm-bindgen = "0.2"
 # WebGL rather than WebGPU, for reach. Without it wgpu finds no backend, iced
 # falls back to its software renderer, and that cannot have the canvas because
 # WebGL already claimed it — which surfaces as a blank page and a panic about
 # canvas contexts.
-iced = { workspace = true, features = ["webgl", "canvas"] }
+iced = { workspace = true, features = ["webgl", "svg"] }

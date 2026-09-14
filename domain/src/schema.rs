@@ -72,6 +72,33 @@ petros_schema::row! {
         on_playlist: bool = |row| row.playlist_pos.is_some(),
     };
 
+    /// A record, as a sidebar lists it: the name, whoever made it, and how
+    /// many tracks are on it.
+    ///
+    /// Its own read model rather than a column on [`Item`], because an album
+    /// is true of the *song* kind and nothing else — it lives on `song`, and
+    /// the library list is kind-neutral on purpose. A screen that wants to
+    /// browse by album is asking a song-shaped question and gets a
+    /// song-shaped answer.
+    Album => {
+        name: String,
+        /// The composer, here. Whoever made the first track on it: an album
+        /// with two artists is one row under the first, which is a real
+        /// limitation and the reason to key this by the pair if it ever bites.
+        creator: String,
+        tracks: i64,
+    };
+
+    /// Whoever made something, as a sidebar lists them.
+    ///
+    /// `media.creator`, so this one *is* kind-neutral: a podcast's show and a
+    /// sermon's speaker are artists here too, and a new kind appears in this
+    /// list without the query learning about it.
+    Artist => {
+        name: String,
+        tracks: i64,
+    };
+
     /// A playlist. "Favourites" is one of these and nothing more — which
     /// playlist a heart stands for is the client's choice, not the domain's.
     Playlist => {
