@@ -30,7 +30,7 @@ mod heart;
 
 use std::time::Duration;
 
-use harken::{self as mutators, HarkenApp, Song};
+use harken::{self as mutators, HarkenApp, Item};
 use heart::Heart;
 use iced::widget::{button, canvas, column, container, row, scrollable, text, text_input};
 use iced::{Element, Length, Subscription, Task};
@@ -212,10 +212,13 @@ struct Peer {
     library: harken::LibraryView,
     /// What `view` draws. iced's `view` takes `&self` and decoding needs
     /// nothing mutable, but doing it once per change beats once per frame.
-    songs: Vec<Song>,
+    items: Vec<Item>,
     /// The playlist's size, maintained. The status line showed it by counting
     /// the list on every frame — twenty times a second, over every song.
-    favorites: harken::FavoriteCount,
+    /// How many items are on the playlist the hearts stand for.
+    on_playlist: harken::PlaylistCount,
+    /// Which playlist a heart means. The domain has no favourites of its own.
+    playlist: Vec<u8>,
     pending: usize,
 }
 
@@ -243,21 +246,41 @@ impl Peer {
         .expect("open the petros client");
         client.set_session(Some(login.session.clone()));
         client.set_token(Some(login.token.clone()));
+
+        // A heart means "on this playlist", so there has to be one. The first
+        // run of a peer makes it; after that it is whichever came back first,
+        // which is stable because playlists are ordered by when they were made.
+        let playlist = {
+            let existing = harken::playlists(&mut client.store()).unwrap_or_default();
+            match existing.first() {
+                Some(p) => p.id.0.as_bytes().to_vec(),
+                None => {
+                    let _ = client.mutate(mutators::create_playlist("Favourites".into()));
+                    harken::playlists(&mut client.store())
+                        .unwrap_or_default()
+                        .first()
+                        .map(|p| p.id.0.as_bytes().to_vec())
+                        .unwrap_or_default()
+                }
+            }
+        };
+
         let mut peer = Peer {
             client,
             link: None,
-            library: harken::library_view(),
-            favorites: harken::favorite_count(),
-            songs: Vec::new(),
+            library: harken::library_view(&playlist),
+            on_playlist: harken::playlist_count(&playlist),
+            playlist,
+            items: Vec::new(),
             pending: 0,
         };
         // The one full read of the list. Everything after this is maintained.
         {
             let mut store = peer.client.store();
             peer.library.hydrate(&mut store);
-            peer.favorites.hydrate(&mut store);
+            peer.on_playlist.hydrate(&mut store);
         }
-        peer.songs = harken::songs_of(&peer.library);
+        peer.items = harken::items_of(&peer.library);
         let _ = peer.client.take_changes();
         peer.pending = peer.client.pending_len();
         peer
@@ -289,20 +312,20 @@ impl Peer {
             Changes::Applied(changes) => {
                 let patches = {
                     let mut store = self.client.store();
-                    self.favorites.apply(&mut store, &changes);
+                    self.on_playlist.apply(&mut store, &changes);
                     self.library.apply(&mut store, &changes)
                 };
                 // Splice rather than rebuild: the query is maintained, and so
                 // is the decoded list. A tap costs the rows that moved.
-                harken::patch(&mut self.songs, &patches);
+                harken::patch(&mut self.items, &patches);
             }
             Changes::Rebuilt => {
                 {
                     let mut store = self.client.store();
                     self.library.hydrate(&mut store);
-                    self.favorites.hydrate(&mut store);
+                    self.on_playlist.hydrate(&mut store);
                 }
-                self.songs = harken::songs_of(&self.library);
+                self.items = harken::items_of(&self.library);
             }
         }
         self.pending = self.client.pending_len();
@@ -510,24 +533,31 @@ impl App {
                         let title = std::mem::take(&mut self.title);
                         let artist = std::mem::take(&mut self.artist);
                         peer.client
-                            .mutate(mutators::add_song(title, artist))
+                            .mutate(mutators::add_song(
+                                title,
+                                artist,
+                                String::new(),
+                                0,
+                                String::new(),
+                            ))
                             .map(|_| ())
                     }
                     Message::ToggleFavorite(id, favorited) => {
                         let bytes = *id.as_uuid().as_bytes();
                         let m = if favorited {
-                            mutators::unfavorite(bytes.to_vec())
+                            mutators::remove_from_playlist(peer.playlist.clone(), bytes.to_vec())
                         } else {
-                            mutators::favorite(bytes.to_vec())
+                            mutators::add_to_playlist(peer.playlist.clone(), bytes.to_vec())
                         };
                         peer.client.mutate(m).map(|_| ())
                     }
-                    Message::FavoriteAll => {
-                        peer.client.mutate(mutators::favorite_all()).map(|_| ())
-                    }
+                    Message::FavoriteAll => peer
+                        .client
+                        .mutate(mutators::add_all_to_playlist(peer.playlist.clone()))
+                        .map(|_| ()),
                     Message::RemoveSong(id) => peer
                         .client
-                        .mutate(mutators::remove_song(id.as_uuid().as_bytes().to_vec()))
+                        .mutate(mutators::remove_media(id.as_uuid().as_bytes().to_vec()))
                         .map(|_| ()),
                     Message::ToggleLink => {
                         match peer.link {
@@ -576,8 +606,8 @@ impl App {
         let Some(peer) = &self.peer else {
             return self.view_signed_out();
         };
-        let rows = peer.songs.iter().fold(column![].spacing(6), |col, song| {
-            let favorited = song.favorited();
+        let rows = peer.items.iter().fold(column![].spacing(6), |col, item| {
+            let favorited = item.on_playlist();
             col.push(
                 row![
                     // The heart is a button wrapping a canvas rather than a
@@ -590,25 +620,25 @@ impl App {
                     )
                     .style(button::text)
                     .padding(4)
-                    .on_press(Message::ToggleFavorite(song.id, favorited)),
+                    .on_press(Message::ToggleFavorite(item.id, favorited)),
                     column![
-                        text(song.title.clone()),
-                        text(song.artist.clone()).size(12).style(text::secondary),
+                        text(item.title.clone()),
+                        text(item.creator.clone()).size(12).style(text::secondary),
                     ]
                     .spacing(2)
                     .width(Length::Fill),
                     // Where it sits in the playlist, which is the number that
                     // moves when someone else favourites something first.
-                    text(match song.favorite_pos {
+                    text(match item.playlist_pos {
                         Some(pos) => format!("#{pos}"),
                         None => String::new(),
                     })
                     .size(12)
                     .style(text::secondary),
-                    text(song.actor.clone()).size(12).style(text::secondary),
+                    text(item.user_id.clone()).size(12).style(text::secondary),
                     button("remove")
                         .style(button::text)
-                        .on_press(Message::RemoveSong(song.id)),
+                        .on_press(Message::RemoveSong(item.id)),
                 ]
                 .spacing(12)
                 .align_y(iced::Alignment::Center),
@@ -652,7 +682,7 @@ impl App {
         // The engine showing through: `cursor` is how much of the server's log
         // has been applied, `pending` is what this peer has done that no server
         // has confirmed yet.
-        let favorites = peer.favorites.get();
+        let favorites = peer.on_playlist.get();
         let who = self
             .login
             .as_ref()
@@ -671,7 +701,7 @@ impl App {
             } else {
                 "offline"
             },
-            peer.songs.len(),
+            peer.items.len(),
             peer.client.cursor(),
             peer.pending,
             if self.note.is_empty() {

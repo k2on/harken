@@ -10,30 +10,42 @@ fn library_and_favorites_agree_with_what_apply_wrote() {
         AutoCtx::seeded(7),
     )
     .unwrap();
+    let favs = favourites(&mut c);
 
     for (t, a) in [("Glue", "Bicep"), ("Opal", "Bicep"), ("Gosh", "Jamie xx")] {
-        c.mutate(harken::add_song(t.into(), a.into())).unwrap();
+        c.mutate(harken::add_song(
+            t.into(),
+            a.into(),
+            String::new(),
+            0,
+            String::new(),
+        ))
+        .unwrap();
     }
-    let all = harken::library(&mut c.store()).unwrap();
+    let all = harken::library(&mut c.store(), favs.clone()).unwrap();
     assert_eq!(all.len(), 3);
     assert_eq!(
         all.iter().map(|s| s.title.as_str()).collect::<Vec<_>>(),
         vec!["Glue", "Opal", "Gosh"],
         "library order is s.pos, and pos counts up from MAX(pos)"
     );
-    assert_eq!(all[0].artist, "Bicep");
-    assert_eq!(all[0].actor, "alice");
-    assert!(all.iter().all(|s| !s.favorited()), "nothing hearted yet");
-    assert!(harken::favorites(&mut c.store()).unwrap().is_empty());
+    assert_eq!(all[0].creator, "Bicep");
+    assert_eq!(all[0].user_id, "alice");
+    assert!(all.iter().all(|s| !s.on_playlist()), "nothing hearted yet");
+    assert!(harken::playlist(&mut c.store(), favs.clone())
+        .unwrap()
+        .is_empty());
 
     // Heart the third, then the first: the playlist is in the order they were
     // hearted, not the order they were added.
     let third = *all[2].id.as_uuid().as_bytes();
     let first = *all[0].id.as_uuid().as_bytes();
-    c.mutate(harken::favorite(third.to_vec())).unwrap();
-    c.mutate(harken::favorite(first.to_vec())).unwrap();
+    c.mutate(harken::add_to_playlist(favs.clone(), third.to_vec()))
+        .unwrap();
+    c.mutate(harken::add_to_playlist(favs.clone(), first.to_vec()))
+        .unwrap();
 
-    let playlist = harken::favorites(&mut c.store()).unwrap();
+    let playlist = harken::playlist(&mut c.store(), favs.clone()).unwrap();
     assert_eq!(
         playlist
             .iter()
@@ -42,23 +54,32 @@ fn library_and_favorites_agree_with_what_apply_wrote() {
         vec!["Gosh", "Glue"],
         "playlist order is f.pos"
     );
-    assert_eq!(playlist[0].favorite_pos, Some(1));
-    assert_eq!(playlist[1].favorite_pos, Some(2));
+    assert_eq!(playlist[0].playlist_pos, Some(1));
+    assert_eq!(playlist[1].playlist_pos, Some(2));
 
     // The library keeps its own order, and carries the playlist position on the
     // rows that have one. That is the left join, and the `?` that makes it an
     // Option.
-    let all = harken::library(&mut c.store()).unwrap();
+    let all = harken::library(&mut c.store(), favs.clone()).unwrap();
     assert_eq!(
-        all.iter().map(|s| s.favorite_pos).collect::<Vec<_>>(),
+        all.iter().map(|s| s.playlist_pos).collect::<Vec<_>>(),
         vec![Some(2), None, Some(1)]
     );
     assert_eq!(all[0].id, playlist[1].id, "ids survive the blob round trip");
 
     // Unhearting takes it off the playlist and leaves the song.
-    c.mutate(harken::unfavorite(first.to_vec())).unwrap();
-    assert_eq!(harken::library(&mut c.store()).unwrap().len(), 3);
-    assert_eq!(harken::favorites(&mut c.store()).unwrap().len(), 1);
+    c.mutate(harken::remove_from_playlist(favs.clone(), first.to_vec()))
+        .unwrap();
+    assert_eq!(
+        harken::library(&mut c.store(), favs.clone()).unwrap().len(),
+        3
+    );
+    assert_eq!(
+        harken::playlist(&mut c.store(), favs.clone())
+            .unwrap()
+            .len(),
+        1
+    );
 }
 
 /// The maintained library has to say exactly what the read one says, and the
@@ -77,9 +98,10 @@ fn the_maintained_library_agrees_with_the_read_one() {
         petros::AutoCtx::seeded(7),
     )
     .unwrap();
+    let favs = favourites(&mut client);
 
-    let mut view = harken::library_view();
-    let mut favorites = harken::favorite_count();
+    let mut view = harken::library_view(&favs);
+    let mut favorites = harken::playlist_count(&favs);
     {
         let mut store = client.store();
         view.hydrate(&mut store);
@@ -87,19 +109,19 @@ fn the_maintained_library_agrees_with_the_read_one() {
     }
     let _ = client.take_changes();
     // The rendered list, decoded once and spliced from then on.
-    let mut rendered = harken::songs_of(&view);
+    let mut rendered = harken::items_of(&view);
 
-    fn shown(songs: &[harken::Song]) -> Vec<(String, bool, i64)> {
+    fn shown(songs: &[harken::Item]) -> Vec<(String, bool, i64)> {
         songs
             .iter()
-            .map(|s| (s.title.clone(), s.favorited(), s.pos))
+            .map(|s| (s.title.clone(), s.on_playlist(), s.pos))
             .collect()
     }
 
     let settle = |client: &mut petros::Client<harken::HarkenApp>,
                   view: &mut harken::LibraryView,
-                  favorites: &mut harken::FavoriteCount,
-                  rendered: &mut Vec<harken::Song>| {
+                  favorites: &mut harken::PlaylistCount,
+                  rendered: &mut Vec<harken::Item>| {
         match client.take_changes() {
             Changes::Applied(changes) => {
                 let patches = {
@@ -115,53 +137,65 @@ fn the_maintained_library_agrees_with_the_read_one() {
                     view.hydrate(&mut store);
                     favorites.hydrate(&mut store);
                 }
-                *rendered = harken::songs_of(view);
+                *rendered = harken::items_of(view);
             }
         }
-        let read = harken::library(&mut client.store()).unwrap();
-        assert_eq!(shown(rendered), shown(&harken::songs_of(view)), "spliced");
+        let read = harken::library(&mut client.store(), favs.clone()).unwrap();
+        assert_eq!(shown(rendered), shown(&harken::items_of(view)), "spliced");
         assert_eq!(shown(rendered), shown(&read), "against a re-read");
         // The status line's number, against the list it used to count.
         assert_eq!(
             favorites.get(),
-            read.iter().filter(|s| s.favorited()).count(),
+            read.iter().filter(|s| s.on_playlist()).count(),
             "the tally against a count of the rows"
         );
     };
 
     for title in ["Glue", "Apricots", "Opal"] {
         client
-            .mutate(harken::add_song(title.into(), "Bicep".into()))
+            .mutate(harken::add_song(
+                title.into(),
+                "Bicep".into(),
+                String::new(),
+                0,
+                String::new(),
+            ))
             .unwrap();
         settle(&mut client, &mut view, &mut favorites, &mut rendered);
     }
 
-    let opal = harken::library(&mut client.store()).unwrap()[2]
+    let opal = harken::library(&mut client.store(), favs.clone()).unwrap()[2]
         .id
         .0
         .as_bytes()
         .to_vec();
-    client.mutate(harken::favorite(opal.clone())).unwrap();
+    client
+        .mutate(harken::add_to_playlist(favs.clone(), opal.clone()))
+        .unwrap();
     settle(&mut client, &mut view, &mut favorites, &mut rendered);
     assert!(
-        rendered[2].favorited(),
+        rendered[2].on_playlist(),
         "hearting reached the rendered list"
     );
 
-    client.mutate(harken::unfavorite(opal)).unwrap();
+    client
+        .mutate(harken::remove_from_playlist(favs.clone(), opal))
+        .unwrap();
     settle(&mut client, &mut view, &mut favorites, &mut rendered);
-    assert!(!rendered[2].favorited());
+    assert!(!rendered[2].on_playlist());
 
-    client.mutate(harken::favorite_all()).unwrap();
+    client
+        .mutate(harken::add_all_to_playlist(favs.clone()))
+        .unwrap();
     settle(&mut client, &mut view, &mut favorites, &mut rendered);
-    assert!(rendered.iter().all(|s| s.favorited()));
+    assert!(rendered.iter().all(|s| s.on_playlist()));
 
-    let glue = harken::library(&mut client.store()).unwrap()[0]
+    let glue = harken::library(&mut client.store(), favs.clone()).unwrap()[0]
         .id
         .0
         .as_bytes()
         .to_vec();
-    client.mutate(harken::remove_song(glue)).unwrap();
+    client.mutate(harken::remove_media(glue)).unwrap();
     settle(&mut client, &mut view, &mut favorites, &mut rendered);
     assert_eq!(rendered.len(), 2);
 }
@@ -181,20 +215,22 @@ fn a_peers_changes_reach_the_maintained_library() {
 
     // Client 0 is the phone; client 1 is the browser, holding a view.
     let mut sim = Sim::<harken::HarkenApp>::new(3, 2);
-    let mut view = harken::library_view();
-    let mut favorites = harken::favorite_count();
+    let favs = favourites(sim.client(0));
+    sim.settle();
+    let mut view = harken::library_view(&favs);
+    let mut favorites = harken::playlist_count(&favs);
     {
         let mut store = sim.client(1).store();
         view.hydrate(&mut store);
         favorites.hydrate(&mut store);
     }
     let _ = sim.client(1).take_changes();
-    let mut rendered = harken::songs_of(&view);
+    let mut rendered = harken::items_of(&view);
 
-    fn shown(songs: &[harken::Song]) -> Vec<(String, bool, Option<i64>)> {
+    fn shown(songs: &[harken::Item]) -> Vec<(String, bool, Option<i64>)> {
         songs
             .iter()
-            .map(|s| (s.title.clone(), s.favorited(), s.favorite_pos))
+            .map(|s| (s.title.clone(), s.on_playlist(), s.playlist_pos))
             .collect()
     }
 
@@ -202,8 +238,8 @@ fn a_peers_changes_reach_the_maintained_library() {
     // changed to the views and splice the list, then check all three agree.
     let settle = |sim: &mut Sim<harken::HarkenApp>,
                   view: &mut harken::LibraryView,
-                  favorites: &mut harken::FavoriteCount,
-                  rendered: &mut Vec<harken::Song>| {
+                  favorites: &mut harken::PlaylistCount,
+                  rendered: &mut Vec<harken::Item>| {
         sim.settle();
         let client = sim.client(1);
         match client.take_changes() {
@@ -221,43 +257,52 @@ fn a_peers_changes_reach_the_maintained_library() {
                     view.hydrate(&mut store);
                     favorites.hydrate(&mut store);
                 }
-                *rendered = harken::songs_of(view);
+                *rendered = harken::items_of(view);
             }
         }
-        let read = harken::library(&mut client.store()).unwrap();
-        assert_eq!(shown(rendered), shown(&harken::songs_of(view)), "spliced");
+        let read = harken::library(&mut client.store(), favs.clone()).unwrap();
+        assert_eq!(shown(rendered), shown(&harken::items_of(view)), "spliced");
         assert_eq!(shown(rendered), shown(&read), "against a re-read");
         assert_eq!(
             favorites.get(),
-            read.iter().filter(|s| s.favorited()).count(),
+            read.iter().filter(|s| s.on_playlist()).count(),
             "the tally against a count of the rows"
         );
     };
 
     for title in ["Glue", "Apricots"] {
-        sim.mutate(0, harken::add_song(title.into(), "Bicep".into()));
+        sim.mutate(
+            0,
+            harken::add_song(
+                title.into(),
+                "Bicep".into(),
+                String::new(),
+                0,
+                String::new(),
+            ),
+        );
     }
     settle(&mut sim, &mut view, &mut favorites, &mut rendered);
     assert_eq!(rendered.len(), 2, "both songs arrived");
 
     // Heart everything on the phone: both hearts fill in the browser.
-    sim.mutate(0, harken::favorite_all());
+    sim.mutate(0, harken::add_all_to_playlist(favs.clone()));
     settle(&mut sim, &mut view, &mut favorites, &mut rendered);
     assert!(
-        rendered.iter().all(|s| s.favorited()),
+        rendered.iter().all(|s| s.on_playlist()),
         "every heart filled: {:?}",
         shown(&rendered)
     );
 
     // Unheart the top one there: it empties here, and only it.
     let glue = rendered[0].id.0.as_bytes().to_vec();
-    sim.mutate(0, harken::unfavorite(glue.clone()));
+    sim.mutate(0, harken::remove_from_playlist(favs.clone(), glue.clone()));
     settle(&mut sim, &mut view, &mut favorites, &mut rendered);
-    assert!(!rendered[0].favorited(), "the top heart emptied");
-    assert!(rendered[1].favorited(), "the bottom one did not");
+    assert!(!rendered[0].on_playlist(), "the top heart emptied");
+    assert!(rendered[1].on_playlist(), "the bottom one did not");
 
     // Remove the top one there: it goes here, and nothing nameless appears.
-    sim.mutate(0, harken::remove_song(glue));
+    sim.mutate(0, harken::remove_media(glue));
     settle(&mut sim, &mut view, &mut favorites, &mut rendered);
     assert_eq!(
         rendered
@@ -288,31 +333,35 @@ fn a_first_sync_delivers_songs_and_favourites_without_doubling() {
     // so none of it reaches the browser one entry at a time — it all lands in
     // one batch when the browser first connects.
     let mut sim = Sim::<harken::HarkenApp>::new(5, 2);
+    let favs = favourites(sim.client(0));
     sim.partition(1);
     for (t, a) in [("Glue", "Bicep"), ("Opal", "Bicep"), ("Gosh", "Jamie xx")] {
-        sim.mutate(0, harken::add_song(t.into(), a.into()));
+        sim.mutate(
+            0,
+            harken::add_song(t.into(), a.into(), String::new(), 0, String::new()),
+        );
         sim.step();
     }
-    let songs: Vec<Vec<u8>> = harken::library(&mut sim.client(0).store())
+    let songs: Vec<Vec<u8>> = harken::library(&mut sim.client(0).store(), favs.clone())
         .unwrap()
         .iter()
         .map(|s| s.id.0.as_bytes().to_vec())
         .collect();
-    sim.mutate(0, harken::favorite(songs[2].clone()));
-    sim.mutate(0, harken::favorite(songs[0].clone()));
+    sim.mutate(0, harken::add_to_playlist(favs.clone(), songs[2].clone()));
+    sim.mutate(0, harken::add_to_playlist(favs.clone(), songs[0].clone()));
     sim.step();
 
     // Now the browser opens: an empty database, a view hydrated against it,
     // and then the whole history arrives in one batch.
-    let mut view = harken::library_view();
-    let mut favorites = harken::favorite_count();
+    let mut view = harken::library_view(&favs);
+    let mut favorites = harken::playlist_count(&favs);
     {
         let mut store = sim.client(1).store();
         view.hydrate(&mut store);
         favorites.hydrate(&mut store);
     }
     let _ = sim.client(1).take_changes();
-    let mut rendered = harken::songs_of(&view);
+    let mut rendered = harken::items_of(&view);
 
     sim.settle();
     let client = sim.client(1);
@@ -331,7 +380,7 @@ fn a_first_sync_delivers_songs_and_favourites_without_doubling() {
                 view.hydrate(&mut store);
                 favorites.hydrate(&mut store);
             }
-            rendered = harken::songs_of(&view);
+            rendered = harken::items_of(&view);
         }
     }
 
@@ -341,18 +390,18 @@ fn a_first_sync_delivers_songs_and_favourites_without_doubling() {
     // any fixed order. What must hold is that the two agree, that the view
     // agrees with both, and that two songs are favourited and not, say, two
     // favourites doubled onto one.
-    let shown = |songs: &[harken::Song]| -> Vec<(String, Option<i64>)> {
+    let shown = |songs: &[harken::Item]| -> Vec<(String, Option<i64>)> {
         songs
             .iter()
-            .map(|s| (s.title.clone(), s.favorite_pos))
+            .map(|s| (s.title.clone(), s.playlist_pos))
             .collect()
     };
-    let read = harken::library(&mut sim.client(1).store()).unwrap();
+    let read = harken::library(&mut sim.client(1).store(), favs.clone()).unwrap();
     assert_eq!(read.len(), 3);
     assert_eq!(shown(&rendered), shown(&read), "spliced vs a re-read");
     assert_eq!(
         shown(&rendered),
-        shown(&harken::songs_of(&view)),
+        shown(&harken::items_of(&view)),
         "vs the view"
     );
     assert_eq!(
@@ -360,7 +409,7 @@ fn a_first_sync_delivers_songs_and_favourites_without_doubling() {
         2,
         "two favourites, counted once each — a doubled child would make this 4"
     );
-    let mut positions: Vec<i64> = rendered.iter().filter_map(|s| s.favorite_pos).collect();
+    let mut positions: Vec<i64> = rendered.iter().filter_map(|s| s.playlist_pos).collect();
     positions.sort_unstable();
     assert_eq!(positions, vec![1, 2], "the two positions, no duplicate");
 
@@ -369,13 +418,16 @@ fn a_first_sync_delivers_songs_and_favourites_without_doubling() {
     // is depends on the browser's own order, so it is read from there.
     let hearted = read
         .iter()
-        .find(|s| s.favorited())
+        .find(|s| s.on_playlist())
         .unwrap()
         .id
         .0
         .as_bytes()
         .to_vec();
-    sim.mutate(0, harken::unfavorite(hearted.clone()));
+    sim.mutate(
+        0,
+        harken::remove_from_playlist(favs.clone(), hearted.clone()),
+    );
     sim.settle();
     let client = sim.client(1);
     match client.take_changes() {
@@ -393,18 +445,34 @@ fn a_first_sync_delivers_songs_and_favourites_without_doubling() {
                 view.hydrate(&mut store);
                 favorites.hydrate(&mut store);
             }
-            rendered = harken::songs_of(&view);
+            rendered = harken::items_of(&view);
         }
     }
-    let read = harken::library(&mut sim.client(1).store()).unwrap();
+    let read = harken::library(&mut sim.client(1).store(), favs.clone()).unwrap();
     let un = read
         .iter()
         .position(|s| s.id.0.as_bytes() == hearted.as_slice())
         .unwrap();
     assert!(
-        !rendered[un].favorited(),
+        !rendered[un].on_playlist(),
         "the heart emptied on one unheart"
     );
     assert_eq!(shown(&rendered), shown(&read), "still matches a re-read");
     assert_eq!(favorites.get(), 1, "one favourite left");
+}
+
+/// A playlist to hang hearts on. There is no favourites table: a heart means
+/// membership of whichever playlist a client shows, so every test makes one.
+fn favourites<A: petros::App>(client: &mut petros::Client<A>) -> Vec<u8>
+where
+    A::Mutation: From<petros_schema::cbor::Value>,
+{
+    client
+        .mutate(harken::create_playlist("Favourites".into()))
+        .unwrap();
+    harken::playlists(&mut client.store()).unwrap()[0]
+        .id
+        .0
+        .as_bytes()
+        .to_vec()
 }

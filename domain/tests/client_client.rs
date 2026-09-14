@@ -33,25 +33,53 @@ fn the_client_runs_the_module() {
     );
 
     client
-        .add_song("Glue".into(), "Bicep".into())
+        .add_song(
+            "Glue".into(),
+            "Bicep".into(),
+            String::new(),
+            0,
+            String::new(),
+        )
         .expect("the module accepted it");
     client
-        .add_song("Opal".into(), "Bicep".into())
+        .add_song(
+            "Opal".into(),
+            "Bicep".into(),
+            String::new(),
+            0,
+            String::new(),
+        )
         .expect("second");
+    // A playlist to heart onto: there is no favourites table, so a heart is
+    // membership of whichever playlist the client shows.
+    client
+        .create_playlist("Favourites".into())
+        .expect("playlist");
+    let favs = client.playlists().expect("playlists")[0].id.clone();
     // The row's id comes from the module, so it arrives through `list`.
-    let opal = client.library().expect("library")[1].id.clone();
-    client.favorite(opal).expect("heart it");
+    let opal = client.library(uuid_bytes(&favs)).expect("library")[1]
+        .id
+        .clone();
+    client
+        .add_to_playlist(favs.clone(), opal)
+        .expect("heart it");
 
-    let items = client.library().expect("library");
+    let items = client.library(uuid_bytes(&favs)).expect("library");
     assert_eq!(items.len(), 2);
     assert_eq!(items[0].title, "Glue");
-    assert_eq!(items[0].actor, "alice");
+    assert_eq!(items[0].user_id, "alice");
     assert_eq!((items[0].pos, items[1].pos), (1, 2));
-    assert!(items[1].favorited, "the second one is on the playlist");
+    assert!(items[1].on_playlist, "the second one is on the playlist");
 
     // The refusal came from inside the sandbox, through the engine, to here.
     let refused = client
-        .add_song("   ".into(), "nobody".into())
+        .add_song(
+            "   ".into(),
+            "nobody".into(),
+            String::new(),
+            0,
+            String::new(),
+        )
         .expect_err("a blank title is refused");
     assert!(
         format!("{refused}").contains("a song needs a title"),
@@ -65,11 +93,17 @@ fn the_client_runs_the_module() {
         "the generation moves: {installed} -> {swapped}"
     );
     client
-        .add_song("after the swap".into(), "Bicep".into())
+        .add_song(
+            "after the swap".into(),
+            "Bicep".into(),
+            String::new(),
+            0,
+            String::new(),
+        )
         .expect("still working");
-    assert_eq!(client.library().unwrap().len(), 3);
+    assert_eq!(client.library(uuid_bytes(&favs)).unwrap().len(), 3);
     assert_eq!(
-        client.library().unwrap()[2].pos,
+        client.library(uuid_bytes(&favs)).unwrap()[2].pos,
         3,
         "state survived the swap"
     );
@@ -106,25 +140,41 @@ fn a_verb_the_client_never_heard_of() {
             r#"{"title":"Opal","artist":"Bicep"}"#.into(),
         )
         .unwrap();
-    let items = client.library().unwrap();
+    client
+        .mutate("CreatePlaylist".into(), r#"{"name":"Favourites"}"#.into())
+        .unwrap();
+    let favs = client.playlists().unwrap()[0].id.clone();
+    let items = client.library(uuid_bytes(&favs)).unwrap();
     assert_eq!(items.len(), 2);
-    assert!(items.iter().all(|i| !i.favorited));
+    assert!(items.iter().all(|i| !i.on_playlist));
 
-    // Nothing in this crate mentions FavoriteAll. It reached `apply` because
-    // the module knows the name, which is the point.
-    client.mutate("FavoriteAll".into(), "{}".into()).unwrap();
-    assert!(client.library().unwrap().iter().all(|i| i.favorited));
+    // Nothing in this crate mentions AddAllToPlaylist by this route. It reached
+    // `apply` because the module knows the name, which is the point.
+    client
+        .mutate(
+            "AddAllToPlaylist".into(),
+            format!(r#"{{"playlist_id":"{favs}"}}"#),
+        )
+        .unwrap();
+    assert!(client
+        .library(uuid_bytes(&favs))
+        .unwrap()
+        .iter()
+        .all(|i| i.on_playlist));
 
-    // One entry, not one per row: the intent was "I am finished".
+    // One entry, not one per row: the intent was "all of it".
     assert_eq!(client.cursor(), 0, "still unconfirmed; these are pending");
-    assert_eq!(client.pending_len(), 3);
+    assert_eq!(client.pending_len(), 4);
 
     // An id argument is a string here and sixteen bytes on the wire.
-    let id = client.library().unwrap()[0].id.clone();
+    let id = client.library(uuid_bytes(&favs)).unwrap()[0].id.clone();
     client
-        .mutate("Unfavorite".into(), format!(r#"{{"id":"{id}"}}"#))
+        .mutate(
+            "RemoveFromPlaylist".into(),
+            format!(r#"{{"playlist_id":"{favs}","media_id":"{id}"}}"#),
+        )
         .unwrap();
-    assert!(!client.library().unwrap()[0].favorited);
+    assert!(!client.library(uuid_bytes(&favs)).unwrap()[0].on_playlist);
 
     // A verb no module has ever defined is refused, not silently dropped.
     let unknown = client.mutate("Frobnicate".into(), "{}".into()).unwrap_err();
@@ -160,36 +210,44 @@ fn the_peer_maintains_its_library() {
     .expect("open");
     client.load_mutators(MODULE.to_vec()).expect("install");
 
+    client
+        .create_playlist("Favourites".into())
+        .expect("playlist");
+    let favs = client.playlists().expect("playlists")[0].id.clone();
+    client
+        .show_playlist(favs.clone())
+        .expect("show that playlist");
+
     // The list a caller holds, built only from what the peer sends.
-    let mut held: Vec<harken::foreign::Song> = Vec::new();
-    let settle = |client: &Peer, held: &mut Vec<harken::foreign::Song>| {
+    let mut held: Vec<harken::foreign::Item> = Vec::new();
+    let settle = |client: &Peer, held: &mut Vec<harken::foreign::Item>| {
         let update = client.library_update().expect("update");
         if update.reset {
-            *held = update.songs;
+            *held = update.items;
         } else {
             for patch in update.patches {
                 match patch.op {
-                    PatchOp::Insert => held.insert(patch.at as usize, patch.song.unwrap()),
+                    PatchOp::Insert => held.insert(patch.at as usize, patch.item.unwrap()),
                     PatchOp::Remove => {
                         held.remove(patch.at as usize);
                     }
-                    PatchOp::Update => held[patch.at as usize] = patch.song.unwrap(),
+                    PatchOp::Update => held[patch.at as usize] = patch.item.unwrap(),
                 }
             }
         }
-        let read = client.library().expect("library");
+        let read = client.library(uuid_bytes(&favs)).expect("library");
         let seen: Vec<(&str, bool)> = held
             .iter()
-            .map(|s| (s.title.as_str(), s.favorited))
+            .map(|s| (s.title.as_str(), s.on_playlist))
             .collect();
         let want: Vec<(&str, bool)> = read
             .iter()
-            .map(|s| (s.title.as_str(), s.favorited))
+            .map(|s| (s.title.as_str(), s.on_playlist))
             .collect();
         assert_eq!(seen, want);
         assert_eq!(
-            update.favorites as usize,
-            read.iter().filter(|s| s.favorited).count(),
+            update.on_playlist as usize,
+            read.iter().filter(|s| s.on_playlist).count(),
             "the maintained count"
         );
     };
@@ -200,21 +258,29 @@ fn the_peer_maintains_its_library() {
     assert!(held.is_empty());
 
     for title in ["Glue", "Apricots", "Opal"] {
-        client.add_song(title.into(), "Bicep".into()).unwrap();
+        client
+            .add_song(
+                title.into(),
+                "Bicep".into(),
+                String::new(),
+                0,
+                String::new(),
+            )
+            .unwrap();
         settle(&client, &mut held);
     }
     assert_eq!(held.len(), 3);
 
     let opal = held[2].id.clone();
-    client.favorite(opal.clone()).unwrap();
+    client.add_to_playlist(favs.clone(), opal.clone()).unwrap();
     settle(&client, &mut held);
-    assert!(held[2].favorited, "hearting reached the held list");
+    assert!(held[2].on_playlist, "hearting reached the held list");
 
-    client.favorite_all().unwrap();
+    client.add_all_to_playlist(favs.clone()).unwrap();
     settle(&client, &mut held);
-    assert!(held.iter().all(|s| s.favorited));
+    assert!(held.iter().all(|s| s.on_playlist));
 
-    client.remove_song(opal).unwrap();
+    client.remove_media(opal).unwrap();
     settle(&client, &mut held);
     assert_eq!(held.len(), 2);
 
@@ -223,7 +289,16 @@ fn the_peer_maintains_its_library() {
     let idle = client.library_update().unwrap();
     assert!(!idle.reset);
     assert!(idle.patches.is_empty(), "an idle poll carries no rows");
-    assert!(idle.songs.is_empty());
+    assert!(idle.items.is_empty());
 
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The canonical uuid a foreign row carries, as the sixteen bytes a query
+/// argument wants. The two shapes meet here until ids carry their own type.
+fn uuid_bytes(s: &str) -> Vec<u8> {
+    petros::uuid::Uuid::parse_str(s)
+        .unwrap()
+        .as_bytes()
+        .to_vec()
 }

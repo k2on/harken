@@ -14,7 +14,13 @@ fn the_domain_converges_when_peers_go_dark_and_come_back() {
         for i in 0..sim.clients() {
             sim.mutate(
                 i,
-                harken::add_song(format!("c{i}-{round}"), "someone".into()),
+                harken::add_song(
+                    format!("c{i}-{round}"),
+                    "someone".into(),
+                    String::new(),
+                    0,
+                    String::new(),
+                ),
             );
             sim.step();
         }
@@ -24,18 +30,53 @@ fn the_domain_converges_when_peers_go_dark_and_come_back() {
     for round in 0..4 {
         sim.mutate(
             2,
-            harken::add_song(format!("dark-{round}"), "someone".into()),
+            harken::add_song(
+                format!("dark-{round}"),
+                "someone".into(),
+                String::new(),
+                0,
+                String::new(),
+            ),
         );
         sim.mutate(
             0,
-            harken::add_song(format!("lit-{round}"), "someone".into()),
+            harken::add_song(
+                format!("lit-{round}"),
+                "someone".into(),
+                String::new(),
+                0,
+                String::new(),
+            ),
         );
         sim.step();
     }
-    // And the interesting one: both sides favourite while apart, so the
-    // playlist positions have to be recomputed rather than merged.
-    sim.mutate(0, harken::favorite_all());
-    sim.mutate(2, harken::favorite_all());
+    // A playlist to put things on. There is no favourites table any more — a
+    // heart is membership of whichever playlist a client shows.
+    sim.mutate(0, harken::create_playlist("Favourites".into()));
+    sim.settle();
+
+    // And the interesting one: both sides put the whole library on the same
+    // playlist while apart, so the positions have to be recomputed by replay
+    // rather than merged.
+    let store = &mut petros::backend::SqliteStore::new(sim.conn(0));
+    let favs = harken::playlists(store).unwrap()[0]
+        .id
+        .0
+        .as_bytes()
+        .to_vec();
+    for peer in [0usize, 2] {
+        let ids: Vec<Vec<u8>> = harken::library(
+            &mut petros::backend::SqliteStore::new(sim.conn(peer)),
+            favs.clone(),
+        )
+        .unwrap()
+        .iter()
+        .map(|i| i.id.0.as_bytes().to_vec())
+        .collect();
+        for id in ids {
+            sim.mutate(peer, harken::add_to_playlist(favs.clone(), id));
+        }
+    }
     sim.step();
 
     // `settle` reconnects every client itself. The work authored while dark is
@@ -49,25 +90,27 @@ fn the_domain_converges_when_peers_go_dark_and_come_back() {
     }
     assert_eq!(first, sim.server_hash(), "the server disagrees");
     assert_eq!(
-        harken::library(&mut petros::backend::SqliteStore::new(sim.conn(0)))
-            .unwrap()
-            .len(),
+        harken::library(
+            &mut petros::backend::SqliteStore::new(sim.conn(0)),
+            favs.clone()
+        )
+        .unwrap()
+        .len(),
         17,
         "9 shared + 4 dark + 4 lit, none lost and none duplicated"
     );
-    let playlist = harken::favorites(&mut petros::backend::SqliteStore::new(sim.conn(0))).unwrap();
-    assert_eq!(
-        playlist.len(),
-        17,
-        "both FavoriteAll intents, merged by replay"
-    );
-    let places: Vec<i64> = playlist.iter().filter_map(|s| s.favorite_pos).collect();
+    let playlist = harken::playlist(
+        &mut petros::backend::SqliteStore::new(sim.conn(0)),
+        favs.clone(),
+    )
+    .unwrap();
+    let places: Vec<i64> = playlist.iter().filter_map(|s| s.playlist_pos).collect();
     let mut sorted = places.clone();
     sorted.sort_unstable();
     sorted.dedup();
     assert_eq!(
-        places.len(),
         sorted.len(),
-        "every song holds a distinct place in the playlist"
+        places.len(),
+        "every position on the playlist is distinct after the replay"
     );
 }

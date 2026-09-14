@@ -22,11 +22,11 @@ const MODULE: &[u8] = include_bytes!("../../target/wasm32-unknown-unknown/mutato
 struct Row {
     id: String,
     title: String,
-    artist: String,
+    creator: String,
     pos: i64,
     /// The playlist position, or 0 for a song that is not on it.
     fav: i64,
-    actor: String,
+    user_id: String,
 }
 
 fn database() -> Connection {
@@ -35,20 +35,20 @@ fn database() -> Connection {
     conn
 }
 
-fn rows(conn: &mut Connection) -> Vec<Row> {
+fn rows(conn: &mut Connection, playlist: &[u8]) -> Vec<Row> {
     // Through the app's own read model, which is the thing both builds have to
     // agree about. It reads a song with its favourite hanging off it, so one
-    // pass covers both tables.
-    harken::library(&mut SqliteStore::new(conn))
+    // pass covers the library and the playlist it is read against.
+    harken::library(&mut SqliteStore::new(conn), playlist.to_vec())
         .expect("read")
         .into_iter()
         .map(|s| Row {
             id: s.id.to_string(),
             title: s.title,
-            artist: s.artist,
+            creator: s.creator,
             pos: s.pos,
-            fav: s.favorite_pos.unwrap_or(0),
-            actor: s.actor,
+            fav: s.playlist_pos.unwrap_or(0),
+            user_id: s.user_id,
         })
         .collect()
 }
@@ -80,7 +80,7 @@ fn encode(p: &harken::Payload) -> Vec<u8> {
 /// That leaves `fill_auto` itself uncovered, which
 /// [`fill_auto_agrees_between_the_two_builds`] exists to close — a gap found by
 /// trying to make this test fail and watching it pass.
-fn both_ways(script: &[(&str, serde_json::Value)]) -> (Vec<Row>, Vec<Row>) {
+fn both_ways(script: &[(&str, serde_json::Value)]) -> (Connection, Connection) {
     let mut auto = AutoCtx::seeded(4);
     let payloads: Vec<harken::Payload> = script
         .iter()
@@ -105,7 +105,7 @@ fn both_ways(script: &[(&str, serde_json::Value)]) -> (Vec<Row>, Vec<Row>) {
             .expect("the host ran");
     }
 
-    (rows(&mut native_db), rows(&mut wasm_db))
+    (native_db, wasm_db)
 }
 
 #[test]
@@ -114,6 +114,7 @@ fn every_verb_produces_the_same_rows_natively_and_in_wasm() {
 
     let ghost = "67e55084-765d-446c-9191-4ff9861f6d8e";
     let script: Vec<(&str, serde_json::Value)> = vec![
+        ("CreatePlaylist", json!({ "name": "Favourites" })),
         ("AddSong", json!({ "title": "Glue", "artist": "Bicep" })),
         (
             "AddSong",
@@ -121,17 +122,51 @@ fn every_verb_produces_the_same_rows_natively_and_in_wasm() {
         ),
         // Refused by both, and refused identically.
         ("AddSong", json!({ "title": "   ", "artist": "nobody" })),
-        ("FavoriteAll", json!({})),
+    ];
+    let (mut native_db, mut wasm_db) = both_ways(&script);
+
+    // Both builds invented the same playlist id from the same seeded
+    // `fill_auto`, which is itself worth asserting: everything after this
+    // depends on the two agreeing about it.
+    let native_list = harken::playlists(&mut SqliteStore::new(&mut native_db)).unwrap();
+    let wasm_list = harken::playlists(&mut SqliteStore::new(&mut wasm_db)).unwrap();
+    assert_eq!(native_list.len(), 1);
+    assert_eq!(
+        native_list[0].id, wasm_list[0].id,
+        "the two builds chose different ids"
+    );
+    let favs = native_list[0].id;
+    let favs_str = favs.to_string();
+
+    // The rest of the script, now that there is a playlist to name.
+    let rest: Vec<(&str, serde_json::Value)> = vec![
+        ("AddAllToPlaylist", json!({ "playlist_id": favs_str })),
         ("AddSong", json!({ "title": "Aura", "artist": "Bicep" })),
-        // A song nobody has: a no-op, not an error.
-        ("Favorite", json!({ "id": ghost })),
-        ("Unfavorite", json!({ "id": ghost })),
-        ("RemoveSong", json!({ "id": ghost })),
+        // Something nobody has: a no-op, not an error.
+        (
+            "AddToPlaylist",
+            json!({ "playlist_id": favs_str, "media_id": ghost }),
+        ),
+        (
+            "RemoveFromPlaylist",
+            json!({ "playlist_id": favs_str, "media_id": ghost }),
+        ),
+        ("RemoveMedia", json!({ "id": ghost })),
         // A verb neither build knows.
         ("Frobnicate", json!({})),
     ];
+    let mut auto = AutoCtx::seeded(9);
+    let module = Mutators::load(MODULE).expect("load the module");
+    for (kind, args) in &rest {
+        let mut p = harken::from_value(kind, args.clone()).expect("author");
+        <harken::Payload as petros::Mutation>::fill_auto(&mut p, &mut auto);
+        let _ = native_apply(&mut native_db, &p, "alice");
+        let _ = module.apply(&mut wasm_db, &encode(&p), &petros::Ctx::from_user("alice"));
+    }
 
-    let (native, wasm) = both_ways(&script);
+    let key = favs.0.as_bytes().to_vec();
+    let native = rows(&mut native_db, &key);
+    let wasm = rows(&mut wasm_db, &key);
 
     assert_eq!(native, wasm, "the two builds of `apply` disagree");
     assert!(
@@ -142,11 +177,9 @@ fn every_verb_produces_the_same_rows_natively_and_in_wasm() {
     // wrote nothing at all could not pass.
     let titles: Vec<&str> = native.iter().map(|r| r.title.as_str()).collect();
     assert_eq!(titles, vec!["Glue", "Opal", "Aura"]);
-    assert_eq!(native[1].artist, "Bicep", "trimmed on the way in");
-    // `FavoriteAll` swept the seven that existed then, in library order, and
+    assert_eq!(native[1].creator, "Bicep", "trimmed on the way in");
+    // `AddAllToPlaylist` swept the two that existed then, in library order, and
     // the song added afterwards is not on the playlist.
-    // `FavoriteAll` swept the two that existed then, in library order, and the
-    // song added afterwards is not on the playlist.
     let places: Vec<i64> = native.iter().map(|r| r.fav).collect();
     assert_eq!(places, vec![1, 2, 0]);
 }

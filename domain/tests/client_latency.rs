@@ -37,7 +37,13 @@ fn the_cost_of_the_thread() {
     let mut fill = vec![];
     let mut apply = vec![];
     for i in 0..100 {
-        let raw = harken::add_song(format!("item {i}"), "Bicep".into());
+        let raw = harken::add_song(
+            format!("item {i}"),
+            "Bicep".into(),
+            String::new(),
+            0,
+            String::new(),
+        );
         let mut bytes = Vec::new();
         ciborium::into_writer(&raw, &mut bytes).unwrap();
 
@@ -79,13 +85,25 @@ fn fsync_or_wasm() {
                 .unwrap();
 
         client
-            .mutate(harken::add_song("warm".into(), "Bicep".into()))
+            .mutate(harken::add_song(
+                "warm".into(),
+                "Bicep".into(),
+                String::new(),
+                0,
+                String::new(),
+            ))
             .unwrap();
         let mut ts = vec![];
         for i in 0..25 {
             let t = Instant::now();
             client
-                .mutate(harken::add_song(format!("tap {i}"), "Bicep".into()))
+                .mutate(harken::add_song(
+                    format!("tap {i}"),
+                    "Bicep".into(),
+                    String::new(),
+                    0,
+                    String::new(),
+                ))
                 .unwrap();
             ts.push(t.elapsed().as_secs_f64() * 1000.0);
         }
@@ -117,13 +135,22 @@ fn one_tap_at_a_fixed_depth() {
                 petros::Client::<harken::HarkenApp>::open(conn, "alice", petros::AutoCtx::system())
                     .unwrap();
             for i in 0..depth {
-                c.mutate(harken::add_song(format!("filler {i}"), "Bicep".into()))
-                    .unwrap();
+                c.mutate(harken::add_song(
+                    format!("filler {i}"),
+                    "Bicep".into(),
+                    String::new(),
+                    0,
+                    String::new(),
+                ))
+                .unwrap();
             }
             let t = Instant::now();
             c.mutate(harken::add_song(
                 "the tap being timed".into(),
                 "Bicep".into(),
+                String::new(),
+                0,
+                String::new(),
             ))
             .unwrap();
             ts.push(t.elapsed().as_secs_f64() * 1000.0);
@@ -171,7 +198,13 @@ fn a_bulk_mutation_row_by_row() {
 
             // Fill the library through the same path, so the rows are real.
             for i in 0..n {
-                let raw = harken::add_song(format!("song {i}"), "Bicep".into());
+                let raw = harken::add_song(
+                    format!("song {i}"),
+                    "Bicep".into(),
+                    String::new(),
+                    0,
+                    String::new(),
+                );
                 let mut bytes = Vec::new();
                 ciborium::into_writer(&raw, &mut bytes).unwrap();
                 let filled = m.fill_auto(&bytes, &mut auto).unwrap();
@@ -180,7 +213,21 @@ fn a_bulk_mutation_row_by_row() {
                     .unwrap();
             }
 
-            let raw = harken::favorite_all();
+            // A playlist to fill, made through the same path as everything else.
+            let raw = harken::create_playlist("Favourites".into());
+            let mut bytes = Vec::new();
+            ciborium::into_writer(&raw, &mut bytes).unwrap();
+            let filled = m.fill_auto(&bytes, &mut auto).unwrap();
+            m.apply(&mut conn, &filled, &petros::Ctx::from_user("alice"))
+                .unwrap()
+                .unwrap();
+            let favs = harken::playlists(&mut SqliteStore::new(&mut conn)).unwrap()[0]
+                .id
+                .0
+                .as_bytes()
+                .to_vec();
+
+            let raw = harken::add_all_to_playlist(favs.clone());
             let mut bytes = Vec::new();
             ciborium::into_writer(&raw, &mut bytes).unwrap();
             let filled = m.fill_auto(&bytes, &mut auto).unwrap();
@@ -205,7 +252,7 @@ fn a_bulk_mutation_row_by_row() {
 
             // The playlist is the whole library, or the loop skipped rows.
             assert_eq!(
-                harken::favorites(&mut SqliteStore::new(&mut conn))
+                harken::playlist(&mut SqliteStore::new(&mut conn), favs.clone())
                     .unwrap()
                     .len(),
                 n
@@ -241,22 +288,42 @@ fn maintained_against_re_read_on_the_client_path() {
         .unwrap();
         for i in 0..n {
             client
-                .mutate(harken::add_song(format!("song {i}"), "Bicep".into()))
+                .mutate(harken::add_song(
+                    format!("song {i}"),
+                    "Bicep".into(),
+                    String::new(),
+                    0,
+                    String::new(),
+                ))
                 .unwrap();
         }
 
-        let mut view = harken::library_view();
+        client
+            .mutate(harken::create_playlist("Favourites".into()))
+            .unwrap();
+        let favs = harken::playlists(&mut client.store()).unwrap()[0]
+            .id
+            .0
+            .as_bytes()
+            .to_vec();
+        let mut view = harken::library_view(&favs);
         {
             let mut store = client.store();
             view.hydrate(&mut store);
         }
         let _ = client.take_changes();
-        let mut rendered = harken::songs_of(&view);
+        let mut rendered = harken::items_of(&view);
 
         let (mut fresh, mut kept) = (vec![], vec![]);
         for i in 0..30 {
             client
-                .mutate(harken::add_song(format!("tap {i}"), "Bicep".into()))
+                .mutate(harken::add_song(
+                    format!("tap {i}"),
+                    "Bicep".into(),
+                    String::new(),
+                    0,
+                    String::new(),
+                ))
                 .unwrap();
 
             let changes = client.take_changes();
@@ -274,13 +341,13 @@ fn maintained_against_re_read_on_the_client_path() {
                         let mut store = client.store();
                         view.hydrate(&mut store);
                     }
-                    rendered = harken::songs_of(&view);
+                    rendered = harken::items_of(&view);
                 }
             }
             kept.push(t.elapsed().as_secs_f64() * 1000.0);
 
             let t = Instant::now();
-            let _ = harken::library(&mut client.store()).unwrap();
+            let _ = harken::library(&mut client.store(), favs.clone()).unwrap();
             fresh.push(t.elapsed().as_secs_f64() * 1000.0);
         }
         let (f, k) = (median(fresh), median(kept));
@@ -328,22 +395,36 @@ fn what_crosses_the_boundary() {
         peer.load_mutators(harken::BUNDLED.to_vec()).unwrap();
 
         for i in 0..n {
-            peer.add_song(format!("song {i}"), "Bicep".into()).unwrap();
+            peer.add_song(
+                format!("song {i}"),
+                "Bicep".into(),
+                String::new(),
+                0,
+                String::new(),
+            )
+            .unwrap();
         }
         let _ = peer.library_update().unwrap();
 
         let (mut whole, mut moved) = (0usize, 0usize);
         let (mut whole_rows, mut moved_rows) = (0usize, 0usize);
         for i in 0..20 {
-            peer.add_song(format!("tap {i}"), "Bicep".into()).unwrap();
+            peer.add_song(
+                format!("tap {i}"),
+                "Bicep".into(),
+                String::new(),
+                0,
+                String::new(),
+            )
+            .unwrap();
 
             let update = peer.library_update().unwrap();
             moved_rows += update.patches.len();
-            moved += size_of_songs(update.patches.iter().filter_map(|p| p.song.as_ref()));
+            moved += size_of_items(update.patches.iter().filter_map(|p| p.item.as_ref()));
 
-            let all = peer.library().unwrap();
+            let all = peer.library(Vec::new()).unwrap();
             whole_rows += all.len();
-            whole += size_of_songs(all.iter());
+            whole += size_of_items(all.iter());
         }
         println!(
             "    {:>7}  {:>6} rows {:>8} B  {:>6} rows {:>8} B",
@@ -358,7 +439,7 @@ fn what_crosses_the_boundary() {
 }
 
 /// A stand-in for what the boundary charges: the same values, encoded.
-fn size_of_songs<'a>(songs: impl Iterator<Item = &'a harken::foreign::Song>) -> usize {
+fn size_of_items<'a>(songs: impl Iterator<Item = &'a harken::foreign::Item>) -> usize {
     songs
         .map(|s| {
             let mut out = Vec::new();
@@ -366,12 +447,12 @@ fn size_of_songs<'a>(songs: impl Iterator<Item = &'a harken::foreign::Song>) -> 
                 &(
                     &s.id,
                     &s.title,
-                    &s.artist,
+                    &s.creator,
                     s.pos,
                     s.added_ms,
-                    &s.actor,
-                    s.favorite_pos,
-                    s.favorited,
+                    &s.user_id,
+                    s.playlist_pos,
+                    s.on_playlist,
                 ),
                 &mut out,
             )

@@ -23,13 +23,19 @@ fn mutating_without_a_module_is_refused_rather_than_ignored() {
 
     assert_eq!(client.mutators_generation(), 0);
     let refused = client
-        .add_song("too early".into(), "nobody".into())
+        .add_song(
+            "too early".into(),
+            "nobody".into(),
+            String::new(),
+            0,
+            String::new(),
+        )
         .expect_err("no module is loaded");
     assert!(
         format!("{refused}").contains("no mutator module"),
         "the failure should say why: {refused}"
     );
-    assert!(client.library().expect("library").is_empty());
+    assert!(client.library(Vec::new()).expect("library").is_empty());
 
     let _ = std::fs::remove_dir_all(&dir);
 }

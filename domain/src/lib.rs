@@ -30,6 +30,10 @@ pub use schema::*;
 #[cfg(feature = "storage")]
 petros::app!(HarkenApp {
     schema: crate::schema::SCHEMA,
+    // 1, because `song` and `favorite` changed shape when the library stopped
+    // being songs and became media of a kind. Every peer rebuilds its tables
+    // from the log on the next open; the log itself did not move.
+    schema_version: 1,
     apply: crate::functions::apply,
     fill_auto: crate::functions::fill_auto,
 });
