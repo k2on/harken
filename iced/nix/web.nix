@@ -57,8 +57,8 @@
       # `nix run .#web-build` does this too; the difference is that this one
       # cannot reach the network, so every version is pinned rather than
       # fetched when it turns out not to match.
-      harken-web = rustPlatform.buildRustPackage {
-        pname = "harken-web";
+      mkWeb = { pname, features }: rustPlatform.buildRustPackage {
+        inherit pname;
         version = "0.1.0";
         src = sources.workspace;
         inherit (sources) cargoDeps;
@@ -82,7 +82,8 @@
           export SQLITE3_LIB_DIR="$PWD/sqlite-stub"
           export SQLITE3_STATIC=1
 
-          cargo build -p harken-iced --target wasm32-unknown-unknown --release --offline
+          cargo build -p harken-iced ${features} \
+            --target wasm32-unknown-unknown --release --offline
 
           runHook postBuild
         '';
@@ -135,7 +136,16 @@
       '';
     in
     {
-      packages = { inherit harken-web; };
+      packages = {
+        harken-web = mkWeb { pname = "harken-web"; features = ""; };
+        # The standalone demo: no server, no sign-in, a seeded library. What
+        # GitHub Pages serves. A separate build rather than a runtime flag, so
+        # the real client cannot be put in this state by accident.
+        harken-demo = mkWeb {
+          pname = "harken-demo";
+          features = "--features demo";
+        };
+      };
 
       apps = {
         web.program = script "web" {

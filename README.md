@@ -115,6 +115,21 @@ nix run .#iced alice     # terminal 2
 nix run .#iced bob       # terminal 3 — then take one offline and watch them sync
 ```
 
+## The demo
+
+The client compiled to wasm with no server, no sign-in and a seeded
+library, published to GitHub Pages on every push to `main`. It is the
+real client — the same `apply`, the same maintained view, the same
+rebase — with a feature that removes the parts needing somewhere to
+connect to.
+
+```
+nix build .#harken-demo    # index.html and pkg/, ready to serve
+```
+
+A separate build from the real client rather than a runtime flag: a flag
+can be set by accident, a feature has to be asked for.
+
 ## The browser client
 
 The same program compiled to wasm, in a page. It is served by the

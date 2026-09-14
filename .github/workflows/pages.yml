@@ -1,0 +1,76 @@
+# The demo, published to GitHub Pages.
+#
+# The iced client compiled to wasm with `--features demo`: no server, no
+# sign-in, and a seeded library, so the page is the thing itself rather than a
+# screenshot of it. A separate build from the real client rather than a runtime
+# flag — a flag can be set by accident, a feature has to be asked for.
+#
+# Nix does the same job here it does locally. The toolchain, the wasm target and
+# `wasm-bindgen` all come out of the flake and the lockfile, so what is
+# published is built the way a contributor builds it.
+name: pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "domain/**"
+      - "iced/**"
+      - "Cargo.*"
+      - "flake.*"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+# One deployment at a time, and let a run in progress finish: cancelling a
+# half-done deploy is how a site ends up serving nothing.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: nix-community/cache-nix-action/restore@v7
+        with:
+          primary-key: pages-${{ runner.os }}-${{ hashFiles('flake.lock', 'Cargo.lock') }}
+          restore-prefixes-first-match: pages-${{ runner.os }}-
+
+      - name: Build the demo
+        run: nix build .#harken-demo --print-build-logs
+
+      # `result` is a store path and a symlink; Pages wants a directory it can
+      # read, and the store is read-only.
+      - name: Copy it out of the store
+        run: |
+          mkdir -p site
+          cp -rL result/. site/
+          chmod -R u+w site
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - uses: nix-community/cache-nix-action/save@v7
+        if: always()
+        with:
+          primary-key: pages-${{ runner.os }}-${{ hashFiles('flake.lock', 'Cargo.lock') }}
+          gc-max-store-size-linux: 8G
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4

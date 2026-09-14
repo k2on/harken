@@ -6,6 +6,12 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[features]
+# A standalone demo: no server, no sign-in, a seeded library. What is published
+# to GitHub Pages, and a separate binary from the real client on purpose — a
+# flag could be set by accident, a feature has to be asked for at build time.
+demo = []
+
 [dependencies]
 harken = { workspace = true, features = ["storage"] }
 petros = { workspace = true, features = ["ws"] }

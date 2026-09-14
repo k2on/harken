@@ -42,11 +42,13 @@ use petros::transport::web::Link;
 #[cfg(not(target_arch = "wasm32"))]
 use petros::transport::ws::Link;
 
+#[cfg(not(feature = "demo"))]
 const DEFAULT_SERVER: &str = "http://127.0.0.1:8787";
 
 /// Where the server is, and a name to offer a dev server. On the desktop,
 /// flags; in a browser, the query string, with the server defaulting to
 /// wherever this page came from — which is the server, when it serves it.
+#[cfg(not(feature = "demo"))]
 fn config() -> (String, Option<String>) {
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -102,6 +104,7 @@ fn open(_user: &str) -> petros::Result<petros::Connection> {
 /// The logins this machine has, one per server, in a JSON file under the
 /// config directory. The token is a secret and the file is the user's own.
 #[cfg(not(target_arch = "wasm32"))]
+#[cfg_attr(feature = "demo", allow(dead_code))]
 mod remembered {
     use super::Login;
     use std::collections::BTreeMap;
@@ -150,6 +153,7 @@ mod remembered {
 
 /// The same, in the browser's storage.
 #[cfg(target_arch = "wasm32")]
+#[cfg_attr(feature = "demo", allow(dead_code))]
 mod remembered {
     use super::Login;
 
@@ -374,31 +378,120 @@ impl Peer {
 }
 
 impl App {
-    fn boot() -> (Self, Task<Message>) {
-        let (server, user) = config();
-        let mut app = App {
-            login: remembered::recall(&server),
-            server,
-            user,
-            signing_in: false,
-            peer: None,
-            title: String::new(),
-            artist: String::new(),
-            note: String::new(),
-        };
-        if let Some(login) = &app.login {
-            let mut peer = Peer::open(login);
-            app.note = peer.connect(&app.server);
-            app.peer = Some(peer);
-            return (app, Task::none());
+    /// The demo's whole identity: nobody, signed in nowhere.
+    ///
+    /// A `Login` is what `Peer::open` wants, and the demo has no server to get
+    /// one from — so it makes one up, with an empty token and session. Nothing
+    /// ever sends them, because the demo never opens a socket.
+    #[cfg(feature = "demo")]
+    fn demo_login() -> Login {
+        Login {
+            token: String::new(),
+            session: String::new(),
+            user: petros_auth::Account {
+                id: "demo".into(),
+                name: "Demo".into(),
+                email: String::new(),
+            },
+            expires_ms: 0,
         }
-        // Nobody yet. A page that just came back from signing in has the
-        // code in its address; a desktop given a name can ask straight away.
-        let task = app.sign_in();
-        (app, task)
+    }
+
+    /// Put something in an empty demo library, so the page has a list on it.
+    ///
+    /// Through `mutate`, not through SQL: the demo runs the same `apply` as
+    /// every other peer, and seeding it any other way would be showing
+    /// something the engine did not do.
+    #[cfg(feature = "demo")]
+    fn seed(peer: &mut Peer) {
+        if !peer.items.is_empty() {
+            return;
+        }
+        const LIBRARY: &[(&str, &str, &str, i64)] = &[
+            ("Glue", "Bicep", "Bicep", 272_000),
+            ("Opal", "Bicep", "Bicep", 318_000),
+            ("Aura", "Bicep", "Isles", 289_000),
+            ("Gosh", "Jamie xx", "In Colour", 296_000),
+            ("Loud Places", "Jamie xx", "In Colour", 397_000),
+            ("Nightmarket", "Four Tet", "Sixteen Oceans", 256_000),
+            ("Baby", "Four Tet", "Sixteen Oceans", 191_000),
+            ("Teardrop", "Massive Attack", "Mezzanine", 330_000),
+        ];
+        for (title, artist, album, ms) in LIBRARY {
+            let _ = peer.client.mutate(mutators::add_song(
+                (*title).into(),
+                (*artist).into(),
+                (*album).into(),
+                *ms,
+                String::new(),
+            ));
+        }
+        peer.refresh();
+        // A few of them hearted, so the playlist is not empty either.
+        let hearted: Vec<Vec<u8>> = peer
+            .items
+            .iter()
+            .filter(|i| matches!(i.title.as_str(), "Glue" | "Gosh" | "Teardrop"))
+            .map(|i| i.id.0.as_bytes().to_vec())
+            .collect();
+        for id in hearted {
+            let _ = peer
+                .client
+                .mutate(mutators::add_to_playlist(peer.playlist.clone(), id));
+        }
+        peer.refresh();
+    }
+
+    fn boot() -> (Self, Task<Message>) {
+        // The demo signs nobody in and talks to nothing: it opens a peer, seeds
+        // it, and that is the whole application. Everything below about tokens
+        // and browsers is compiled out.
+        #[cfg(feature = "demo")]
+        {
+            let login = Self::demo_login();
+            let mut peer = Peer::open(&login);
+            Self::seed(&mut peer);
+            let app = App {
+                login: Some(login),
+                server: String::new(),
+                user: None,
+                signing_in: false,
+                peer: Some(peer),
+                title: String::new(),
+                artist: String::new(),
+                note: "a demo — nothing here leaves your browser".into(),
+            };
+            (app, Task::none())
+        }
+
+        #[cfg(not(feature = "demo"))]
+        {
+            let (server, user) = config();
+            let mut app = App {
+                login: remembered::recall(&server),
+                server,
+                user,
+                signing_in: false,
+                peer: None,
+                title: String::new(),
+                artist: String::new(),
+                note: String::new(),
+            };
+            if let Some(login) = &app.login {
+                let mut peer = Peer::open(login);
+                app.note = peer.connect(&app.server);
+                app.peer = Some(peer);
+                return (app, Task::none());
+            }
+            // Nobody yet. A page that just came back from signing in has the
+            // code in its address; a desktop given a name can ask straight away.
+            let task = app.sign_in();
+            (app, task)
+        }
     }
 
     /// Start a sign-in, if one can be started from here without a person.
+    #[cfg(not(feature = "demo"))]
     fn sign_in(&mut self) -> Task<Message> {
         #[cfg(target_arch = "wasm32")]
         {
