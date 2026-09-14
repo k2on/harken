@@ -26,7 +26,7 @@
 //! The engine does not know which of these it is running in. What differs is
 //! two lines: where the database lives, and which transport carries the bytes.
 
-mod heart;
+mod icon;
 mod player;
 mod vim;
 
@@ -1227,21 +1227,27 @@ impl App {
     fn travel(&mut self, motion: vim::Motion) -> Task<Message> {
         let pane = self.pane;
         match self.shape(pane).step(self.at(pane), motion) {
-            Some(at) => {
-                self.cursors[pane as usize] = at;
-                // In the sidebar the cursor *is* the selection: what it is on
-                // is what the table shows, with no key in between. Browsing is
-                // the whole point of that pane, and needing `<Enter>` to see
-                // what you have already moved onto is a keystroke that only
-                // ever means "yes, that one".
-                if pane == Pane::Sidebar {
-                    self.show_under_cursor();
-                }
-            }
+            Some(at) => return self.land(pane, at),
             None => match pane.beyond(motion) {
                 Some(next) => self.pane = next,
                 None => return Task::none(),
             },
+        }
+        self.reveal()
+    }
+
+    /// Put the cursor down somewhere, and do everything that follows from it.
+    ///
+    /// The one way to move a cursor, because there were two — a motion and a
+    /// search — and only the motion remembered that landing in the sidebar
+    /// also means showing what you landed on. `/bach<Enter>` moved the
+    /// highlight and left the table on whatever was there before.
+    fn land(&mut self, pane: Pane, at: usize) -> Task<Message> {
+        self.cursors[pane as usize] = at;
+        // In the sidebar the cursor *is* the selection: what it is on is what
+        // the table shows, with no key in between.
+        if pane == Pane::Sidebar {
+            self.show_under_cursor();
         }
         self.reveal()
     }
@@ -1328,8 +1334,7 @@ impl App {
                 hits[hits.len() - 1]
             }
         });
-        self.cursors[pane as usize] = next;
-        self.reveal()
+        self.land(pane, next)
     }
 
     /// Open what the cursor is on.
@@ -1706,7 +1711,7 @@ impl App {
                     .spacing(0)
                     .align_y(iced::Alignment::Center)
                     .push(
-                        button(heart::heart(item.on_playlist(), on_cursor))
+                        button(icon::heart(item.on_playlist(), on_cursor))
                             .style(button::text)
                             .padding([0, 8])
                             .on_press(Message::ToggleFavorite(item.id, item.on_playlist())),
@@ -1954,15 +1959,19 @@ impl App {
         // Nothing here takes the cursor: `p`, `{` and `}` do all three, so a
         // pane for them would be a stop on `<Tab>` that nobody needs.
         let transport = row![
-            button("«").style(button::text).on_press(Message::Skip(-1)),
+            button(icon::previous())
+                .style(button::text)
+                .on_press(Message::Skip(-1)),
             button(if self.player.is_playing() {
-                "❚❚"
+                icon::pause()
             } else {
-                "▶"
+                icon::play()
             })
-            .style(button::primary)
+            .style(button::text)
             .on_press_maybe(Player::AUDIBLE.then_some(Message::PlayPause)),
-            button("»").style(button::text).on_press(Message::Skip(1)),
+            button(icon::next())
+                .style(button::text)
+                .on_press(Message::Skip(1)),
         ]
         .spacing(4)
         .align_y(iced::Alignment::Center);

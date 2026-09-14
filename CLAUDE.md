@@ -41,7 +41,8 @@ server/                  axum, with one Petros handler mounted on it, and the
   nix/readme.nix         its section of README.md
 iced/                    the desktop and browser client
   src/main.rs            …and how each target signs in: a loopback port, or the page
-  src/heart.rs           the heart, drawn as an SVG (see below)
+  src/icon.rs            every glyph the font has not got, drawn as SVG:
+                         the heart and the transport (see below)
   src/vim.rs             the keyboard: vim's grammar, and the one trait a
                          component implements to get it
   src/player.rs          what is playing — an <audio> element in a browser,
@@ -519,11 +520,22 @@ declaration: `petros_schema::row!` in `schema.rs` emits both, the `From`
 between them, and the `#[cfg]` on the far half. Neither file mentions bindings;
 the doc comments reach the generated TypeScript.
 
-## The heart is an SVG on the desktop and a character on the phone
+## Anything outside Latin-1 is a drawing, not a character
 
-Fira Sans, which iced embeds, has no U+2665, U+2661 or U+2764 in its cmap — a
-text heart lays out fine and draws nothing at all. React Native uses the system
-font, which has the glyph, so the Expo screen just writes `♥`.
+iced embeds Fira Sans, which is a text face. It has no U+2665 heart, and no
+U+25B6 play, U+275A pause or U+2582 block either. A missing glyph lays out
+fine and draws a `?` or nothing at all, so the button looks *broken* rather
+than unfontable — and that is a hard thing to recognise as a font problem.
+
+This cost two rounds, which is the reason it is a rule and not a note. The
+heart was fixed first; the transport then shipped with a `?` on its play
+button and another in the search prompt's caret, because the lesson had been
+written down as "the heart needs an SVG" instead of as what it was. `«`, `»`
+and `·` are in the font; `▶`, `❚`, `♥` and `▂` are not. `iced/src/icon.rs`
+draws all of them.
+
+React Native uses the system font, which has the glyphs, so the Expo screen
+just writes `♥`.
 
 It was a `canvas` for a while, and that is the trap worth keeping. **A canvas
 inside a `scrollable` is not translated to the row it belongs to under the
@@ -534,7 +546,7 @@ hearts. It reads as "the heart does not render" — which is how it survived a
 demo, because one heart *was* rendering and it was all twenty of them. The tell
 is that scrolling changes *which* rows appear to have one.
 
-`iced/src/heart.rs` is an SVG now, which an image widget positions from the
+`iced/src/icon.rs` draws them as SVG, which an image widget positions from the
 widget's own bounds rather than from geometry in a shared layer. Same path —
 two cubics down each side, filled when the song is on the playlist and stroked
 when it is not — and it costs the `svg` feature instead of `canvas`.

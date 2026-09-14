@@ -95,7 +95,8 @@ albums, then the artists. Moving onto one shows it — the cursor there
 is the selection, so nothing needs confirming. The tracks are a table
 of Name, Artist, Album and Time, and a now-playing bar sits along the
 bottom. Light or dark follows the system: every colour comes from the
-theme, so there is none to get wrong.
+theme, so there is none to get wrong, and every icon is drawn rather
+than typed, because the embedded font has no glyph for any of them.
 
 It is driven from the keyboard, with vim's motions: `j` and `k` move,
 `h` and `l` cross between the sidebar, the track list and the player,

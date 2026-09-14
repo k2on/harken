@@ -1,13 +1,17 @@
-//! A heart, drawn rather than typed — and as an image rather than a canvas.
+//! The glyphs Fira Sans does not have, drawn rather than typed.
 //!
 //! Two things had to be worked around to put a heart on a row, and the second
 //! one is only visible in a browser.
 //!
-//! **It cannot be a character.** iced embeds Fira Sans, whose cmap has no
-//! U+2665, no U+2661 and no U+2764, so the glyph silently draws nothing at
-//! all: widgets lay out, input works, and the button is blank. That is the
-//! same failure mode `CLAUDE.md` records for a browser build with no font at
-//! all, and it is hard to recognise as a font problem when you meet it.
+//! **They cannot be characters.** iced embeds Fira Sans, which is a text face:
+//! it has no U+2665 heart, and no U+25B6 play, U+275A pause or U+2582 block
+//! either. A missing glyph lays out fine and draws a `?`, or nothing at all,
+//! so the button looks broken rather than unfontable — which is how the
+//! transport shipped with a `?` on its play button while the heart beside it
+//! was correct, because only the heart had been through this once already.
+//!
+//! The rule, learned twice: **anything outside Latin-1 is a drawing.** `«`,
+//! `»` and `·` are in the font; `▶`, `❚`, `♥` and `▂` are not.
 //!
 //! **It cannot be a `canvas` either, once there is one per row.** A canvas
 //! inside a `scrollable` is not translated to the row it belongs to under the
@@ -46,6 +50,54 @@ const OUTLINE: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0
 
 /// How big a heart is drawn in a table row.
 pub const SIZE: f32 = 15.0;
+
+/// How big a transport button is drawn in the now-playing bar.
+pub const TRANSPORT: f32 = 15.0;
+
+/// The transport glyphs, as paths in the same 24-unit box as the heart.
+const PLAY: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+<path d="M8 5l11 7-11 7z" fill="#000"/></svg>"##;
+
+const PAUSE: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+<path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z" fill="#000"/></svg>"##;
+
+const PREVIOUS: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+<path d="M6 5h2.5v14H6zM19 5l-9 7 9 7z" fill="#000"/></svg>"##;
+
+const NEXT: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+<path d="M15.5 5H18v14h-2.5zM5 5l9 7-9 7z" fill="#000"/></svg>"##;
+
+/// One of the transport buttons, in the theme's own text colour.
+///
+/// `dim` is the pair either side of play/pause: they do the same kind of thing
+/// and should not compete with it for the eye.
+fn transport<'a>(shape: &'static [u8], dim: bool) -> Svg<'a> {
+    svg(svg::Handle::from_memory(shape))
+        .width(TRANSPORT)
+        .height(TRANSPORT)
+        .style(move |theme: &Theme, _| {
+            let text = theme.extended_palette().background.base.text;
+            svg::Style {
+                color: Some(if dim { text.scale_alpha(0.6) } else { text }),
+            }
+        })
+}
+
+pub fn play<'a>() -> Svg<'a> {
+    transport(PLAY, false)
+}
+
+pub fn pause<'a>() -> Svg<'a> {
+    transport(PAUSE, false)
+}
+
+pub fn previous<'a>() -> Svg<'a> {
+    transport(PREVIOUS, true)
+}
+
+pub fn next<'a>() -> Svg<'a> {
+    transport(NEXT, true)
+}
 
 /// The heart, for a row that is on the playlist or is not.
 ///
