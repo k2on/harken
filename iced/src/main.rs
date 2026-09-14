@@ -873,13 +873,6 @@ impl App {
         "https://upload.wikimedia.org/wikipedia/commons/transcoded/0/0b/Schubert_Gb_Impromptu_Andriy_Bondarenko_%28Live%29.ogg/Schubert_Gb_Impromptu_Andriy_Bondarenko_%28Live%29.ogg.mp3",
     ),
     (
-        "Hungarian Dance No. 1",
-        "Johannes Brahms",
-        "Hungarian Dances",
-        57000,
-        "https://upload.wikimedia.org/wikipedia/commons/transcoded/d/d6/Brahms_-_Hungarian_Dance_No._1_%28performed_by_the_composer%29.oga/Brahms_-_Hungarian_Dance_No._1_%28performed_by_the_composer%29.oga.mp3",
-    ),
-    (
         "Hungarian Dance No. 5",
         "Johannes Brahms",
         "Hungarian Dances",
