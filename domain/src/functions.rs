@@ -31,11 +31,11 @@ use petros_schema::prelude::*;
 #[cfg(feature = "foreign")]
 use crate::Peer;
 
-use crate::schema::tables::{Media, Playlist as PlaylistRow, PlaylistItem, Song};
+use crate::schema::tables::{Media, Playlist, PlaylistItem, Song};
 
 // Only the queries below use these, and a query is not built for the sandbox.
 #[cfg(feature = "storage")]
-use crate::schema::{id_of, Item, Playlist};
+use crate::schema::Item;
 
 // ------------------------------------------------------------------ mutations
 
@@ -48,7 +48,7 @@ use crate::schema::{id_of, Item, Playlist};
 pub fn add_song(
     db: &mut Db,
     ctx: &Ctx,
-    id: NewId,
+    id: NewId<Media>,
     added_ms: Now,
     title: String,
     artist: String,
@@ -68,7 +68,7 @@ pub fn add_song(
     // makes the rebase visible when an entry lands underneath yours.
     let last = last_pos(db);
     db.put(&Media {
-        id: id.to_vec(),
+        id,
         kind: crate::schema::kind::SONG.to_string(),
         title: title.trim().to_string(),
         creator: artist.trim().to_string(),
@@ -79,7 +79,7 @@ pub fn add_song(
         user_id: ctx.user.id.clone(),
     })?;
     db.put(&Song {
-        media_id: id.to_vec(),
+        media_id: id,
         album: album.trim().to_string(),
     })?;
     Ok(())
@@ -87,24 +87,26 @@ pub fn add_song(
 
 /// Make a playlist.
 #[mutation]
-pub fn create_playlist(db: &mut Db, ctx: &Ctx, id: NewId, created_ms: Now, name: String) -> Result {
+pub fn create_playlist(
+    db: &mut Db,
+    ctx: &Ctx,
+    id: NewId<Playlist>,
+    created_ms: Now,
+    name: String,
+) -> Result {
     if name.trim().is_empty() {
         return Err("a playlist needs a name".into());
     }
-    if db.exists::<PlaylistRow>(&PlaylistRow::key_of(&id)) {
+    if db.exists::<Playlist>(&Playlist::key_of(&id)) {
         return Ok(());
     }
     let last = db
-        .select(
-            PlaylistRow::all()
-                .order_by(PlaylistRow::pos.desc())
-                .limit(1),
-        )
+        .select(Playlist::all().order_by(Playlist::pos.desc()).limit(1))
         .first()
         .map(|p| p.pos)
         .unwrap_or(0);
-    db.put(&PlaylistRow {
-        id: id.to_vec(),
+    db.put(&Playlist {
+        id,
         name: name.trim().to_string(),
         pos: last + 1,
         created_ms,
@@ -124,10 +126,10 @@ pub fn add_to_playlist(
     db: &mut Db,
     ctx: &Ctx,
     added_ms: Now,
-    playlist_id: Id,
-    media_id: Id,
+    playlist_id: Id<Playlist>,
+    media_id: Id<Media>,
 ) -> Result {
-    if !db.exists::<PlaylistRow>(&PlaylistRow::key_of(&playlist_id)) {
+    if !db.exists::<Playlist>(&Playlist::key_of(&playlist_id)) {
         return Ok(());
     }
     if !db.exists::<Media>(&Media::key_of(&media_id)) {
@@ -136,10 +138,10 @@ pub fn add_to_playlist(
     if db.exists::<PlaylistItem>(&PlaylistItem::key_of(&playlist_id, &media_id)) {
         return Ok(());
     }
-    let last = last_playlist_pos(db, &playlist_id);
+    let last = last_playlist_pos(db, playlist_id);
     db.put(&PlaylistItem {
-        playlist_id: playlist_id.to_vec(),
-        media_id: media_id.to_vec(),
+        playlist_id,
+        media_id,
         pos: last + 1,
         added_ms,
         user_id: ctx.user.id.clone(),
@@ -149,7 +151,7 @@ pub fn add_to_playlist(
 
 /// Take something off a playlist. The item itself stays in the library.
 #[mutation]
-pub fn remove_from_playlist(db: &mut Db, playlist_id: Id, media_id: Id) -> Result {
+pub fn remove_from_playlist(db: &mut Db, playlist_id: Id<Playlist>, media_id: Id<Media>) -> Result {
     db.delete::<PlaylistItem>(&PlaylistItem::key_of(&playlist_id, &media_id))?;
     Ok(())
 }
@@ -168,11 +170,16 @@ pub fn remove_from_playlist(db: &mut Db, playlist_id: Id, media_id: Id) -> Resul
 /// of which rows they were, which is exactly what an incremental view cannot
 /// work from.
 #[mutation]
-pub fn add_all_to_playlist(db: &mut Db, ctx: &Ctx, added_ms: Now, playlist_id: Id) -> Result {
-    if !db.exists::<PlaylistRow>(&PlaylistRow::key_of(&playlist_id)) {
+pub fn add_all_to_playlist(
+    db: &mut Db,
+    ctx: &Ctx,
+    added_ms: Now,
+    playlist_id: Id<Playlist>,
+) -> Result {
+    if !db.exists::<Playlist>(&Playlist::key_of(&playlist_id)) {
         return Ok(());
     }
-    let mut pos = last_playlist_pos(db, &playlist_id);
+    let mut pos = last_playlist_pos(db, playlist_id);
     // Ordered, because the positions it assigns go into the log and every
     // replica has to assign the same ones.
     let items = db.select(
@@ -186,7 +193,7 @@ pub fn add_all_to_playlist(db: &mut Db, ctx: &Ctx, added_ms: Now, playlist_id: I
         }
         pos += 1;
         db.put(&PlaylistItem {
-            playlist_id: playlist_id.to_vec(),
+            playlist_id,
             media_id: item.id,
             pos,
             added_ms,
@@ -198,10 +205,10 @@ pub fn add_all_to_playlist(db: &mut Db, ctx: &Ctx, added_ms: Now, playlist_id: I
 
 /// Take something out of the library, and off every playlist holding it.
 #[mutation]
-pub fn remove_media(db: &mut Db, id: Id) -> Result {
+pub fn remove_media(db: &mut Db, id: Id<Media>) -> Result {
     let on = db.select(
         PlaylistItem::all()
-            .filter(PlaylistItem::media_id.eq(id.to_vec()))
+            .filter(PlaylistItem::media_id.eq(id))
             .order_by(PlaylistItem::playlist_id.asc()),
     );
     for item in on {
@@ -227,10 +234,10 @@ fn last_pos(db: &mut impl Store) -> i64 {
 }
 
 /// The end of one playlist. `MAX(pos)` within it, as a query that reads one row.
-fn last_playlist_pos(db: &mut impl Store, playlist: &[u8]) -> i64 {
+fn last_playlist_pos(db: &mut impl Store, playlist: Id<Playlist>) -> i64 {
     db.select(
         PlaylistItem::all()
-            .filter(PlaylistItem::playlist_id.eq(playlist.to_vec()))
+            .filter(PlaylistItem::playlist_id.eq(playlist))
             .order_by(PlaylistItem::pos.desc())
             .limit(1),
     )
@@ -247,18 +254,14 @@ fn last_playlist_pos(db: &mut impl Store, playlist: &[u8]) -> i64 {
 /// contract, and two peers showing the same rows in different orders is a bug
 /// that only appears on someone else's machine.
 #[query]
-pub fn library(db: &mut Db, playlist_id: Id) -> Result<Vec<Item>> {
+pub fn library(db: &mut Db, playlist_id: Id<Playlist>) -> Result<Vec<Item>> {
     // An item *with* its favourite, which is a tree rather than a join: one
     // that is not favourited is still a row, carrying nothing. That is the LEFT
     // JOIN, and it is the relationship's shape rather than a keyword.
     //
     // One table, whatever the kind. A screen that lists the library never joins
     // a side table, which is the point of `media` carrying what a list needs.
-    let rows = db.select_with(
-        library_query(),
-        Media::playlist_item,
-        items_on(&playlist_id),
-    );
+    let rows = db.select_with(library_query(), Media::playlist_item, items_on(playlist_id));
     Ok(rows.iter().map(item_of).collect())
 }
 
@@ -279,8 +282,8 @@ fn library_query() -> petros_schema::Query<Media> {
 /// playlist I am showing you", and which playlist that is belongs to the
 /// client, not to the domain.
 #[cfg(feature = "storage")]
-fn items_on(playlist: &[u8]) -> petros_schema::Query<PlaylistItem> {
-    PlaylistItem::all().filter(PlaylistItem::playlist_id.eq(playlist.to_vec()))
+fn items_on(playlist: Id<Playlist>) -> petros_schema::Query<PlaylistItem> {
+    PlaylistItem::all().filter(PlaylistItem::playlist_id.eq(playlist))
 }
 
 /// `library`, maintained rather than re-run.
@@ -294,7 +297,7 @@ pub type LibraryView = petros::ivm::View<Media>;
 /// Build one. Hydrate it once against a store, then feed it
 /// `Client::take_changes()`.
 #[cfg(feature = "storage")]
-pub fn library_view(playlist: &[u8]) -> LibraryView {
+pub fn library_view(playlist: Id<Playlist>) -> LibraryView {
     petros::ivm::View::related(library_query(), Media::playlist_item, items_on(playlist))
 }
 
@@ -317,7 +320,7 @@ pub fn items_of(view: &LibraryView) -> Vec<Item> {
 pub type PlaylistCount = petros::ivm::Tally;
 
 #[cfg(feature = "storage")]
-pub fn playlist_count(playlist: &[u8]) -> PlaylistCount {
+pub fn playlist_count(playlist: Id<Playlist>) -> PlaylistCount {
     petros::ivm::Tally::of(items_on(playlist))
 }
 
@@ -349,16 +352,16 @@ pub fn patch(items: &mut Vec<Item>, patches: &[petros::ivm::Patch]) {
 
 /// Every playlist, in the order they were made.
 #[query]
-pub fn playlists(db: &mut Db) -> Result<Vec<Playlist>> {
+pub fn playlists(db: &mut Db) -> Result<Vec<crate::schema::Playlist>> {
     Ok(db
         .select(
-            PlaylistRow::all()
-                .order_by(PlaylistRow::pos.asc())
-                .order_by(PlaylistRow::id.asc()),
+            Playlist::all()
+                .order_by(Playlist::pos.asc())
+                .order_by(Playlist::id.asc()),
         )
         .into_iter()
-        .map(|p| Playlist {
-            id: id_of(&p.id),
+        .map(|p| crate::schema::Playlist {
+            id: p.id,
             name: p.name,
             pos: p.pos,
             created_ms: p.created_ms,
@@ -369,12 +372,12 @@ pub fn playlists(db: &mut Db) -> Result<Vec<Playlist>> {
 
 /// One playlist's contents, in playlist order.
 #[query]
-pub fn playlist(db: &mut Db, id: Id) -> Result<Vec<Item>> {
+pub fn playlist(db: &mut Db, id: Id<Playlist>) -> Result<Vec<Item>> {
     // Read from the other end: favourites, each carrying its item. A favourite
     // whose item is gone carries nothing and is dropped, which is the INNER
     // JOIN — and `remove_song` deletes both, so it should not arise.
     let rows = db.select_with(
-        items_on(&id)
+        items_on(id)
             .order_by(PlaylistItem::pos.asc())
             .order_by(PlaylistItem::media_id.asc()),
         PlaylistItem::media,
@@ -385,7 +388,7 @@ pub fn playlist(db: &mut Db, id: Id) -> Result<Vec<Item>> {
         .filter_map(|r| {
             let media = r.one()?;
             Some(Item {
-                id: id_of(&media.id),
+                id: media.id,
                 kind: media.kind.clone(),
                 title: media.title.clone(),
                 creator: media.creator.clone(),
@@ -404,7 +407,7 @@ pub fn playlist(db: &mut Db, id: Id) -> Result<Vec<Item>> {
 #[cfg(feature = "storage")]
 fn item_of(row: &With<Media, PlaylistItem>) -> Item {
     Item {
-        id: id_of(&row.row.id),
+        id: row.row.id,
         kind: row.row.kind.clone(),
         title: row.row.title.clone(),
         creator: row.row.creator.clone(),
@@ -437,10 +440,10 @@ peer!(
 pub struct Views {
     library: LibraryView,
     count: PlaylistCount,
-    /// Which playlist a heart means. Empty until a caller says, because the
+    /// Which playlist a heart means. Nil until a caller says, because the
     /// domain has no favourites of its own — a client chooses the playlist it
     /// is showing membership for.
-    playlist: Vec<u8>,
+    playlist: Id<Playlist>,
     /// What the library did since the caller last collected. A foreign caller
     /// polls rather than being pushed to, so this has to accumulate.
     pending: Vec<petros::ivm::Patch>,
@@ -456,9 +459,9 @@ impl Views {
     /// Rebuilds the maintained view against it and asks the caller to take the
     /// whole list again, because no sequence of patches turns one playlist's
     /// memberships into another's.
-    pub fn use_playlist(&mut self, id: Vec<u8>, store: &mut petros::backend::SqliteStore<'_>) {
-        self.library = library_view(&id);
-        self.count = playlist_count(&id);
+    pub fn use_playlist(&mut self, id: Id<Playlist>, store: &mut petros::backend::SqliteStore<'_>) {
+        self.library = library_view(id);
+        self.count = playlist_count(id);
         self.playlist = id;
         self.library.hydrate(store);
         self.count.hydrate(store);
@@ -467,8 +470,8 @@ impl Views {
     }
 
     /// Which playlist a heart currently means.
-    pub fn playlist(&self) -> &[u8] {
-        &self.playlist
+    pub fn playlist(&self) -> Id<Playlist> {
+        self.playlist
     }
 }
 
@@ -476,9 +479,9 @@ impl Views {
 impl petros::Views for Views {
     fn build() -> Self {
         Views {
-            library: library_view(&[]),
-            count: playlist_count(&[]),
-            playlist: Vec::new(),
+            library: library_view(Id::nil()),
+            count: playlist_count(Id::nil()),
+            playlist: Id::nil(),
             pending: Vec::new(),
             reset: true,
         }
@@ -622,14 +625,11 @@ impl Peer {
     /// it is drawing hearts for. The next `library_update` is a reset, because
     /// no sequence of patches turns one playlist's memberships into another's.
     pub fn show_playlist(&self, id: String) -> ::core::result::Result<(), crate::PeerError> {
-        let bytes = petros::uuid::Uuid::parse_str(&id)
-            .map_err(|e| crate::PeerError::Refused {
-                reason: ::std::format!("not an id: {e}"),
-            })?
-            .as_bytes()
-            .to_vec();
+        let playlist: Id<Playlist> = id.parse().map_err(|_| crate::PeerError::Refused {
+            reason: ::std::format!("{id} is not an id"),
+        })?;
         self.views_with_store(|store, views| {
-            views.use_playlist(bytes, store);
+            views.use_playlist(playlist, store);
             ::core::result::Result::Ok(())
         })
     }

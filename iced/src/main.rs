@@ -34,7 +34,11 @@ use harken::{self as mutators, HarkenApp, Item};
 use heart::Heart;
 use iced::widget::{button, canvas, column, container, row, scrollable, text, text_input};
 use iced::{Element, Length, Subscription, Task};
-use petros::{AutoCtx, Changes, Client, Id};
+use petros::{AutoCtx, Changes, Client};
+
+/// A library item's id. The message carries what it identifies, so a playlist's
+/// id cannot be dropped into one of these by mistake.
+type Id = harken::Id<harken::tables::Media>;
 use petros_auth::Login;
 
 #[cfg(target_arch = "wasm32")]
@@ -222,7 +226,7 @@ struct Peer {
     /// How many items are on the playlist the hearts stand for.
     on_playlist: harken::PlaylistCount,
     /// Which playlist a heart means. The domain has no favourites of its own.
-    playlist: Vec<u8>,
+    playlist: harken::Id<harken::tables::Playlist>,
     pending: usize,
 }
 
@@ -257,13 +261,13 @@ impl Peer {
         let playlist = {
             let existing = harken::playlists(&mut client.store()).unwrap_or_default();
             match existing.first() {
-                Some(p) => p.id.0.as_bytes().to_vec(),
+                Some(p) => p.id,
                 None => {
                     let _ = client.mutate(mutators::create_playlist("Favourites".into()));
                     harken::playlists(&mut client.store())
                         .unwrap_or_default()
                         .first()
-                        .map(|p| p.id.0.as_bytes().to_vec())
+                        .map(|p| p.id)
                         .unwrap_or_default()
                 }
             }
@@ -272,8 +276,8 @@ impl Peer {
         let mut peer = Peer {
             client,
             link: None,
-            library: harken::library_view(&playlist),
-            on_playlist: harken::playlist_count(&playlist),
+            library: harken::library_view(playlist),
+            on_playlist: harken::playlist_count(playlist),
             playlist,
             items: Vec::new(),
             pending: 0,
@@ -428,16 +432,16 @@ impl App {
         }
         peer.refresh();
         // A few of them hearted, so the playlist is not empty either.
-        let hearted: Vec<Vec<u8>> = peer
+        let hearted: Vec<harken::Id<harken::tables::Media>> = peer
             .items
             .iter()
             .filter(|i| matches!(i.title.as_str(), "Glue" | "Gosh" | "Teardrop"))
-            .map(|i| i.id.0.as_bytes().to_vec())
+            .map(|i| i.id)
             .collect();
         for id in hearted {
             let _ = peer
                 .client
-                .mutate(mutators::add_to_playlist(peer.playlist.clone(), id));
+                .mutate(mutators::add_to_playlist(peer.playlist, id));
         }
         peer.refresh();
     }
@@ -636,22 +640,20 @@ impl App {
                             .map(|_| ())
                     }
                     Message::ToggleFavorite(id, favorited) => {
-                        let bytes = *id.as_uuid().as_bytes();
                         let m = if favorited {
-                            mutators::remove_from_playlist(peer.playlist.clone(), bytes.to_vec())
+                            mutators::remove_from_playlist(peer.playlist, id)
                         } else {
-                            mutators::add_to_playlist(peer.playlist.clone(), bytes.to_vec())
+                            mutators::add_to_playlist(peer.playlist, id)
                         };
                         peer.client.mutate(m).map(|_| ())
                     }
                     Message::FavoriteAll => peer
                         .client
-                        .mutate(mutators::add_all_to_playlist(peer.playlist.clone()))
+                        .mutate(mutators::add_all_to_playlist(peer.playlist))
                         .map(|_| ()),
-                    Message::RemoveSong(id) => peer
-                        .client
-                        .mutate(mutators::remove_media(id.as_uuid().as_bytes().to_vec()))
-                        .map(|_| ()),
+                    Message::RemoveSong(id) => {
+                        peer.client.mutate(mutators::remove_media(id)).map(|_| ())
+                    }
                     Message::ToggleLink => {
                         match peer.link {
                             Some(_) => {

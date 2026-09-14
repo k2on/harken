@@ -35,11 +35,11 @@ fn database() -> Connection {
     conn
 }
 
-fn rows(conn: &mut Connection, playlist: &[u8]) -> Vec<Row> {
+fn rows(conn: &mut Connection, playlist: harken::Id<harken::tables::Playlist>) -> Vec<Row> {
     // Through the app's own read model, which is the thing both builds have to
     // agree about. It reads a song with its favourite hanging off it, so one
     // pass covers the library and the playlist it is read against.
-    harken::library(&mut SqliteStore::new(conn), playlist.to_vec())
+    harken::library(&mut SqliteStore::new(conn), playlist)
         .expect("read")
         .into_iter()
         .map(|s| Row {
@@ -172,9 +172,9 @@ fn every_verb_produces_the_same_rows_natively_and_in_wasm() {
         let _ = module.apply(&mut wasm_db, &encode(&p), &petros::Ctx::from_user("alice"));
     }
 
-    let key = favs.0.as_bytes().to_vec();
-    let native = rows(&mut native_db, &key);
-    let wasm = rows(&mut wasm_db, &key);
+    let key = favs;
+    let native = rows(&mut native_db, key);
+    let wasm = rows(&mut wasm_db, key);
 
     assert_eq!(native, wasm, "the two builds of `apply` disagree");
     assert!(

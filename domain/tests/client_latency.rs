@@ -221,13 +221,9 @@ fn a_bulk_mutation_row_by_row() {
             m.apply(&mut conn, &filled, &petros::Ctx::from_user("alice"))
                 .unwrap()
                 .unwrap();
-            let favs = harken::playlists(&mut SqliteStore::new(&mut conn)).unwrap()[0]
-                .id
-                .0
-                .as_bytes()
-                .to_vec();
+            let favs = harken::playlists(&mut SqliteStore::new(&mut conn)).unwrap()[0].id;
 
-            let raw = harken::add_all_to_playlist(favs.clone());
+            let raw = harken::add_all_to_playlist(favs);
             let mut bytes = Vec::new();
             ciborium::into_writer(&raw, &mut bytes).unwrap();
             let filled = m.fill_auto(&bytes, &mut auto).unwrap();
@@ -252,7 +248,7 @@ fn a_bulk_mutation_row_by_row() {
 
             // The playlist is the whole library, or the loop skipped rows.
             assert_eq!(
-                harken::playlist(&mut SqliteStore::new(&mut conn), favs.clone())
+                harken::playlist(&mut SqliteStore::new(&mut conn), favs)
                     .unwrap()
                     .len(),
                 n
@@ -301,12 +297,8 @@ fn maintained_against_re_read_on_the_client_path() {
         client
             .mutate(harken::create_playlist("Favourites".into()))
             .unwrap();
-        let favs = harken::playlists(&mut client.store()).unwrap()[0]
-            .id
-            .0
-            .as_bytes()
-            .to_vec();
-        let mut view = harken::library_view(&favs);
+        let favs = harken::playlists(&mut client.store()).unwrap()[0].id;
+        let mut view = harken::library_view(favs);
         {
             let mut store = client.store();
             view.hydrate(&mut store);
@@ -347,7 +339,7 @@ fn maintained_against_re_read_on_the_client_path() {
             kept.push(t.elapsed().as_secs_f64() * 1000.0);
 
             let t = Instant::now();
-            let _ = harken::library(&mut client.store(), favs.clone()).unwrap();
+            let _ = harken::library(&mut client.store(), favs).unwrap();
             fresh.push(t.elapsed().as_secs_f64() * 1000.0);
         }
         let (f, k) = (median(fresh), median(kept));
@@ -422,7 +414,7 @@ fn what_crosses_the_boundary() {
             moved_rows += update.patches.len();
             moved += size_of_items(update.patches.iter().filter_map(|p| p.item.as_ref()));
 
-            let all = peer.library(Vec::new()).unwrap();
+            let all = peer.library(no_playlist()).unwrap();
             whole_rows += all.len();
             whole += size_of_items(all.iter());
         }
@@ -460,4 +452,11 @@ fn size_of_items<'a>(songs: impl Iterator<Item = &'a harken::foreign::Item>) -> 
             out.len()
         })
         .sum()
+}
+
+/// No playlist, spelled out: the nil id. An empty string is not an id and the
+/// boundary says so, which is the point — a missing argument should not quietly
+/// mean "none".
+fn no_playlist() -> String {
+    harken::Id::<harken::tables::Playlist>::nil().to_string()
 }

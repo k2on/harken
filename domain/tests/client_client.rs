@@ -57,14 +57,12 @@ fn the_client_runs_the_module() {
         .expect("playlist");
     let favs = client.playlists().expect("playlists")[0].id.clone();
     // The row's id comes from the module, so it arrives through `list`.
-    let opal = client.library(uuid_bytes(&favs)).expect("library")[1]
-        .id
-        .clone();
+    let opal = client.library(favs.clone()).expect("library")[1].id.clone();
     client
         .add_to_playlist(favs.clone(), opal)
         .expect("heart it");
 
-    let items = client.library(uuid_bytes(&favs)).expect("library");
+    let items = client.library(favs.clone()).expect("library");
     assert_eq!(items.len(), 2);
     assert_eq!(items[0].title, "Glue");
     assert_eq!(items[0].user_id, "alice");
@@ -101,9 +99,9 @@ fn the_client_runs_the_module() {
             String::new(),
         )
         .expect("still working");
-    assert_eq!(client.library(uuid_bytes(&favs)).unwrap().len(), 3);
+    assert_eq!(client.library(favs.clone()).unwrap().len(), 3);
     assert_eq!(
-        client.library(uuid_bytes(&favs)).unwrap()[2].pos,
+        client.library(favs.clone()).unwrap()[2].pos,
         3,
         "state survived the swap"
     );
@@ -144,7 +142,7 @@ fn a_verb_the_client_never_heard_of() {
         .mutate("CreatePlaylist".into(), r#"{"name":"Favourites"}"#.into())
         .unwrap();
     let favs = client.playlists().unwrap()[0].id.clone();
-    let items = client.library(uuid_bytes(&favs)).unwrap();
+    let items = client.library(favs.clone()).unwrap();
     assert_eq!(items.len(), 2);
     assert!(items.iter().all(|i| !i.on_playlist));
 
@@ -157,7 +155,7 @@ fn a_verb_the_client_never_heard_of() {
         )
         .unwrap();
     assert!(client
-        .library(uuid_bytes(&favs))
+        .library(favs.clone())
         .unwrap()
         .iter()
         .all(|i| i.on_playlist));
@@ -167,14 +165,14 @@ fn a_verb_the_client_never_heard_of() {
     assert_eq!(client.pending_len(), 4);
 
     // An id argument is a string here and sixteen bytes on the wire.
-    let id = client.library(uuid_bytes(&favs)).unwrap()[0].id.clone();
+    let id = client.library(favs.clone()).unwrap()[0].id.clone();
     client
         .mutate(
             "RemoveFromPlaylist".into(),
             format!(r#"{{"playlist_id":"{favs}","media_id":"{id}"}}"#),
         )
         .unwrap();
-    assert!(!client.library(uuid_bytes(&favs)).unwrap()[0].on_playlist);
+    assert!(!client.library(favs.clone()).unwrap()[0].on_playlist);
 
     // A verb no module has ever defined is refused, not silently dropped.
     let unknown = client.mutate("Frobnicate".into(), "{}".into()).unwrap_err();
@@ -235,7 +233,7 @@ fn the_peer_maintains_its_library() {
                 }
             }
         }
-        let read = client.library(uuid_bytes(&favs)).expect("library");
+        let read = client.library(favs.clone()).expect("library");
         let seen: Vec<(&str, bool)> = held
             .iter()
             .map(|s| (s.title.as_str(), s.on_playlist))
@@ -292,13 +290,4 @@ fn the_peer_maintains_its_library() {
     assert!(idle.items.is_empty());
 
     let _ = std::fs::remove_dir_all(&dir);
-}
-
-/// The canonical uuid a foreign row carries, as the sixteen bytes a query
-/// argument wants. The two shapes meet here until ids carry their own type.
-fn uuid_bytes(s: &str) -> Vec<u8> {
-    petros::uuid::Uuid::parse_str(s)
-        .unwrap()
-        .as_bytes()
-        .to_vec()
 }

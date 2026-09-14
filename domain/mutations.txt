@@ -4,7 +4,7 @@
 # an argument, breaks every entry already written, and the check refuses it.
 AddSong title:Text artist:Text album:Text duration_ms:Integer file:Text
 CreatePlaylist name:Text
-AddToPlaylist playlist_id:Id media_id:Id
-RemoveFromPlaylist playlist_id:Id media_id:Id
-AddAllToPlaylist playlist_id:Id
-RemoveMedia id:Id
+AddToPlaylist playlist_id:Id(playlist) media_id:Id(media)
+RemoveFromPlaylist playlist_id:Id(playlist) media_id:Id(media)
+AddAllToPlaylist playlist_id:Id(playlist)
+RemoveMedia id:Id(media)

@@ -25,6 +25,10 @@ pub use functions::*;
 #[cfg(feature = "storage")]
 pub use schema::*;
 
+/// An id, tagged with what it identifies: `Id<tables::Media>` is not an
+/// `Id<tables::Playlist>` and will not be passed as one.
+pub use petros_schema::Id;
+
 // The payload, its `Mutation` impl and the `App`. Behind `storage` because they
 // name the engine, and the wasm build has no engine — only a channel to one.
 #[cfg(feature = "storage")]

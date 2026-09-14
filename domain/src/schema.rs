@@ -7,7 +7,7 @@
 //! compiling.
 
 #[cfg(feature = "storage")]
-use petros::Id;
+use petros_schema::Id;
 
 /// The tables, generated from `schema.sql`: a row type each, plus a typed
 /// constant per column and per relationship.
@@ -31,10 +31,11 @@ petros_schema::row! {
     /// new kind reaches every client without a screen learning about it. What
     /// is true of one kind only lives on that kind's own table.
     Item => {
-        /// Sixteen bytes in SQLite and in the log. The canonical 8-4-4-4-12
-        /// string on the far side, because that is what a foreign caller can
-        /// hold, compare and use as a list key.
-        id: Id => String { |id| id.to_string() },
+        /// Sixteen bytes in SQLite and in the log, and typed: an `Id<Media>`
+        /// cannot be passed where a playlist's is wanted. The canonical
+        /// 8-4-4-4-12 string on the far side, because that is what a foreign
+        /// caller can hold, compare and use as a list key.
+        id: Id<tables::Media> => String { |id| id.to_string() },
         /// `"song"` today. What a client switches on when it wants to show a
         /// kind differently, and the name of the table carrying the rest.
         kind: String,
@@ -74,7 +75,7 @@ petros_schema::row! {
     /// A playlist. "Favourites" is one of these and nothing more — which
     /// playlist a heart stands for is the client's choice, not the domain's.
     Playlist => {
-        id: Id => String { |id| id.to_string() },
+        id: Id<tables::Playlist> => String { |id| id.to_string() },
         name: String,
         pos: i64,
         created_ms: i64,
@@ -109,9 +110,7 @@ pub mod kind {
 /// this crate against it at build time. There is no second copy to drift from.
 pub const SCHEMA: &str = include_str!("../schema.sql");
 
-/// Sixteen bytes out of a BLOB column. A row whose id is not sixteen bytes did
-/// not come from a mutation, and there is nothing useful to do with it.
-#[cfg(feature = "storage")]
-pub(crate) fn id_of(bytes: &[u8]) -> Id {
-    Id(petros::uuid::Uuid::from_slice(bytes).unwrap_or(petros::uuid::Uuid::nil()))
-}
+// An id no longer needs recovering from a column. `tables!` types a key column
+// as the `Id<Media>` or `Id<Playlist>` it is, so a read model carries the row's
+// id rather than a conversion of it — and the conversion was the place a
+// media id could quietly become a playlist one.

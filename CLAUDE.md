@@ -10,10 +10,12 @@ phone loads it as a module. The phone's native half is a *feature* of the
 domain crate rather than a package, because everything it exports was already
 defined there. Each directory carries its own nix under `nix/`.
 
-The domain is songs and a favourites playlist. Favourites is a real ordered
-playlist rather than a flag, so "add to favourites" reads `MAX(pos) + 1` — which
-is what makes the rebase visible: heart something while offline and it lands
-after whatever arrived while you were away.
+The domain is media — songs today, an episode or a sermon later — and
+playlists. There is no favourites table: a heart means "on the playlist this
+client is showing", and which playlist that is belongs to the client. A
+playlist is ordered, so adding to one reads `MAX(pos) + 1` — which is what
+makes the rebase visible: heart something while offline and it lands after
+whatever arrived while you were away.
 
 ## Layout
 
@@ -452,6 +454,17 @@ to wasm and interpreted by `petros-wasm-host`, because that is the only peer
 where a rebuild costs four minutes instead of a third of a second.
 `tests/conformance.rs` runs every verb through both builds and compares rows and
 refusals, so the two cannot drift.
+
+**An id says what it identifies.** `Id<tables::Media>` and
+`Id<tables::Playlist>` are different types, so `add_to_playlist(playlist_id,
+media_id)` cannot be called with its arguments swapped — which it could, and
+silently wrote a playlist entry pointing at nothing. The tag comes from the
+DDL: `REFERENCES playlist(id)` is what makes a column an `Id<Playlist>`, and
+the table reaches `mutations.txt` as `Id(playlist)` and the phone's
+TypeScript as a branded `PlaylistId`. Write the row type as `tables!`
+generated it — an alias makes the macro guess a table that does not exist,
+which is a compile error naming both. The engine's reasoning is under "An id
+knows what it identifies" in `../petros/docs/decisions.md`.
 
 **There is no SQL in it, and no ORM.** Reads and writes are the same shape —
 `db.select(query)` and `db.put(&row)` — over row types `tables!` generates by

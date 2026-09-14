@@ -59,22 +59,16 @@ fn the_domain_converges_when_peers_go_dark_and_come_back() {
     // playlist while apart, so the positions have to be recomputed by replay
     // rather than merged.
     let store = &mut petros::backend::SqliteStore::new(sim.conn(0));
-    let favs = harken::playlists(store).unwrap()[0]
-        .id
-        .0
-        .as_bytes()
-        .to_vec();
+    let favs = harken::playlists(store).unwrap()[0].id;
     for peer in [0usize, 2] {
-        let ids: Vec<Vec<u8>> = harken::library(
-            &mut petros::backend::SqliteStore::new(sim.conn(peer)),
-            favs.clone(),
-        )
-        .unwrap()
-        .iter()
-        .map(|i| i.id.0.as_bytes().to_vec())
-        .collect();
+        let ids: Vec<harken::Id<harken::tables::Media>> =
+            harken::library(&mut petros::backend::SqliteStore::new(sim.conn(peer)), favs)
+                .unwrap()
+                .iter()
+                .map(|i| i.id)
+                .collect();
         for id in ids {
-            sim.mutate(peer, harken::add_to_playlist(favs.clone(), id));
+            sim.mutate(peer, harken::add_to_playlist(favs, id));
         }
     }
     sim.step();
@@ -90,20 +84,14 @@ fn the_domain_converges_when_peers_go_dark_and_come_back() {
     }
     assert_eq!(first, sim.server_hash(), "the server disagrees");
     assert_eq!(
-        harken::library(
-            &mut petros::backend::SqliteStore::new(sim.conn(0)),
-            favs.clone()
-        )
-        .unwrap()
-        .len(),
+        harken::library(&mut petros::backend::SqliteStore::new(sim.conn(0)), favs)
+            .unwrap()
+            .len(),
         17,
         "9 shared + 4 dark + 4 lit, none lost and none duplicated"
     );
-    let playlist = harken::playlist(
-        &mut petros::backend::SqliteStore::new(sim.conn(0)),
-        favs.clone(),
-    )
-    .unwrap();
+    let playlist =
+        harken::playlist(&mut petros::backend::SqliteStore::new(sim.conn(0)), favs).unwrap();
     let places: Vec<i64> = playlist.iter().filter_map(|s| s.playlist_pos).collect();
     let mut sorted = places.clone();
     sorted.sort_unstable();

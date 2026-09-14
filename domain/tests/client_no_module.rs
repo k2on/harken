@@ -35,7 +35,14 @@ fn mutating_without_a_module_is_refused_rather_than_ignored() {
         format!("{refused}").contains("no mutator module"),
         "the failure should say why: {refused}"
     );
-    assert!(client.library(Vec::new()).expect("library").is_empty());
+    assert!(client.library(no_playlist()).expect("library").is_empty());
 
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// No playlist, spelled out: the nil id. An empty string is not an id and the
+/// boundary says so, which is the point — a missing argument should not quietly
+/// mean "none".
+fn no_playlist() -> String {
+    harken::Id::<harken::tables::Playlist>::nil().to_string()
 }
