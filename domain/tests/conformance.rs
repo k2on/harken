@@ -85,7 +85,11 @@ fn both_ways(script: &[(&str, serde_json::Value)]) -> (Connection, Connection) {
     let payloads: Vec<harken::Payload> = script
         .iter()
         .map(|(kind, args)| {
-            let mut p = harken::from_value(kind, args.clone()).expect("author");
+            let mut p = match harken::from_value(kind, args.clone()) {
+                Ok(p) => p,
+                Err(e) if e.starts_with("no verb named") => undeclared(kind),
+                Err(e) => panic!("author {kind}: {e}"),
+            };
             <harken::Payload as petros::Mutation>::fill_auto(&mut p, &mut auto);
             p
         })
@@ -158,7 +162,11 @@ fn every_verb_produces_the_same_rows_natively_and_in_wasm() {
     let mut auto = AutoCtx::seeded(9);
     let module = Mutators::load(MODULE).expect("load the module");
     for (kind, args) in &rest {
-        let mut p = harken::from_value(kind, args.clone()).expect("author");
+        let mut p = match harken::from_value(kind, args.clone()) {
+            Ok(p) => p,
+            Err(e) if e.starts_with("no verb named") => undeclared(kind),
+            Err(e) => panic!("author {kind}: {e}"),
+        };
         <harken::Payload as petros::Mutation>::fill_auto(&mut p, &mut auto);
         let _ = native_apply(&mut native_db, &p, "alice");
         let _ = module.apply(&mut wasm_db, &encode(&p), &petros::Ctx::from_user("alice"));
@@ -184,6 +192,20 @@ fn every_verb_produces_the_same_rows_natively_and_in_wasm() {
     assert_eq!(places, vec![1, 2, 0]);
 }
 
+/// A payload for a verb this app does not declare.
+///
+/// `from_value` refuses one now, which is where an undeclared verb should be
+/// caught — so getting one as far as `apply` means building the map by hand.
+/// What is being compared is that both builds refuse it and say the same
+/// thing, and that is a property of `apply` rather than of the authoring
+/// helper that normally stops it getting here.
+fn undeclared(kind: &str) -> harken::Payload {
+    harken::Payload(ciborium::value::Value::Map(vec![(
+        ciborium::value::Value::Text("t".into()),
+        ciborium::value::Value::Text(kind.into()),
+    )]))
+}
+
 #[test]
 fn refusals_match_too() {
     let module = Mutators::load(MODULE).expect("load");
@@ -196,7 +218,13 @@ fn refusals_match_too() {
         ),
         ("Frobnicate", serde_json::json!({})),
     ] {
-        let mut p = harken::from_value(kind, args).expect("author");
+        let mut p = match harken::from_value(kind, args) {
+            Ok(p) => p,
+            // Only an undeclared verb may skip authoring; a declared one that
+            // fails to author is a bug in this script.
+            Err(e) if e.starts_with("no verb named") => undeclared(kind),
+            Err(e) => panic!("author {kind}: {e}"),
+        };
         <harken::Payload as petros::Mutation>::fill_auto(&mut p, &mut auto);
 
         let mut a = database();
@@ -226,11 +254,16 @@ fn refusals_match_too() {
 fn fill_auto_agrees_between_the_two_builds() {
     let module = Mutators::load(MODULE).expect("load");
 
-    for kind in ["AddSong", "FavoriteAll", "Favorite"] {
+    // One verb of each shape `fill_auto` has to handle: an id and a clock, a
+    // clock alone, and neither.
+    for kind in ["CreatePlaylist", "AddToPlaylist", "RemoveMedia"] {
+        let id = "67e55084-765d-446c-9191-4ff9861f6d8e";
         let args = match kind {
-            "Favorite" => serde_json::json!({ "id": "67e55084-765d-446c-9191-4ff9861f6d8e" }),
-            "AddSong" => serde_json::json!({ "title": "Glue", "artist": "Bicep" }),
-            _ => serde_json::json!({}),
+            "CreatePlaylist" => serde_json::json!({ "name": "Favourites" }),
+            "AddToPlaylist" => {
+                serde_json::json!({ "playlist_id": id, "media_id": id })
+            }
+            _ => serde_json::json!({ "id": id }),
         };
 
         // The same seed both ways: the uuid and the clock are the input, not
