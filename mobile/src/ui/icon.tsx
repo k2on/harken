@@ -40,15 +40,11 @@ const GLYPHS = {
   playlist: { ios: 'list.bullet', android: 'queue_music', text: '≡' },
   album: { ios: 'square.stack', android: 'album', text: '◎' },
   artist: { ios: 'person', android: 'person', text: '☺' },
-  add: { ios: 'plus', android: 'add', text: '+' },
-  addAll: { ios: 'text.badge.plus', android: 'playlist_add', text: '+' },
   close: { ios: 'xmark', android: 'close', text: '✕' },
   down: { ios: 'chevron.down', android: 'keyboard_arrow_down', text: '⌄' },
   online: { ios: 'wifi', android: 'cloud_done', text: '•' },
   offline: { ios: 'wifi.slash', android: 'cloud_off', text: '•' },
-  remove: { ios: 'trash', android: 'delete', text: '␡' },
   signOut: { ios: 'rectangle.portrait.and.arrow.right', android: 'logout', text: '⇥' },
-  more: { ios: 'ellipsis', android: 'more_horiz', text: '···' },
   playing: { ios: 'waveform', android: 'graphic_eq', text: '♪' },
 } as const satisfies Record<string, Glyph>;
 

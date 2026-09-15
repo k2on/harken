@@ -64,16 +64,13 @@ export type TrackRowProps = {
   // makes the memo below worth having at all.
   onPress: (item: Item) => void;
   onHeart: (item: Item) => void;
-  onLongPress: (item: Item) => void;
 };
 
-function Row({ item, album, playing, theme, onPress, onHeart, onLongPress }: TrackRowProps) {
+function Row({ item, album, playing, theme, onPress, onHeart }: TrackRowProps) {
   const s = styles(theme);
   return (
     <Pressable
       onPress={() => onPress(item)}
-      onLongPress={() => onLongPress(item)}
-      delayLongPress={400}
       style={({ pressed }) => [s.row, pressed && s.pressed]}
     >
       <View>
@@ -113,8 +110,7 @@ export const TrackRow = memo(
     a.playing === b.playing &&
     a.theme === b.theme &&
     a.onPress === b.onPress &&
-    a.onHeart === b.onHeart &&
-    a.onLongPress === b.onLongPress,
+    a.onHeart === b.onHeart,
 );
 
 const styles = (t: Theme) =>

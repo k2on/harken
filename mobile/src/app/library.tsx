@@ -27,7 +27,6 @@ import { sourceTitle, usePeer, type Peer } from '@/peer';
 import { usePlayer, type Track } from '@/player';
 import { radius, space, useTheme, type Theme } from '@/theme';
 import { Browse } from '@/ui/browse';
-import { Composer } from '@/ui/composer';
 import { Icon } from '@/ui/icon';
 import { MiniPlayer } from '@/ui/miniplayer';
 import { NowPlaying } from '@/ui/nowplaying';
@@ -58,7 +57,6 @@ function Signed(props: { server: string; login: Login; online: boolean }) {
   const peer = usePeer(login, props.online ? server : null);
   const player = usePlayer();
 
-  const [composing, setComposing] = useState(false);
   const [open, setOpen] = useState(false);
   const [scrub, setScrub] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
@@ -102,17 +100,6 @@ function Signed(props: { server: string; login: Login; online: boolean }) {
 
   const onHeart = useCallback((item: Item) => {
     latest.current.peer.setOnPlaylist(item.id, !item.onPlaylist);
-  }, []);
-
-  const onLongPress = useCallback((item: Item) => {
-    Alert.alert(item.title, 'Take this out of the library, and off every playlist holding it?', [
-      { text: 'Keep it', style: 'cancel' },
-      {
-        text: 'Remove',
-        style: 'destructive',
-        onPress: () => latest.current.peer.removeMedia(item.id),
-      },
-    ]);
   }, []);
 
   // Stable, because the player sheet builds its drag gesture from it and the
@@ -176,7 +163,6 @@ function Signed(props: { server: string; login: Login; online: boolean }) {
         who={login.user.name || login.user.id}
         tracks={rows.length}
         busy={busy}
-        onAdd={() => setComposing(true)}
         onSignIn={again}
         onSignOut={leave}
       />
@@ -196,7 +182,7 @@ function Signed(props: { server: string; login: Login; online: boolean }) {
           data={rows}
           keyExtractor={(item) => item.id}
           contentContainerStyle={rows.length === 0 ? s.emptyBox : s.rows}
-          ListEmptyComponent={<Empty theme={theme} onAdd={() => setComposing(true)} />}
+          ListEmptyComponent={<Empty theme={theme} />}
           // The whole point of the maintained view is that a change costs the
           // rows that moved; a list that re-measures everything on every change
           // would give it all back.
@@ -211,7 +197,6 @@ function Signed(props: { server: string; login: Login; online: boolean }) {
               theme={theme}
               onPress={onPress}
               onHeart={onHeart}
-              onLongPress={onLongPress}
             />
           )}
         />
@@ -240,15 +225,6 @@ function Signed(props: { server: string; login: Login; online: boolean }) {
           onScrub={setScrub}
         />
       ) : null}
-
-      {composing ? (
-        <Composer
-          theme={theme}
-          bottom={insets.bottom}
-          onAdd={peer.addSong}
-          onClose={() => setComposing(false)}
-        />
-      ) : null}
     </View>
   );
 }
@@ -259,7 +235,6 @@ function Header({
   who,
   tracks,
   busy,
-  onAdd,
   onSignIn,
   onSignOut,
 }: {
@@ -268,7 +243,6 @@ function Header({
   who: string;
   tracks: number;
   busy: boolean;
-  onAdd: () => void;
   onSignIn: () => void;
   onSignOut: () => void;
 }) {
@@ -309,17 +283,6 @@ function Header({
           </Text>
         </Pressable>
 
-        {/* Not a special case in the engine or in this file. One entry rather
-            than one per track, so a replica replaying it covers whatever else
-            was in the library by then. */}
-        {peer.items.length > peer.onPlaylist ? (
-          <Pressable onPress={peer.addAll} style={s.round} accessibilityLabel="heart everything">
-            <Icon name="addAll" size={19} tint={theme.dim} />
-          </Pressable>
-        ) : null}
-        <Pressable onPress={onAdd} style={s.round} accessibilityLabel="add a track">
-          <Icon name="add" size={19} tint={theme.dim} />
-        </Pressable>
         <Pressable onPress={onSignOut} style={s.round} accessibilityLabel="sign out">
           <Icon name="signOut" size={18} tint={theme.dim} />
         </Pressable>
@@ -328,19 +291,18 @@ function Header({
   );
 }
 
-function Empty({ theme, onAdd }: { theme: Theme; onAdd: () => void }) {
+/** Nothing to press here: the library is what the server's scanner found, so
+ *  an empty one is a question for whoever runs the server. */
+function Empty({ theme }: { theme: Theme }) {
   const s = styles(theme);
   return (
     <Animated.View entering={FadeIn.duration(200)} style={s.empty}>
       <Icon name="note" size={34} tint={theme.faint} />
       <Text style={s.emptyTitle}>Nothing here yet</Text>
       <Text style={s.emptyBlurb}>
-        Add something with a URL and it plays here, on the desktop, and in a browser — the
-        library is one log, not three.
+        The library is filled by the server&apos;s media directory. Put something in it, and it
+        appears here, on the desktop and in a browser — one log, not three.
       </Text>
-      <Pressable onPress={onAdd} style={s.emptyButton}>
-        <Text style={s.emptyButtonText}>add a track</Text>
-      </Pressable>
     </Animated.View>
   );
 }

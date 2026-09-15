@@ -20,6 +20,11 @@ desktop does: a snapshot taken when play was pressed, so changing what is
 shown — or somebody else's edit arriving — cannot silently redirect what plays
 next.
 
+There is nothing here that puts a track *into* the library, for the same
+reason the desktop has nothing: the server's media directory is scanned, so a
+client that types songs in is answering a question nobody asks. The heart
+stays, because which playlist something is on is still a client's to say.
+
 The grouping is not this directory's idea of how to fold a library. `albums`,
 `artists`, `playlists`, `album` and `artist` are queries in `../domain`, and
 both clients ask them rather than each inventing a way to group by album.
@@ -31,10 +36,13 @@ it a URL and gets streaming, buffering, range requests and seeking from the
 platform, which is the same trade `iced/src/player.rs` makes with an `<audio>`
 element in a browser. Neither client decodes anything.
 
-`media.file` is the name of a file and not a URL, so `src/media.ts` is the one
-place a name becomes something a player can open: an absolute URL is already
-an answer, and anything else is resolved against the server this peer is
-pointed at.
+`media.file` is a path and not a URL, so `src/media.ts` is the one place it
+becomes something a player can open — the same function as `media_url` in
+`iced/src/main.rs`: an absolute URL passes through, and a scanned track's
+path is joined to the server's `/media/` and percent-encoded a segment at a
+time. Handing the raw path to a player is what that exists to stop; a server
+with a single-page fallback answers the wrong path with `index.html` and a
+200, so the player is given HTML and reports only that it is unsuitable.
 
 The transport is on the lock screen, which on Android is also what keeps
 playback alive in the background past about three minutes. `app.config.ts`

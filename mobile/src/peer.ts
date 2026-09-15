@@ -108,15 +108,6 @@ const EMPTY: Shelf = {
   albumOf: {},
 };
 
-/** What a new track needs. The same five `add_song` takes. */
-export type Draft = {
-  title: string;
-  artist: string;
-  album: string;
-  durationMs: number;
-  file: string;
-};
-
 export type Peer = Shelf & {
   cursor: number;
   pending: number;
@@ -131,13 +122,8 @@ export type Peer = Shelf & {
   /** What the browser picked, and how to pick something else. */
   source: Source;
   setSource: (next: Source) => void;
-  addSong: (draft: Draft) => void;
   /** The heart: on the playlist a heart stands for, or off it. */
   setOnPlaylist: (id: string, on: boolean) => void;
-  /** Everything in the library onto that playlist, as one entry. */
-  addAll: () => void;
-  removeMedia: (id: string) => void;
-  createPlaylist: (name: string) => void;
   mutate: <K extends Verb>(kind: K, ...args: ArgsFor<K>) => void;
   toggleLink: () => void;
   /** Point it somewhere else, or nowhere, without leaving the screen. */
@@ -329,19 +315,6 @@ export function usePeer(login: Login, server: string | null): Peer {
       mutators: peer.mutators,
       lastMutationMs: peer.lastMutationMs,
       server: peer.server,
-      addSong: (draft: Draft) =>
-        peer.run((c) =>
-          c.addSong(
-            draft.title,
-            draft.artist,
-            draft.album,
-            // `duration_ms` is an `i64` in the domain, so it crosses as a
-            // bigint. Seconds typed into a box are a number; this is where the
-            // two meet, once.
-            BigInt(Math.max(0, Math.round(draft.durationMs))),
-            draft.file,
-          ),
-        ),
       setOnPlaylist: (id: string, on: boolean) =>
         peer.run((c) => {
           if (playlist === null) return;
@@ -349,12 +322,6 @@ export function usePeer(login: Login, server: string | null): Peer {
           if (on) c.addToPlaylist(playlist, media);
           else c.removeFromPlaylist(playlist, media);
         }),
-      // One entry rather than one per track, and that is the point: it is an
-      // *intent*, so a replica replaying it covers whatever else was in the
-      // library by then.
-      addAll: () => peer.run((c) => playlist !== null && c.addAllToPlaylist(playlist)),
-      removeMedia: (id: string) => peer.run((c) => c.removeMedia(asId('media', id))),
-      createPlaylist: (name: string) => peer.run((c) => c.createPlaylist(name)),
       mutate: <K extends Verb>(kind: K, ...args: ArgsFor<K>) =>
         peer.run((c) => c.mutate(kind, JSON.stringify(args[0] ?? {}))),
       toggleLink: peer.toggleLink,

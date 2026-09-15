@@ -66,7 +66,7 @@ mobile/                  the phone client; src/ is UI and a socket, nothing else
   src/ui/icon.tsx        every glyph, as an SF Symbol, a Material Symbol, and a
                          character to fall back to (see below)
   src/ui/                the rest of the screen: the chips, the row, the bar,
-                         the player sheet, the composer
+                         and the player sheet
   nix/readme.nix         its section of README.md
   modules/harken-native/ the turbo module — generated, gitignored, not authored
   gradle-deps.json       gradle's Maven graph, recorded, replayed by the APK build
@@ -1300,7 +1300,7 @@ first. The engine's own decisions are in `../petros/docs/decisions.md`.
   snapshot of what was on screen when play was pressed — the desktop's rule,
   for the desktop's reason: a list that is a live reference gets silently
   redirected by somebody else's edit arriving.
-- **`media.file` is a name, so the client resolves it.** The column has always
+- **`media.file` is a path, so the client joins it.** The column has always
   been "the file in the media store… the bytes travel over HTTP and only the
   name of them is synced", and the demo's Wikimedia recordings are absolute
   URLs, which is why the desktop can hand the string straight to an element and
