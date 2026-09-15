@@ -851,6 +851,31 @@ against one of them.
   because the nix store is world-readable; it would mean building unsigned and
   signing outside. CI builds this from the `workflow_dispatch` button or a `v*`
   tag, and a branch push still builds the development APK.
+- **The module goes in before the database is opened, and getting that wrong
+  bricks the app permanently.** Opening a peer *replays*: `Client::open`
+  finishes whatever confirmed entries the log is ahead on, and replaying a
+  confirmed entry is calling `apply` — which, on the phone, is the wasm
+  module. Install it afterwards and the first sync that lands before the
+  install stores entries nothing can apply; every launch after that meets them
+  inside `open`, fails there, and never reaches the line that would have
+  installed anything. What the phone shows is
+
+  ```
+  could not open the database: PeerError.Refused: no mutator module is
+  loaded; the app must install one before mutating
+  ```
+
+  which reads like a missing file, sends you to look at `mutators.gen.ts` and
+  the bundle, and finds both perfectly correct. Nothing the app does clears it,
+  because the one thing that would is on the other side of the failure.
+
+  `mobile/src/mutators.ts` has `before()` for this, and `peer.ts` calls it
+  *inside* the `open` it hands the hook rather than in an effect beside it.
+  It reaches `petros::foreign_peer!`'s free `install_mutators`, which is free
+  for exactly this reason: the interpreter is the process's and never was the
+  peer's. `Peer::load_mutators` is still there for the hot swap it was always
+  for. The engine's `tests/mutators.rs` walks the whole sequence, because
+  neither half of it looks wrong on its own.
 - **What a maintained view's reader keeps must outlive the component.**
   `libraryUpdate()` reports what *moved* since it was last asked, and it is
   asked once per session — so the list being moved has to live as long as the

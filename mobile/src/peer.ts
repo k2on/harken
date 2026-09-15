@@ -33,7 +33,7 @@ import {
   type Playlist,
 } from 'harken-native';
 
-import { install, watch } from './mutators';
+import { before, install, watch } from './mutators';
 // Generated from the module's own schema section by `nix run .#mutators`. A call
 // site naming a verb the module does not have, or passing the wrong arguments
 // to one it does, is a `tsc` error — which is where the engine's deliberately
@@ -162,9 +162,8 @@ export function databasePath(user: string): string {
  * reason.
  *
  * It has to happen after the module is installed, because creating a playlist
- * is a mutation and a mutation is what the module *is*. `usePeer` installs in
- * an effect that runs before the one that first calls this, so by here there
- * is an `apply` to run.
+ * is a mutation and a mutation is what the module *is*. `open` installs it
+ * before it opens anything, so by here there is an `apply` to run.
  */
 function firstPlaylist(client: PeerLike): PlaylistId | null {
   let lists = client.playlists();
@@ -282,7 +281,13 @@ export function usePeer(login: Login, server: string | null): Peer {
     token: login.token,
     // Who every entry is authored as, and under which login. Both what the
     // server said at sign-in; both checked by it on the way back.
-    open: () => NativePeer.open(databasePath(user), user, login.session),
+    // The module first, then the database. Opening replays, and replaying is
+    // `apply` — see `mutators.ts`. The `install` below is what keeps a hot
+    // swap working; it is not what makes the first open possible.
+    open: () => {
+      before();
+      return NativePeer.open(databasePath(user), user, login.session);
+    },
     query: (client, scratch) => read(scratch, client),
     install,
     watch,
