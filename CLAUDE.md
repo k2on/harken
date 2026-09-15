@@ -928,9 +928,21 @@ every row is one line. Four things about it are load-bearing:
 The Album column is the interesting one, because `album` is on the `song`
 side table and the library row is deliberately kind-neutral. Rather than widen
 `Item` — which would put a join behind every list, the thing `media` exists to
-avoid — `track_albums()` returns the pairs and the client joins them in memory
-while drawing. A screen that wants the column asks for it; one that does not,
-does not pay.
+avoid — `track_details()` returns the song-only facts and the client joins them
+in memory while drawing. A screen that wants a column asks for it; one that
+does not, does not pay.
+
+**An album is a page, not a filter, and the three differences are all the
+same difference.** Everywhere else the list is a library, a playlist or an
+artist — orderings that have nothing to do with where a movement sits in its
+work — so an album page is the one place a track number means the sequence
+it is drawn beside, and the only place the column appears at all. It is also
+the one list in the domain not in library order: `album()` sorts by `part`
+then `track`, because that is what makes the section headings a fold of an
+ordered list rather than a grouping the client has to invent. And the Album
+column goes, because every row of it would repeat the heading; the performer
+takes its place, which is the fact that actually differs down the page — two
+recordings of one work are two performers, not two albums.
 
 ## The sidebar browses; the now-playing bar plays, in a browser
 
@@ -957,13 +969,26 @@ and an output device (`rodio`, so `cpal`, so ALSA) plus an HTTP reader to feed
 them, and it is worth doing when the desktop client has a media store to stream
 from — which it does not yet.
 
-The demo's library is public-domain classical recordings from Wikimedia
-Commons, by way of the mp3 transcode Commons generates for every audio file:
-a browser plays mp3 everywhere, and Vorbis in an `.ogg` does not play in Safari
-at all. The URL goes in `file`, which is what that column has always been for,
-so nothing about the log changed to carry a recording. Every one was checked
-for a public-domain licence and a transcode that answers `audio/mpeg` to a
-range request — a dead link there is a silent demo.
+The demo's library is classical recordings from Wikimedia Commons, by way of
+the mp3 transcode Commons generates for every audio file: a browser plays mp3
+everywhere, and Vorbis in an `.ogg` does not play in Safari at all. The URL
+goes in `file`, which is what that column has always been for, so nothing
+about the log changed to carry a recording. Every one was checked for a
+licence and a transcode that answers `audio/mpeg` to a range request — a dead
+link there is a silent demo.
+
+**Almost all of it reserves no rights, and the exception is paid for rather
+than ignored.** The harvest kept public domain, PDM and CC0 only, because a
+credit nobody draws is a condition nobody met. That rule would have left the
+Brandenburg Concertos out of a Bach library: every no-rights-reserved
+Brandenburg on Commons is a fragment — a coda, the closing bars, a five-second
+MIDI cadence — and every complete movement is CC BY or CC BY-SA. So `Seed`
+carries a `licence`, `seed()` writes it into `performer`, and the album page
+draws that column, which is what makes taking them honest: the credit is on
+screen beside the track rather than in a comment nobody reads. `licence` is
+not a column on `song` — it is a fact about this demo's sources, not about
+music, and the one place it has to appear is next to the performer it belongs
+to.
 
 The library is filled by the scanner, so the client does not add to it:
 there is no entry box to type a song into, no bulk favourite and no per-row

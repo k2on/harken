@@ -44,11 +44,11 @@ use crate::schema::tables::{Media, Playlist, PlaylistItem, Song};
 // Only the queries below use these, and a query is not built for the sandbox.
 #[cfg(feature = "storage")]
 use crate::schema::Item;
-// Grouping a sidebar's albums and artists, and the set an album's tracks are
-// picked out by. Ordered maps, so the lists come out in a stable order without
+// Grouping a sidebar's albums and artists, and the order an album's tracks
+// come out in. An ordered map, so the lists come out in a stable order without
 // a sort — two peers showing the same library show it the same way.
 #[cfg(feature = "storage")]
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 // ------------------------------------------------------------------ mutations
 
@@ -464,23 +464,46 @@ pub fn track_details(db: &mut Db) -> Result<Vec<crate::schema::TrackDetail>> {
         .collect())
 }
 
-/// One album's tracks, in library order, read against a playlist.
+/// One album's tracks, in the order the work goes, read against a playlist.
+///
+/// The one list here that is *not* in library order, because an album is a
+/// work and a work has an order of its own. It is also the only screen that
+/// draws a track number, so this is the one place those numbers have to mean
+/// the sequence they are sitting beside — a column counting something else is
+/// worse than no column. Part first, so a work in four suites reads as four
+/// blocks; the title breaks a tie, so a half-tagged album comes out
+/// alphabetical rather than arbitrary, and the id breaks the last one, so two
+/// peers showing the same album show it the same way.
 ///
 /// The same `Item` the library list renders, so a screen showing an album is
 /// the library screen with a different source and not a second row type.
 #[query]
 pub fn album(db: &mut Db, playlist_id: Id<Playlist>, name: String) -> Result<Vec<Item>> {
-    let ids: BTreeSet<Id<Media>> = db
+    let order: BTreeMap<Id<Media>, (String, i64)> = db
         .select(Song::all().filter(Song::album.eq(name)))
         .into_iter()
-        .map(|s| s.media_id)
+        // 0 is "nobody said", and an untagged track belongs after the ones
+        // that did say, not ahead of track 1.
+        .map(|s| {
+            (
+                s.media_id,
+                (s.part, if s.track > 0 { s.track } else { i64::MAX }),
+            )
+        })
         .collect();
     let rows = db.select_with(library_query(), Media::playlist_item, items_on(playlist_id));
-    Ok(rows
+    let mut items: Vec<Item> = rows
         .iter()
-        .filter(|r| ids.contains(&r.row.id))
+        .filter(|r| order.contains_key(&r.row.id))
         .map(item_of)
-        .collect())
+        .collect();
+    items.sort_by(|a, b| {
+        order[&a.id]
+            .cmp(&order[&b.id])
+            .then_with(|| a.title.cmp(&b.title))
+            .then_with(|| a.id.cmp(&b.id))
+    });
+    Ok(items)
 }
 
 /// One artist's tracks, in library order, read against a playlist.

@@ -551,6 +551,76 @@ fn albums_and_artists_group_the_library_and_select_it_back() {
     assert!(!symphony[1].on_playlist());
 }
 
+/// An album comes back in the work's order, which is not the library's.
+///
+/// Every other list here is `media.pos` — the order things were added — and an
+/// album is the one that is not, because a track number only means the
+/// sequence it is drawn beside if the rows are in that sequence. Added
+/// deliberately scrambled, and across two parts, so that library order and
+/// work order cannot agree by accident.
+#[test]
+fn an_album_is_in_the_works_order_and_not_the_librarys() {
+    let mut c = Client::<harken::HarkenApp>::open(
+        petros::open_memory().unwrap(),
+        "alice",
+        AutoCtx::seeded(13),
+    )
+    .unwrap();
+    let favs = favourites(&mut c);
+
+    // Second suite before the first, and neither in track order.
+    for (title, part, track) in [
+        ("Gigue", "Suite No. 3 in G major", 21),
+        ("Alla Hornpipe", "Suite No. 2 in D major", 12),
+        ("Bourree", "Suite No. 3 in G major", 19),
+        ("Overture", "Suite No. 2 in D major", 11),
+    ] {
+        c.mutate(harken::add_song(
+            title.into(),
+            "Handel".into(),
+            "Water Music".into(),
+            0,
+            String::new(),
+            track,
+            part.into(),
+            String::new(),
+            String::new(),
+            0,
+        ))
+        .unwrap();
+    }
+    // A movement nobody numbered, to show where 0 goes: after the numbered
+    // ones in its part, not ahead of track 1.
+    c.mutate(harken::add_song(
+        "Air".into(),
+        "Handel".into(),
+        "Water Music".into(),
+        0,
+        String::new(),
+        0,
+        "Suite No. 2 in D major".into(),
+        String::new(),
+        String::new(),
+        0,
+    ))
+    .unwrap();
+
+    let water = harken::album(&mut c.store(), favs, "Water Music".into()).unwrap();
+    assert_eq!(
+        water.iter().map(|i| i.title.as_str()).collect::<Vec<_>>(),
+        vec!["Overture", "Alla Hornpipe", "Air", "Bourree", "Gigue"],
+        "part first, then track, and an untagged track last in its part"
+    );
+
+    // The library itself is untouched by any of that: it is still the order
+    // the songs arrived in.
+    let all = harken::library(&mut c.store(), favs).unwrap();
+    assert_eq!(
+        all.iter().map(|i| i.title.as_str()).collect::<Vec<_>>(),
+        vec!["Gigue", "Alla Hornpipe", "Bourree", "Overture", "Air"]
+    );
+}
+
 /// A rescan is a no-op, and that is decided in `apply` rather than by whatever
 /// is scanning.
 ///

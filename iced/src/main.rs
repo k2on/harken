@@ -457,6 +457,34 @@ fn heading<'a>(label: &'a str, width: Length) -> Element<'a, Message> {
         .into()
 }
 
+/// A section heading inside the table: the part of the work below it.
+///
+/// Drawn in the accent colour rather than filled with it, the way the playing
+/// track is, because a filled stripe is what the cursor means here and there
+/// can only be one of those. It sits in the same grid as the rows and takes
+/// the whole width, so a work with four suites reads as four blocks rather
+/// than as one list with a repeated column.
+fn section<'a>(label: String) -> Element<'a, Message> {
+    container(
+        text(label)
+            .size(12)
+            .wrapping(text::Wrapping::None)
+            .style(|theme: &iced::Theme| text::Style {
+                color: Some(theme.extended_palette().primary.base.color),
+            }),
+    )
+    .width(Length::Fill)
+    // Indented to where the track numbers start, so the heading sits over the
+    // column it heads rather than out in the heart's margin.
+    .padding(iced::Padding {
+        top: 8.0,
+        right: 4.0,
+        bottom: 2.0,
+        left: 35.0,
+    })
+    .into()
+}
+
 /// What a table row is painted.
 ///
 /// Three states, and they are deliberately not three shades of the same idea:
@@ -1512,75 +1540,114 @@ impl App {
         let focused = self.pane == Pane::Tracks;
         let cursor = focused.then_some(self.at(Pane::Tracks));
 
-        let rows = peer
-            .rows()
-            .iter()
-            .enumerate()
-            .fold(column![].spacing(0), |col, (i, item)| {
-                let on_cursor = cursor == Some(i);
-                let detail = peer.detail_of(item.id);
-                #[cfg_attr(feature = "demo", allow(unused_mut))]
-                let line = Row::new()
-                    .spacing(0)
-                    .align_y(iced::Alignment::Center)
-                    .push(
+        // An album is the one place a track number means anything. Everywhere
+        // else the list is a library, a playlist or an artist — orderings that
+        // have nothing to do with where a movement sits in its work — and a
+        // column of numbers counting something else is worse than no column.
+        let album_page = matches!(peer.source, Source::Album(_));
+        // The part changes as the list is walked, and a heading is emitted
+        // when it does. Derived rather than stored, like the sidebar's: the
+        // rows are already in track order, so "the part changed" is the
+        // whole of what a section boundary is.
+        let mut part = String::new();
+
+        let rows =
+            peer.rows()
+                .iter()
+                .enumerate()
+                .fold(column![].spacing(0), |mut col, (i, item)| {
+                    let on_cursor = cursor == Some(i);
+                    let detail = peer.detail_of(item.id);
+                    if album_page && detail.part != part {
+                        part = detail.part.clone();
+                        if !part.is_empty() {
+                            col = col.push(section(part.clone()));
+                        }
+                    }
+                    let mut line = Row::new().spacing(0).align_y(iced::Alignment::Center).push(
                         button(icon::heart(item.on_playlist(), on_cursor))
                             .style(button::text)
                             .padding([0, 8])
                             .on_press(Message::ToggleFavorite(item.id, item.on_playlist())),
+                    );
+                    if album_page {
+                        line = line.push(cell(
+                            // 0 is "nobody said", and an empty cell says that
+                            // better than a zero does.
+                            if detail.track > 0 {
+                                detail.track.to_string()
+                            } else {
+                                String::new()
+                            },
+                            TRACK,
+                            on_cursor,
+                            false,
+                            true,
+                        ));
+                    }
+                    let line = line
+                        .push(cell(
+                            item.title.clone(),
+                            NAME,
+                            on_cursor,
+                            // The one playing is the only thing in the table drawn
+                            // in the accent colour, so it is findable at a glance
+                            // in a list of twenty near-identical rows.
+                            playing == Some(item.id),
+                            false,
+                        ))
+                        .push(cell(item.creator.clone(), ARTIST, on_cursor, false, true))
+                        .push(cell(
+                            // On an album page every row's album is the one the
+                            // heading already names, so the column is a wasted
+                            // third of the width. Who played it is the fact
+                            // that differs down the page — two recordings of
+                            // one work are two performers, not two albums.
+                            if album_page {
+                                detail.performer.clone()
+                            } else {
+                                detail.album.clone()
+                            },
+                            ALBUM,
+                            on_cursor,
+                            false,
+                            true,
+                        ))
+                        .push(cell(
+                            clock(item.duration_ms as f64 / 1000.0),
+                            TIME,
+                            on_cursor,
+                            false,
+                            true,
+                        ));
+                    col.push(
+                        // The background belongs to a container spanning the whole
+                        // width, not to a button around the title: a stripe that
+                        // stops where the text does is not a row.
+                        mouse_area(container(line).width(Length::Fill).padding([3, 4]).style(
+                            move |theme: &iced::Theme| {
+                                row_style(theme, on_cursor, focused, i % 2 == 1)
+                            },
+                        ))
+                        .on_press(Message::PlayItem(item.id)),
                     )
-                    .push(cell(
-                        // 0 is "nobody said", and an empty cell says that
-                        // better than a zero does.
-                        if detail.track > 0 {
-                            detail.track.to_string()
-                        } else {
-                            String::new()
-                        },
-                        TRACK,
-                        on_cursor,
-                        false,
-                        true,
-                    ))
-                    .push(cell(
-                        item.title.clone(),
-                        NAME,
-                        on_cursor,
-                        // The one playing is the only thing in the table drawn
-                        // in the accent colour, so it is findable at a glance
-                        // in a list of twenty near-identical rows.
-                        playing == Some(item.id),
-                        false,
-                    ))
-                    .push(cell(item.creator.clone(), ARTIST, on_cursor, false, true))
-                    .push(cell(detail.album.clone(), ALBUM, on_cursor, false, true))
-                    .push(cell(
-                        clock(item.duration_ms as f64 / 1000.0),
-                        TIME,
-                        on_cursor,
-                        false,
-                        true,
-                    ));
-                col.push(
-                    // The background belongs to a container spanning the whole
-                    // width, not to a button around the title: a stripe that
-                    // stops where the text does is not a row.
-                    mouse_area(container(line).width(Length::Fill).padding([3, 4]).style(
-                        move |theme: &iced::Theme| row_style(theme, on_cursor, focused, i % 2 == 1),
-                    ))
-                    .on_press(Message::PlayItem(item.id)),
-                )
-            });
+                });
 
+        let mut headings = Row::new()
+            .spacing(0)
+            .align_y(iced::Alignment::Center)
+            .push(container(text("")).width(Length::Fixed(31.0)));
+        if album_page {
+            headings = headings.push(heading("#", TRACK));
+        }
         let head = container(
-            Row::new()
-                .spacing(0)
-                .align_y(iced::Alignment::Center)
-                .push(container(text("")).width(Length::Fixed(31.0)))
-                .push(heading("#", TRACK))
+            headings
                 .push(heading("Name", NAME))
                 .push(heading("Artist", ARTIST))
-                .push(heading("Album", ALBUM))
+                .push(heading(
+                    if album_page { "Performer" } else { "Album" },
+                    ALBUM,
+                ))
                 .push(heading("Time", TIME)),
         )
         .width(Length::Fill)
