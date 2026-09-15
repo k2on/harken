@@ -38,6 +38,14 @@ use iced::Theme;
 /// How big a transport button is drawn in the now-playing bar.
 pub const TRANSPORT: f32 = 15.0;
 
+/// A tick, for a playlist this track is already on.
+///
+/// Drawn rather than typed for the reason at the top of this file: U+2713 is
+/// outside Latin-1, so Fira Sans has nothing for it and the row would say `?`
+/// where it meant yes.
+const TICK: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+<path d="M9.2 16.6 4.8 12.2l1.6-1.6 2.8 2.8 7.2-7.2 1.6 1.6z" fill="#000"/></svg>"##;
+
 /// The transport glyphs, as paths in a 24-unit box.
 const PLAY: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
 <path d="M8 5l11 7-11 7z" fill="#000"/></svg>"##;
@@ -96,6 +104,28 @@ pub fn next<'a>() -> Svg<'a> {
 /// with. Off it, the mark *is* the accent, the same as the title beside it.
 pub fn playing<'a>(paused: bool, on_cursor: bool) -> Svg<'a> {
     svg(svg::Handle::from_memory(if paused { PLAY } else { PAUSE }))
+        .width(TRANSPORT)
+        .height(TRANSPORT)
+        .style(move |theme: &Theme, _| {
+            let palette = crate::palette::of(theme);
+            svg::Style {
+                color: Some(if on_cursor {
+                    palette.primary.base.text
+                } else {
+                    palette.primary.base.color
+                }),
+            }
+        })
+}
+
+/// The tick beside a playlist this track is on.
+///
+/// The accent, the same as the title of the row that is playing: both mean
+/// "this one", and a second color for a second kind of yes would be a color
+/// nobody chose. On the cursor's own row it is the one color that background
+/// was paired with.
+pub fn tick<'a>(on_cursor: bool) -> Svg<'a> {
+    svg(svg::Handle::from_memory(TICK))
         .width(TRANSPORT)
         .height(TRANSPORT)
         .style(move |theme: &Theme, _| {

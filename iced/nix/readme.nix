@@ -20,8 +20,8 @@
       It is driven from the keyboard, with vim's motions: `j` and `k` move,
       `h` and `l` cross between the sidebar, the track list and the player,
       `5j` and `gg` and `7G` do what they do in vim, `/` searches the pane
-      you are in, `<Enter>` opens and `<Space>` plays or pauses. Press `?`
-      for the rest.
+      you are in, `<Enter>` opens, `<Space>` plays or pauses and `a` says which
+      playlists a track is on — and makes one. Press `?` for the rest.
 
       The bar sounds nothing on the desktop — there is no audio device wired
       up, and it says so rather than pretending — so playback is the

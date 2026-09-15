@@ -934,9 +934,17 @@ every row is one line. Four things about it are load-bearing:
   said something about all hundred of them and therefore nothing about any.
   Now it is empty except on what is playing, where it is the transport —
   play or pause, and a button, because the place you look to see what is
-  playing is the place you reach to stop it. The hearts are gone with it:
-  `add_to_playlist` is still in the domain and still what the phone calls,
-  it simply has no button here, the same as `add_song`.
+  playing is the place you reach to stop it. The empty one is as tall as the
+  button it stands in for: an empty container has no height, so the rows that
+  were not playing came out shorter than the one that was.
+
+  What replaced the heart is `a`, which is the same question the phone's sheet
+  asks: every playlist, each ticked or not, and a last row that makes one. It
+  is one `vim::List` a row longer than the playlists, so `j` walks onto the
+  new-playlist row like anything else and `<Enter>` there starts naming — one
+  shape, one cursor, and no second key to learn. `<Space>` is deliberately not
+  bound inside it: the transport should not stop working because a panel is
+  up.
 - **The two highlights mean different things and are drawn differently.** The
   sidebar's is a *selection* — what the table is showing — so it persists when
   the keyboard is elsewhere. The table's is a *cursor*, only ever "where the

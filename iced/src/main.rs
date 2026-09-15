@@ -40,7 +40,7 @@ use std::time::Duration;
 
 use harken::{self as mutators, HarkenApp, Item};
 use iced::widget::{
-    button, column, container, mouse_area, row, rule, scrollable, slider, text, Row,
+    button, column, container, mouse_area, row, rule, scrollable, slider, text, text_input, Row,
 };
 use iced::{Element, Length, Subscription, Task};
 use petros::{AutoCtx, Changes, Client};
@@ -340,10 +340,48 @@ enum Message {
     /// The sign-in came back, one way or the other.
     SignedIn(Result<Login, String>),
     SignOut,
+    /// Open the playlist picker over the track under the cursor.
+    OpenPicker,
+    /// Move its cursor, by click rather than by `j`.
+    PickerAt(usize),
+    /// Toggle the row it is on — or, on the last row, start naming a new one.
+    PickerActivate,
+    /// What is being typed into the new-playlist box.
+    PickerName(String),
+    /// Make it. A blank name is refused by `apply`, not here.
+    PickerCreate,
+    ClosePicker,
     /// A key nothing on screen wanted. See `subscription`.
     Key(iced::keyboard::Key, iced::keyboard::Modifiers),
     /// Pump the transport. Nothing else drives a sans-io client.
     Tick,
+}
+
+/// The playlist picker, over the track it is for.
+///
+/// `a` on the track list opens it. A list rather than a menu, for the reason
+/// the phone uses a sheet: however many playlists exist is however many rows
+/// this has, and a menu that scrolls is a list pretending not to be one.
+///
+/// It is a **toggle**. A list of every playlist with nothing marked is a list
+/// you can put the same track on twice and never take it off, so it asks
+/// `playlists_of` when it opens and every row says which it is.
+struct Picker {
+    media: Id,
+    /// The track's title, drawn above the list. Held rather than looked up:
+    /// the list underneath can change while this is open.
+    title: String,
+    lists: Vec<(harken::Id<harken::tables::Playlist>, String, bool)>,
+    /// Where the cursor is, over the playlists and then the row that makes
+    /// one — which is why the new-playlist row is a row and not a key. One
+    /// list, one cursor, and nothing extra to learn.
+    at: usize,
+    /// What is being typed into the new-playlist box, if it is open.
+    ///
+    /// While this is `Some` a `text_input` has the focus and takes its own
+    /// keys, so none of them reach the vim layer — which is what makes a
+    /// modeless keymap safe beside a box you can type a name into.
+    naming: Option<String>,
 }
 
 /// One line of the sidebar: somewhere the cursor can be and something it can
@@ -586,6 +624,8 @@ struct App {
     search: String,
     /// `?` — a keymap nobody can guess is a keymap nobody uses.
     help: bool,
+    /// `a` — which playlists the track under the cursor is on.
+    picker: Option<Picker>,
     /// What is playing, and whether this build can sound it. See `player.rs`.
     player: Player,
     /// What `Skip` moves through: the list as it stood when play was pressed.
@@ -862,6 +902,7 @@ impl App {
                 keys: vim::Keys::new(),
                 search: String::new(),
                 help: false,
+                picker: None,
                 player: Player::new(),
                 queue: Vec::new(),
                 login: Some(login),
@@ -883,6 +924,7 @@ impl App {
                 keys: vim::Keys::new(),
                 search: String::new(),
                 help: false,
+                picker: None,
                 player: Player::new(),
                 queue: Vec::new(),
                 login: remembered::recall(&server),
@@ -992,6 +1034,8 @@ impl App {
     // The two scrollables the cursor has to keep itself inside of.
     const SIDEBAR: &'static str = "sidebar";
     const TRACKS: &'static str = "tracks";
+    /// The new-playlist box, so opening it can put the keyboard in it.
+    const NAMING: &'static str = "naming";
 
     /// Where the cursor is in a pane.
     fn at(&self, pane: Pane) -> usize {
@@ -1037,6 +1081,18 @@ impl App {
     /// The only place that knows both halves: `vim` produced the action from
     /// keys, and this is what the action means in a music library.
     fn act(&mut self, action: vim::Action) -> Task<Message> {
+        // The picker is a list over the list, so it takes the motions while it
+        // is open. `<Space>` is deliberately not one of them: the transport
+        // should not stop working because a sheet is up.
+        if self.picker.is_some() {
+            match action {
+                vim::Action::Move(motion) => return self.picker_travel(motion),
+                vim::Action::Activate => return self.update(Message::PickerActivate),
+                vim::Action::Cancel => return self.update(Message::ClosePicker),
+                vim::Action::Toggle => return self.update(Message::PlayPause),
+                _ => return Task::none(),
+            }
+        }
         match action {
             vim::Action::Move(motion) => self.travel(motion),
             vim::Action::Activate => self.activate(),
@@ -1069,6 +1125,10 @@ impl App {
                     self.help = !self.help;
                     Task::none()
                 }
+                // Not a motion and not a mode: `a` on a track asks the one
+                // question this client had no way to ask after the hearts
+                // went, which is "which lists is this on".
+                'a' => self.update(Message::OpenPicker),
                 '}' => self.update(Message::Skip(1)),
                 '{' => self.update(Message::Skip(-1)),
                 _ => Task::none(),
@@ -1195,6 +1255,58 @@ impl App {
     }
 
     /// Open what the cursor is on.
+    /// Move inside the picker, through the same `Navigate` the panes use.
+    ///
+    /// A `List` one longer than the playlists, because the row that makes one
+    /// is a row: `j` walks onto it like anything else and `<Enter>` there
+    /// starts naming. One shape, one cursor, nothing extra to learn.
+    fn picker_travel(&mut self, motion: vim::Motion) -> Task<Message> {
+        use vim::Navigate;
+        let Some(picker) = &mut self.picker else {
+            return Task::none();
+        };
+        let shape = vim::List {
+            cells: picker.lists.len() + 1,
+        };
+        if let Some(at) = shape.step(picker.at, motion) {
+            picker.at = at;
+        }
+        Task::none()
+    }
+
+    /// What `a` reads: every playlist, with the ones this track is already on
+    /// marked. One query for one track, asked when the picker opens — the same
+    /// trade the phone makes, and for the same reason.
+    fn open_picker(&mut self) -> Task<Message> {
+        let at = self.at(Pane::Tracks);
+        let Some(peer) = &mut self.peer else {
+            return Task::none();
+        };
+        let Some(item) = peer.rows().get(at).cloned() else {
+            return Task::none();
+        };
+        let mut store = peer.client.store();
+        let on: std::collections::BTreeSet<_> = harken::playlists_of(&mut store, item.id)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|p| p.id)
+            .collect();
+        let lists = harken::playlists(&mut store)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|p| (p.id, p.name, on.contains(&p.id)))
+            .collect();
+        drop(store);
+        self.picker = Some(Picker {
+            media: item.id,
+            title: item.title,
+            lists,
+            at: 0,
+            naming: None,
+        });
+        Task::none()
+    }
+
     fn activate(&mut self) -> Task<Message> {
         let at = self.at(self.pane);
         match self.pane {
@@ -1292,6 +1404,80 @@ impl App {
                     return Task::none();
                 };
                 return self.act(action);
+            }
+            Message::OpenPicker => return self.open_picker(),
+            Message::ClosePicker => {
+                self.picker = None;
+                Ok(())
+            }
+            Message::PickerAt(at) => {
+                if let Some(picker) = &mut self.picker {
+                    picker.at = at.min(picker.lists.len());
+                }
+                Ok(())
+            }
+            Message::PickerName(name) => {
+                if let Some(picker) = &mut self.picker {
+                    picker.naming = Some(name);
+                }
+                Ok(())
+            }
+            Message::PickerActivate => {
+                // The last row makes a playlist; every other row toggles one.
+                let Some(picker) = &mut self.picker else {
+                    return Task::none();
+                };
+                let Some(&(list, _, on)) = picker.lists.get(picker.at) else {
+                    picker.naming = Some(String::new());
+                    // Put the keyboard in the box rather than making somebody
+                    // reach for the mouse to finish what a key started.
+                    return iced::widget::operation::focus(Self::NAMING);
+                };
+                let media = picker.media;
+                // Marked here rather than by re-reading: the answer is known
+                // and a query per tap is a query per tap.
+                picker.lists[picker.at].2 = !on;
+                match &mut self.peer {
+                    Some(peer) => {
+                        let m = if on {
+                            mutators::remove_from_playlist(list, media)
+                        } else {
+                            mutators::add_to_playlist(list, media)
+                        };
+                        peer.client.mutate(m).map(|_| ()).map_err(|e| e.to_string())
+                    }
+                    None => Ok(()),
+                }
+            }
+            Message::PickerCreate => {
+                let name = match &self.picker {
+                    Some(p) => p.naming.clone().unwrap_or_default(),
+                    None => return Task::none(),
+                };
+                let made = match &mut self.peer {
+                    Some(peer) => peer
+                        .client
+                        .mutate(mutators::create_playlist(name))
+                        .map(|_| ())
+                        .map_err(|e: petros::Error| e.to_string()),
+                    None => Ok(()),
+                };
+                // Re-read rather than guessing the new row: `create_playlist`
+                // chooses the id inside `apply`, so the only way to know it is
+                // to ask. The track is not added to it here for the same
+                // reason — one tap away, on a row that now exists.
+                if made.is_ok() {
+                    if let Some(peer) = &mut self.peer {
+                        peer.refresh();
+                    }
+                    let at = self.picker.as_ref().map(|p| p.at);
+                    // It only reads, so the task it hands back is empty.
+                    let _ = self.open_picker();
+                    if let (Some(picker), Some(at)) = (&mut self.picker, at) {
+                        picker.at = at;
+                    }
+                }
+                made
             }
             Message::PlayPause => {
                 self.player.toggle();
@@ -1577,7 +1763,16 @@ impl App {
                                         .on_press(Message::PlayPause),
                                 )
                             } else {
-                                Element::from(container(text("")).width(TRANSPORT))
+                                // As tall as the button it stands in for, not as
+                                // tall as an empty string. The heart used to set
+                                // every row's height; an empty container sets
+                                // none, so the rows that were not playing came out
+                                // shorter than the one that was.
+                                Element::from(
+                                    container(text(""))
+                                        .width(TRANSPORT)
+                                        .height(Length::Fixed(icon::TRANSPORT)),
+                                )
                             });
                     if album_page {
                         line = line.push(cell(
@@ -1700,6 +1895,13 @@ impl App {
             main = main.push(actions);
         }
 
+        if let Some(picker) = &self.picker {
+            return main
+                .push(Self::view_picker(picker))
+                .push(self.view_status(peer))
+                .into();
+        }
+
         if self.help {
             // The status line stays: which pane has the cursor is exactly
             // what somebody reading the keymap is trying to work out.
@@ -1714,6 +1916,86 @@ impl App {
             .push(scrollable(rows).id(Self::TRACKS).height(Length::Fill))
             .push(self.view_status(peer))
             .into()
+    }
+
+    /// Which playlists the track is on, and the row that makes another.
+    ///
+    /// Drawn in place of the table, the way the keymap is: the list underneath
+    /// is what the question is about, and a panel over it would put the answer
+    /// on top of the thing it describes.
+    fn view_picker(picker: &Picker) -> Element<'_, Message> {
+        let rows = picker.lists.iter().enumerate().fold(
+            column![].spacing(0),
+            |col, (i, (_, name, on))| {
+                let on_cursor = picker.at == i;
+                let line = Row::new()
+                    .spacing(0)
+                    .align_y(iced::Alignment::Center)
+                    .push(
+                        container(if *on {
+                            Element::from(icon::tick(on_cursor))
+                        } else {
+                            Element::from(text(""))
+                        })
+                        .width(TRANSPORT)
+                        .height(Length::Fixed(icon::TRANSPORT)),
+                    )
+                    .push(cell(name.clone(), NAME, on_cursor, *on, false));
+                col.push(
+                    mouse_area(container(line).width(Length::Fill).padding([3, 4]).style(
+                        move |theme: &iced::Theme| row_style(theme, on_cursor, true, i % 2 == 1),
+                    ))
+                    .on_press(Message::PickerAt(i))
+                    .on_release(Message::PickerActivate),
+                )
+            },
+        );
+
+        let last = picker.lists.len();
+        let making: Element<'_, Message> = match &picker.naming {
+            Some(name) => text_input("a name for it", name)
+                .id(Self::NAMING)
+                .on_input(Message::PickerName)
+                .on_submit(Message::PickerCreate)
+                .size(13)
+                .padding([4, 6])
+                .into(),
+            None => {
+                let on_cursor = picker.at == last;
+                mouse_area(
+                    container(cell(
+                        "New playlist\u{2026}".into(),
+                        NAME,
+                        on_cursor,
+                        false,
+                        true,
+                    ))
+                    .width(Length::Fill)
+                    .padding([3, 4])
+                    .style(move |theme: &iced::Theme| {
+                        row_style(theme, on_cursor, true, last % 2 == 1)
+                    }),
+                )
+                .on_press(Message::PickerAt(last))
+                .on_release(Message::PickerActivate)
+                .into()
+            }
+        };
+
+        column![
+            row![
+                text(picker.title.clone()).size(16),
+                text("j k move  ·  <Enter> toggles  ·  <Esc> closes")
+                    .size(11)
+                    .style(style::dim),
+            ]
+            .spacing(12)
+            .align_y(iced::Alignment::Center),
+            rule::horizontal(1),
+            scrollable(rows.push(making)).height(Length::Fill),
+        ]
+        .spacing(8)
+        .into()
     }
 
     /// The keymap, because one that has to be read in the source is one nobody
@@ -1734,6 +2016,10 @@ impl App {
                 "in the sidebar, step into it; in the table, play",
             ),
             ("<Space>", "play or pause"),
+            (
+                "a",
+                "which playlists this track is on \u{2014} and make one",
+            ),
             ("/", "search this pane; <Enter> accepts, <Esc> drops it"),
             ("n  N", "the next match, the one before"),
             ("{  }", "the previous track, the next one"),
