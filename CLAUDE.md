@@ -964,6 +964,15 @@ every row is one line. Four things about it are load-bearing:
   last, the other carries on from there. Asked for with `m` it has no pointer
   to sit under, so it opens at the top of the list.
 
+  **Add to playlist is that menu's submenu, and it is the same component `a`
+  opens.** One `view_picker`, in two places: reached from the menu it is
+  pinned beside it with the parent still up, and `<Esc>` there goes back to
+  the menu rather than to the list; reached with `a` it has no parent and no
+  pointer, so it is centred and the page behind it is dimmed. Two ways to one
+  question should not be two panels to keep in step — and `fit` is the one
+  rule that places both, so a submenu against the right edge opens left for
+  the same reason the menu does.
+
   Both overlays are layers of one `stack!` over the page, not panels in place
   of the list: the picker is about a row, and something that replaces the rows
   hides the one it is about. The menu is placed with `pin`, at coordinates the

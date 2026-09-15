@@ -436,6 +436,11 @@ struct Picker {
     /// one — which is why the new-playlist row is a row and not a key. One
     /// list, one cursor, and nothing extra to learn.
     at: usize,
+    /// Where to pin it, when it was opened *from* the row menu — a submenu
+    /// beside its parent, which stays up behind it the way a submenu's parent
+    /// does. `None` is `a` on the track list, which has no parent and no
+    /// pointer to sit under, so it is centred.
+    origin: Option<iced::Point>,
     /// What is being typed into the new-playlist box, if it is open.
     ///
     /// While this is `Some` a `text_input` has the focus and takes its own
@@ -1117,6 +1122,12 @@ impl App {
     const TRACKS: &'static str = "tracks";
     /// The new-playlist box, so opening it can put the keyboard in it.
     const NAMING: &'static str = "naming";
+    /// What `view_menu` draws and `fit` has to assume: 190 of entry inside 4
+    /// of padding either side.
+    const MENU_WIDTH: f32 = 198.0;
+    /// …and the picker's, which is a panel and also a submenu.
+    const PICKER_WIDTH: f32 = 340.0;
+    const PICKER_MAX_HEIGHT: f32 = 420.0;
 
     /// Where the cursor is in a pane.
     fn at(&self, pane: Pane) -> usize {
@@ -1406,8 +1417,19 @@ impl App {
     /// trade the phone makes, and for the same reason.
     fn open_picker(&mut self) -> Task<Message> {
         // Whatever the menu was opened for, or the track under the cursor.
+        // The menu stays up: this is its submenu, and a submenu that closes
+        // its parent is a second menu wearing the name.
         let wanted = self.menu.as_ref().map(|m| m.media);
-        self.menu = None;
+        let origin = self.menu.as_ref().map(|m| {
+            // Beside the parent, overlapping its border by a hair so the two
+            // read as one panel rather than as two that happen to touch.
+            Self::fit(
+                iced::Point::new(m.origin.x + Self::MENU_WIDTH - 2.0, m.origin.y),
+                self.window,
+                Self::PICKER_WIDTH,
+                Self::PICKER_MAX_HEIGHT,
+            )
+        });
         let at = self.at(Pane::Tracks);
         let Some(peer) = &mut self.peer else {
             return Task::none();
@@ -1436,6 +1458,7 @@ impl App {
             title: item.title,
             lists,
             at: 0,
+            origin,
             naming: None,
         });
         Task::none()
@@ -1845,26 +1868,37 @@ impl App {
         }
 
         if let Some(picker) = &self.picker {
-            layers = layers
-                .push(
-                    mouse_area(
-                        container(text(""))
-                            .width(Length::Fill)
-                            .height(Length::Fill)
-                            .style(|theme: &iced::Theme| container::Style {
-                                background: Some(iced::Background::Color(
-                                    palette::of(theme).background.base.color.scale_alpha(0.72),
-                                )),
-                                ..container::Style::default()
-                            }),
-                    )
-                    .on_press(Message::ClosePicker),
-                )
-                .push(
+            // Dimmed only when it is centred. A submenu that dims its parent
+            // has hidden the thing it is a submenu of.
+            let dimmed = picker.origin.is_none();
+            // One panel, two places. Opened from the row menu it is that
+            // menu's submenu and sits beside it, with the parent still up;
+            // opened with `a` it has no parent and no pointer, so it is
+            // centred and the page behind it is dimmed. The *component* is the
+            // same either way, which is the point — two ways to reach one
+            // question should not be two panels to keep in step.
+            let backdrop = mouse_area(
+                container(text(""))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .style(move |theme: &iced::Theme| container::Style {
+                        background: dimmed.then(|| {
+                            iced::Background::Color(
+                                palette::of(theme).background.base.color.scale_alpha(0.72),
+                            )
+                        }),
+                        ..container::Style::default()
+                    }),
+            )
+            .on_press(Message::ClosePicker);
+            layers = layers.push(backdrop).push(match picker.origin {
+                Some(at) => Element::from(pin(Self::view_picker(picker)).x(at.x).y(at.y)),
+                None => Element::from(
                     container(Self::view_picker(picker))
                         .center_x(Length::Fill)
                         .center_y(Length::Fill),
-                );
+                ),
+            });
         }
 
         layers.into()
@@ -1883,23 +1917,32 @@ impl App {
     /// `MENU_WIDTH` is what `view_menu` sets, and the height is its padding,
     /// its title line and `entries` rows of text.
     fn menu_origin(cursor: iced::Point, window: iced::Size, entries: usize) -> iced::Point {
-        const MENU_WIDTH: f32 = 198.0;
         const TITLE: f32 = 27.0;
         const ENTRY: f32 = 27.0;
         const PADDING: f32 = 8.0;
-        let height = PADDING + TITLE + ENTRY * entries as f32;
-        // A margin, so a menu that just fits does not sit flush against the
-        // glass.
+        Self::fit(
+            cursor,
+            window,
+            Self::MENU_WIDTH,
+            PADDING + TITLE + ENTRY * entries as f32,
+        )
+    }
+
+    /// Put a panel of that size at `at`, or back the other way when it would
+    /// not fit. The one rule both the menu and its submenu follow.
+    fn fit(at: iced::Point, window: iced::Size, w: f32, h: f32) -> iced::Point {
+        // A margin, so a panel that only just fits does not sit flush against
+        // the glass.
         let edge = 8.0;
-        let x = if cursor.x + MENU_WIDTH + edge > window.width {
-            (cursor.x - MENU_WIDTH).max(edge)
+        let x = if at.x + w + edge > window.width {
+            (at.x - w).max(edge)
         } else {
-            cursor.x
+            at.x
         };
-        let y = if cursor.y + height + edge > window.height {
-            (cursor.y - height).max(edge)
+        let y = if at.y + h + edge > window.height {
+            (at.y - h).max(edge)
         } else {
-            cursor.y
+            at.y
         };
         iced::Point::new(x, y)
     }
@@ -2344,7 +2387,7 @@ impl App {
         container(
             column![
                 text(middle(&picker.title, 38)).size(15),
-                text("j k move  \u{00b7}  <Enter> toggles  \u{00b7}  <Esc> closes")
+                text("j k move  \u{00b7}  <Enter> toggles  \u{00b7}  <Esc> back")
                     .size(11)
                     .style(style::dim),
                 rule::horizontal(1),
