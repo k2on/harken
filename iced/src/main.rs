@@ -266,19 +266,58 @@ impl Pane {
     }
 }
 
+/// Where a track's bytes are.
+///
+/// `file` is one of two things, and which one is not a mode: the demo's
+/// recordings are whole URLs into Wikimedia, and a scanned track's is the path
+/// the scanner wrote, relative to the media root — which is exactly what
+/// `/media/` serves back. Joining it to the server *here* is what keeps that
+/// one string one string: the log carries no machine's address, and a client
+/// plays what the scanner wrote without either of them knowing where the
+/// directory is.
+///
+/// Handing the relative one straight to an `<audio>` element is what this
+/// exists to stop. The browser resolves it against the page, which drops the
+/// `/media/` prefix, and a server with a single-page fallback answers the
+/// wrong path with `index.html` and a 200 — so the element is handed HTML and
+/// reports only that the resource is "not suitable".
+fn media_url(server: &str, file: &str) -> String {
+    if file.is_empty() || file.starts_with("http://") || file.starts_with("https://") {
+        return file.to_string();
+    }
+    let mut url = format!("{}/media", server.trim_end_matches('/'));
+    for part in file.split('/') {
+        url.push('/');
+        encode(part, &mut url);
+    }
+    url
+}
+
+/// Percent-encode one path segment.
+///
+/// Real libraries are full of spaces, ampersands and the occasional `#`, and a
+/// `#` is the one that is silently destructive: everything after it is a
+/// fragment, so the request goes out for a path that stops mid-filename and
+/// the server answers 404. Everything outside RFC 3986's unreserved set is
+/// escaped, which covers those and every non-ASCII byte.
+fn encode(part: &str, out: &mut String) {
+    for b in part.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+}
+
 // The demo drives only a few of these: it has no accounts to sign in or out
-// of, no entry box to type a song into, and no remove button. The variants
-// stay so that the one `update` serves both builds.
+// of. The variants stay so that the one `update` serves both builds.
 #[cfg_attr(feature = "demo", allow(dead_code))]
 #[derive(Debug, Clone)]
 enum Message {
-    TypedTitle(String),
-    TypedArtist(String),
-    AddSong,
     /// The heart: on the playlist, or off it.
     ToggleFavorite(Id, bool),
-    FavoriteAll,
-    RemoveSong(Id),
     ToggleLink,
     /// The sidebar: show a playlist, an album, an artist, or everything.
     Select(Source),
@@ -490,8 +529,6 @@ struct App {
     /// A sign-in is in flight: a browser is open, or a code is being traded.
     signing_in: bool,
     peer: Option<Peer>,
-    title: String,
-    artist: String,
     note: String,
 }
 
@@ -986,8 +1023,6 @@ impl App {
                 user: None,
                 signing_in: false,
                 peer: Some(peer),
-                title: String::new(),
-                artist: String::new(),
                 note: "a demo — nothing here leaves your browser".into(),
             };
             (app, Task::none())
@@ -1009,8 +1044,6 @@ impl App {
                 user,
                 signing_in: false,
                 peer: None,
-                title: String::new(),
-                artist: String::new(),
                 note: String::new(),
             };
             if let Some(login) = &app.login {
@@ -1376,28 +1409,14 @@ impl App {
                 creator: item.creator.clone(),
                 ms: item.duration_ms,
             },
-            &item.file,
+            &media_url(&self.server, &item.file),
         );
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
         // Typing, ticking and pulling the plug all leave the list alone.
-        let edited = matches!(
-            message,
-            Message::AddSong
-                | Message::ToggleFavorite(..)
-                | Message::FavoriteAll
-                | Message::RemoveSong(_)
-        );
+        let edited = matches!(message, Message::ToggleFavorite(..));
         let outcome: Result<(), String> = match message {
-            Message::TypedTitle(text) => {
-                self.title = text;
-                Ok(())
-            }
-            Message::TypedArtist(text) => {
-                self.artist = text;
-                Ok(())
-            }
             Message::SignIn => return self.start_sign_in(),
             Message::SignedIn(outcome) => {
                 self.signing_in = false;
@@ -1456,19 +1475,6 @@ impl App {
             other => match &mut self.peer {
                 None => Ok(()),
                 Some(peer) => match other {
-                    Message::AddSong => {
-                        let title = std::mem::take(&mut self.title);
-                        let artist = std::mem::take(&mut self.artist);
-                        peer.client
-                            .mutate(mutators::add_song(
-                                title,
-                                artist,
-                                String::new(),
-                                0,
-                                String::new(),
-                            ))
-                            .map(|_| ())
-                    }
                     // A click has to move the cursor as well, or the keyboard
                     // would carry on from wherever it was and the highlight
                     // would be somewhere the table is not.
@@ -1495,7 +1501,7 @@ impl App {
                                     creator: item.creator.clone(),
                                     ms: item.duration_ms,
                                 },
-                                &item.file,
+                                &media_url(&self.server, &item.file),
                             );
                             if item.file.is_empty() {
                                 self.note = "nothing to stream — this one has no file".into();
@@ -1510,13 +1516,6 @@ impl App {
                             mutators::add_to_playlist(peer.playlist, id)
                         };
                         peer.client.mutate(m).map(|_| ())
-                    }
-                    Message::FavoriteAll => peer
-                        .client
-                        .mutate(mutators::add_all_to_playlist(peer.playlist))
-                        .map(|_| ()),
-                    Message::RemoveSong(id) => {
-                        peer.client.mutate(mutators::remove_media(id)).map(|_| ())
                     }
                     Message::ToggleLink => {
                         match peer.link {
@@ -1700,7 +1699,7 @@ impl App {
                 let on_cursor = cursor == Some(i);
                 let album = peer.album_of(item.id);
                 #[cfg_attr(feature = "demo", allow(unused_mut))]
-                let mut line = Row::new()
+                let line = Row::new()
                     .spacing(0)
                     .align_y(iced::Alignment::Center)
                     .push(
@@ -1728,14 +1727,6 @@ impl App {
                         false,
                         true,
                     ));
-                #[cfg(not(feature = "demo"))]
-                {
-                    line = line.push(
-                        button("remove")
-                            .style(button::text)
-                            .on_press(Message::RemoveSong(item.id)),
-                    );
-                }
                 col.push(
                     // The background belongs to a container spanning the whole
                     // width, not to a button around the title: a stripe that
@@ -1774,24 +1765,9 @@ impl App {
 
         #[cfg(not(feature = "demo"))]
         {
-            use iced::widget::text_input;
-            let entry = row![
-                text_input("title…", &self.title)
-                    .on_input(Message::TypedTitle)
-                    .on_submit(Message::AddSong)
-                    .width(Length::Fill),
-                text_input("artist…", &self.artist)
-                    .on_input(Message::TypedArtist)
-                    .on_submit(Message::AddSong)
-                    .width(Length::Fill),
-                button("add").on_press(Message::AddSong),
-            ]
-            .spacing(12);
-
             // Turned away by the server: the one button that helps is sign in.
             let signed_out = self.login.as_ref().is_some_and(|l| l.token.is_empty());
             let actions = row![
-                button("favourite everything").on_press(Message::FavoriteAll),
                 if signed_out {
                     button("sign in again")
                         .on_press_maybe((!self.signing_in).then_some(Message::SignIn))
@@ -1808,7 +1784,7 @@ impl App {
                     .on_press(Message::SignOut),
             ]
             .spacing(12);
-            main = main.push(entry).push(actions);
+            main = main.push(actions);
         }
 
         if self.help {
@@ -2043,4 +2019,56 @@ pub fn main() -> iced::Result {
         .title("harken")
         .window_size((860.0, 600.0))
         .run()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::media_url;
+
+    /// The join, and the two things that make it more than a `format!`.
+    #[test]
+    fn a_relative_file_is_joined_to_the_media_route() {
+        assert_eq!(
+            media_url("https://harken.example.com", "music/Bach/air.mp3"),
+            "https://harken.example.com/media/music/Bach/air.mp3",
+            "the scanner's path is what /media/ serves, so this is the join"
+        );
+        // Handed straight to an <audio> element the relative path resolves
+        // against the page, loses the /media/ prefix, and a single-page
+        // fallback answers it with index.html and a 200 — which reaches the
+        // element as "the media resource was not suitable".
+        assert!(media_url("https://harken.example.com", "music/a.mp3").contains("/media/"));
+
+        // A whole URL is already an answer. The demo's library is Wikimedia
+        // links, so this is not a corner case, it is the other half.
+        let wiki = "https://upload.wikimedia.org/x.mp3";
+        assert_eq!(media_url("https://harken.example.com", wiki), wiki);
+
+        // Nothing to stream stays nothing, rather than becoming a URL that
+        // resolves to the media root and 404s.
+        assert_eq!(media_url("https://harken.example.com", ""), "");
+
+        // A trailing slash on the server does not double up.
+        assert_eq!(
+            media_url("https://harken.example.com/", "music/a.mp3"),
+            "https://harken.example.com/media/music/a.mp3"
+        );
+    }
+
+    /// Real libraries are full of these, and `#` is the destructive one.
+    #[test]
+    fn the_awkward_characters_in_a_filename_are_escaped() {
+        assert_eq!(
+            media_url("https://h.example", "music/Ravel/Boléro #1 & 2.mp3"),
+            "https://h.example/media/music/Ravel/Bol%C3%A9ro%20%231%20%26%202.mp3",
+            "a raw # makes the request stop mid-filename and 404"
+        );
+        // The separators stay separators: escaping them would ask for one file
+        // with slashes in its name.
+        assert_eq!(
+            media_url("", "a/b/c.mp3").matches('/').count(),
+            4,
+            "/media + three segments"
+        );
+    }
 }

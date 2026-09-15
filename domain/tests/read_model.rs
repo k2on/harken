@@ -519,3 +519,59 @@ fn albums_and_artists_group_the_library_and_select_it_back() {
     );
     assert!(!symphony[1].on_playlist());
 }
+
+/// A rescan is a no-op, and that is decided in `apply` rather than by whatever
+/// is scanning.
+///
+/// The id is chosen fresh at the originating client, so a second scan of the
+/// same directory authors a *different* id for a file the library already has:
+/// the id check cannot see it. Every peer replaying the log has to reach the
+/// same answer, which is why the file check lives beside it.
+#[test]
+fn the_same_file_twice_is_one_song() {
+    let mut c = Client::<harken::HarkenApp>::open(
+        petros::open_memory().unwrap(),
+        "library",
+        AutoCtx::seeded(5),
+    )
+    .unwrap();
+    let favs = favourites(&mut c);
+
+    let add = |title: &str, file: &str| {
+        harken::add_song(
+            title.into(),
+            "Beethoven".into(),
+            "Bagatelles".into(),
+            0,
+            file.into(),
+        )
+    };
+    c.mutate(add("Für Elise", "beethoven/fur-elise.mp3"))
+        .unwrap();
+    // The same path again — a rescan, or a watcher that fired twice.
+    c.mutate(add("Für Elise", "beethoven/fur-elise.mp3"))
+        .unwrap();
+    // …even under a different title, because the path is what identifies it.
+    c.mutate(add("Fur Elise (again)", "beethoven/fur-elise.mp3"))
+        .unwrap();
+    assert_eq!(
+        harken::library(&mut c.store(), favs).unwrap().len(),
+        1,
+        "one file is one song, however many times it is offered"
+    );
+
+    // A different path is a different song, even with the same title.
+    c.mutate(add("Für Elise", "beethoven/fur-elise-live.mp3"))
+        .unwrap();
+    assert_eq!(harken::library(&mut c.store(), favs).unwrap().len(), 2);
+
+    // And an empty file is not a path: two hand-typed songs are two songs,
+    // which is what the whole non-empty guard is for.
+    c.mutate(add("Untitled", "")).unwrap();
+    c.mutate(add("Untitled", "")).unwrap();
+    assert_eq!(
+        harken::library(&mut c.store(), favs).unwrap().len(),
+        4,
+        "no file means no collision"
+    );
+}

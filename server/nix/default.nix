@@ -143,6 +143,42 @@
           '';
         };
 
+        mediaPath = lib.mkOption {
+          type = lib.types.nullOr lib.types.path;
+          default = "/srv/media";
+          example = "/mnt/library";
+          description = ''
+            The directory the library is made of, and the one `/media/`
+            serves. Created on activation if it is not there, with a
+            `music/` inside it.
+
+            **Music goes in `music/` under this**, not directly in it. The
+            root is kind-neutral because the `file` column is: an episode or
+            a sermon becomes a sibling directory rather than a second option
+            and a second URL prefix to configure. So a track at
+            `''${mediaPath}/music/Bach/air.flac` is served as
+            `/media/music/Bach/air.flac`, and that same relative path is
+            what the log carries.
+
+            The server walks `music/` at startup and watches the root after,
+            so a file copied in appears without a rescan, and authors each
+            track as an ordinary mutation — through the same `apply` every
+            peer runs, so there is no second definition of what adding a
+            song means. A rescan adds nothing: `apply` refuses a path the
+            library already has, which makes restarting the service free
+            however large the directory is.
+
+            Moving this directory moves the media and nothing in the log has
+            to change; renaming a file inside it makes a new song and leaves
+            the old one pointing at nothing.
+
+            The service reads it and never writes to it. It has to be
+            readable by a dynamic user, which for most libraries means
+            world-readable. Set it to `null` for a server that syncs and
+            serves no files at all.
+          '';
+        };
+
         package = lib.mkOption {
           type = lib.types.package;
           default = harken.harken-server;
@@ -167,6 +203,16 @@
           '';
         }];
 
+        # Made rather than required, so the default works on a machine where
+        # nobody has put anything in it yet: an empty library is a library
+        # with no songs, not a service that refuses to start. Root-owned and
+        # world-readable — the service reads it as a dynamic user, and
+        # putting files in it is the administrator's job.
+        systemd.tmpfiles.rules = lib.optionals (cfg.mediaPath != null) [
+          "d ${cfg.mediaPath} 0755 root root -"
+          "d ${cfg.mediaPath}/music 0755 root root -"
+        ];
+
         systemd.services.harken = {
           description = "Harken sync server";
           wantedBy = [ "multi-user.target" ];
@@ -175,6 +221,8 @@
           environment = {
             HARKEN_PUBLIC_URL = cfg.publicUrl;
             HARKEN_REDIRECTS = lib.concatStringsSep "," cfg.redirects;
+          } // lib.optionalAttrs (cfg.mediaPath != null) {
+            HARKEN_MEDIA = "${cfg.mediaPath}";
           } // lib.optionalAttrs (cfg.web != null) {
             HARKEN_WEB = "${cfg.web}";
           } // lib.optionalAttrs (cfg.oidc != null) {
@@ -202,6 +250,19 @@
             DynamicUser = true;
             StateDirectory = "harken";
             Environment = [ "TMPDIR=%S/harken" ];
+
+            # The media, and nothing else of the filesystem. A bind mount
+            # rather than `ReadOnlyPaths`, because `ProtectHome` below masks
+            # `/home` outright and a library under there would simply not be
+            # visible — a bind overrides that for the one directory, without
+            # opening the rest. Read-only: the server indexes and serves the
+            # files, and has no business changing them.
+            #
+            # This is also why the tmpfiles rule below is not optional. A
+            # bind mount of a path that does not exist fails the unit at
+            # startup, so a default nobody has created yet would mean a
+            # server that will not boot until someone makes a directory.
+            BindReadOnlyPaths = lib.optional (cfg.mediaPath != null) cfg.mediaPath;
 
             # Nothing here needs any of it.
             NoNewPrivileges = true;

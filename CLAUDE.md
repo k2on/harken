@@ -36,6 +36,9 @@ domain/                  the domain — the ONLY apply
   nix/default.nix        which crate is the module; the vendored-deps hash; `latency`
 server/                  axum, with one Petros handler mounted on it, and the
                          sign-in routes beside it
+  src/library.rs         the media directory, as a peer: walk it, watch it,
+                         author what it finds
+  tests/library.rs       …a directory of real files becoming songs, once
   nix/default.nix        the package, `serve`, and the NixOS service — where
                          the OpenID Connect provider is configured
   nix/readme.nix         its section of README.md
@@ -924,11 +927,92 @@ so nothing about the log changed to carry a recording. Every one was checked
 for a public-domain licence and a transcode that answers `audio/mpeg` to a
 range request — a dead link there is a silent demo.
 
-The demo is also a listening UI and nothing else: no sign-in (it has no
-accounts and no server), no typing a song in, no bulk favouriting, no per-row
-remove. Those are `#[cfg(not(feature = "demo"))]` rather than deleted, because
-against a real server they are the only way to sign in, add anything, or take
-it back out.
+The library is filled by the scanner, so the client does not add to it:
+there is no entry box to type a song into, no bulk favourite and no per-row
+remove in either build. The mutations stay in the domain — the log is
+permanent and `add_song` is what the scanner authors — they simply have no
+button. What is still `#[cfg(not(feature = "demo"))]` is signing in and going
+offline, which the demo has nothing to do either of with.
+
+**A track's `file` is not a URL, and handing it to the player as one is a
+silent failure.** The scanner writes a path relative to the media root and
+`/media/` serves that same path back, so the client has to join the two —
+`media_url` in `iced/src/main.rs`, which passes a whole URL through unchanged
+because the demo's library is Wikimedia links. Skipping the join does not
+404: the relative path resolves against the page, loses the `/media/` prefix,
+and a server with a single-page fallback answers *any* unknown path with
+`index.html` and a **200**. The `<audio>` element is handed HTML and reports
+only `the media resource ... was not suitable`, which names neither the URL
+nor the type. Each path segment is percent-encoded for the same reason a
+`#` in a filename is worse than a space: everything after it is a fragment,
+so the request stops mid-filename.
+
+## The media directory is a peer, and a rescan is free
+
+`services.harken.mediaPath` points at a directory — `/srv/media` by default,
+created with its `music/` on activation. The server walks it at startup,
+watches it after, and authors each track as an ordinary mutation.
+
+**One root for every kind, and music lives in `music/` under it.** The
+alternative was one directory per kind and one option each, and it is wrong
+for the same reason `media` is kind-neutral in the schema: `file` is a column
+on the kind-neutral side, so its base has to be kind-neutral too. An episode
+becomes `podcasts/` beside `music/`, served by the same `/media/` and carried
+in the log the same way, with nothing new to configure. The cost is that the
+scanner has to *refuse* audio outside `music/` — the watch covers the whole
+root, and a podcast has the extension and the tags of a song — which is one
+`starts_with` in `offer` and the thing to break if you want to see the test
+fail.
+
+**A default has to exist before it can be bound.** `BindReadOnlyPaths` of a
+path that is not there fails the unit at startup, so a default nobody had
+created yet would mean a server that will not boot until someone makes a
+directory. `systemd.tmpfiles.rules` makes it, which is also what makes the
+default worth having: install the module, drop files in `/srv/media/music`.
+`/var/lib/harken` would *not* have worked — `DynamicUser` puts a
+`StateDirectory` under `/var/lib/private`, which is root-only 0700, so the
+path the administrator is told about is not the one the files would land in.
+
+**It is a peer, not a writer.** `server/src/library.rs` holds a real
+`petros::Client` with its own database and its own pending queue, and reaches
+the hub through `Hub::exchange` instead of a socket. Writing rows directly
+would have been fewer moving parts and a second definition of what "add a
+song" means — and the first time it disagreed with `apply`, the replicas would
+diverge with nothing to say so. Being a peer also means the entry carries an
+actor and a session like every other: the server mints one for the `library`
+account at startup, because "the server wrote it" is not an exemption.
+
+**Idempotency is in `apply`, not in the scanner.** `add_song` refuses a
+non-empty `file` the library already has. It has to be there rather than in
+the scanner, because the id is chosen fresh per authoring call: a second scan
+produces a *different* id for the same path and the id check cannot see it.
+Deciding it inside `apply` means every peer replaying reaches the same answer
+— the first entry for a path wins, wherever the rescan happened. An empty
+`file` does not collide, because a song typed in by hand has no path and two
+of those are two songs.
+
+**The log carries the path relative to the media root**, and `/media/` serves
+that same path back — so a track reads `music/Bach/air.flac` and plays from
+`/media/music/Bach/air.flac`. One string, so a client plays what the scanner
+wrote without either knowing where the directory is — and the log does not
+freeze this machine's layout into it forever.
+
+Two things the test found that reading the code would not have:
+
+- **A new *directory* is the case that matters, and it is not a new file.**
+  Dropping an album folder in creates the directory and its tracks in the same
+  breath, and a recursive watch has to add a watch for the new directory
+  before it can report anything inside it — so the tracks land in the gap and
+  are never announced. What *is* announced is the directory, so a directory
+  event walks it rather than trying to index it as a file.
+- **`ProtectHome = true` masks `/home` outright**, so a library under there is
+  not merely unreadable but invisible, and `ReadOnlyPaths` cannot reach past
+  it. The unit uses `BindReadOnlyPaths` for the one directory instead, which
+  overrides the mask without opening the rest.
+
+A removal is deliberately not handled. The log is permanent, and a file
+disappearing is not evidence anybody meant to delete the song — an unplugged
+disk looks exactly the same.
 
 ## The keyboard is vim's, and a component opts in by saying what shape it is
 
