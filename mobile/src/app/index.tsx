@@ -122,7 +122,7 @@ function Ask() {
   return (
     <View style={s.page}>
       {/* The gold, once, behind the name — so the first screen says what the
-          rest of the app is coloured with before anything is on it. */}
+          rest of the app is colored with before anything is on it. */}
       <LinearGradient
         pointerEvents="none"
         colors={[...theme.glow]}

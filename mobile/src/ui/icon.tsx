@@ -15,7 +15,7 @@
  * point being that the worst case is a plain arrow rather than a blank square
  * where the play button should be.
  *
- * Nothing here chooses a colour. `tint` is passed in from the theme, for the
+ * Nothing here chooses a color. `tint` is passed in from the theme, for the
  * same reason the desktop's heart is drawn with placeholder `fill` and
  * `stroke` that the style replaces: a gold baked into the glyph is the same
  * gold on a dark row, a light one and the gold-filled one under the cursor.

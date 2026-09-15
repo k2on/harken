@@ -9,9 +9,9 @@
  * - **The whole line is the target.** The background belongs to the row, not
  *   to a button wrapped around the title. A stripe that stops where the text
  *   does is not a row.
- * - **The one playing is the only thing drawn in the accent colour**, so it is
+ * - **The one playing is the only thing drawn in the accent color**, so it is
  *   findable at a glance in a list of twenty near-identical rows.
- * - **Nothing is a literal colour.** Every one is asked of the theme.
+ * - **Nothing is a literal color.** Every one is asked of the theme.
  */
 
 import { memo } from 'react';
@@ -26,7 +26,7 @@ import { Icon } from './icon';
 
 /** The heart, with a pop.
  *
- *  Worth the six lines: a tap that changes a colour and nothing else reads as
+ *  Worth the six lines: a tap that changes a color and nothing else reads as
  *  a tap that might not have registered, and this is the one control in the
  *  app whose effect is invisible until the server agrees. */
 function Heart({ on, onPress, theme }: { on: boolean; onPress: () => void; theme: Theme }) {

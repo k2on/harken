@@ -91,7 +91,7 @@
         installPhase = ''
           runHook preInstall
           mkdir -p $out
-          cp iced/web/index.html $out/
+          cp iced/web/index.html iced/web/favicon.svg $out/
           wasm-bindgen --target web --no-typescript --out-dir $out/pkg \
             target/wasm32-unknown-unknown/release/harken-iced.wasm
           runHook postInstall

@@ -63,7 +63,7 @@ mobile/                  the phone client; src/ is UI and a socket, nothing else
                          transport on the lock screen
   src/media.ts           …and the one place a `file` becomes a URL
   src/theme.ts           the palette: light, dark, and the gold. The only place
-                         in this directory a colour is written down
+                         in this directory a color is written down
   src/ui/icon.tsx        every glyph, as an SF Symbol, a Material Symbol, and a
                          character to fall back to (see below)
   src/ui/debug.tsx       every number the peer holds, on the phone being wrong —
@@ -77,6 +77,13 @@ mobile/                  the phone client; src/ is UI and a socket, nothing else
   eas-rust.sh            generated: the Rust half of an EAS build, for a container with no nix
   nix/default.nix        the name, the hashes, and the petros-js module they go to
   nix/eas.nix            the EAS profiles
+branding/                what the program looks like, once
+  trumpet.svg            the mark: Pictogrammers' MDI glyph, vendored, Apache 2.0
+  LICENSE.trumpet        …and its licence, kept beside it
+  nix/palette.nix        the colors — black, white, gold — and nothing else
+  nix/icon.nix           the angle, the centring, the ground, and every raster
+  nix/default.nix        …written out as `palette.rs` and `palette.ts`
+  nix/readme.nix         its section of README.md
 Cargo.toml               the workspace, and the one place the engine is pinned
 flake.nix                nixpkgs and petros, and `petros.lib.mkApp inputs ./.`
 readme.nix               the top of README.md; the rest is each directory's
@@ -108,7 +115,8 @@ nix run .#iced bob          # …and another, to watch them sync
 nix run .#web               # …a browser peer, at localhost:8080
 nix run .#bindings          # regenerate the Expo client's TS from the domain crate
 nix run .#expo-android      # …and a phone. Needs `nix develop .#android`.
-nix run .#write-files       # regenerate README.md, eas.json, eas-rust.sh, ubrn.config.yaml
+nix run .#icons             # rebuild the app icons into mobile/assets/images
+nix run .#write-files       # regenerate README.md, eas.json, the palettes, the favicon
 nix build .#harken-server   # …and .#harken-iced, .#harken-web
 nix build .#apk             # the whole APK, toolchain and all
 nix build .#ndk-check       # …does the NDK *start* here? Twenty seconds
@@ -135,6 +143,7 @@ it. The same file serves a bare crate, a crate with a server, a crate with a
 phone, or this.
 
 ```
+branding/nix/*.nix       branding.palette; the icons; run: icons
 domain/nix/default.nix   petros.mutators.crate, petros.cargoVendorHash; run: latency
 server/nix/default.nix   harken-server, `services.harken`; run: serve
 iced/nix/default.nix     harken-iced; run: iced
@@ -577,10 +586,10 @@ widget's own bounds rather than from geometry in a shared layer. Same path —
 two cubics down each side, filled when the song is on the playlist and stroked
 when it is not — and it costs the `svg` feature instead of `canvas`.
 
-Its colour is **not** in the file. The `fill` and `stroke` there are
-placeholders that the `svg` style's colour filter replaces, because a heart
+Its color is **not** in the file. The `fill` and `stroke` there are
+placeholders that the `svg` style's color filter replaces, because a heart
 with a red baked into it is the same red on a white row, a dark row and the
-accent-coloured row under the cursor — three backgrounds, and a colour chosen
+accent-colored row under the cursor — three backgrounds, and a color chosen
 against one of them.
 
 ## Traps in the client toolchain
@@ -898,7 +907,7 @@ against one of them.
   `std::env::temp_dir()`, so a server started inside `nix develop --command`
   does not share a database with one started under direnv.
 
-## The table, and where its colours come from
+## The table, and where its colors come from
 
 The track list is a table — Name, Artist, Album, Time, under headings — and
 every row is one line. Four things about it are load-bearing:
@@ -907,14 +916,16 @@ every row is one line. Four things about it are load-bearing:
   not to a `button` wrapped around the title. A stripe that stops where the
   text does is not a row. The click comes from a `mouse_area` around that
   container, so the whole line is the target.
-- **Nothing is a literal colour.** Every background and every text colour is
-  asked of `theme.extended_palette()`, which is the entire reason dark mode
-  works: iced already picks Light or Dark from the system, so the only way to
-  get it wrong is to write a colour down. The zebra is `background.base`
+- **Nothing is a literal color.** Every background and every text color is
+  asked of `palette::of(theme)`, which is the entire reason dark mode works:
+  iced already picks Light or Dark from the system and hands every style
+  closure the one it picked, so `of` reads which that was and answers with
+  the branding's. The only way to get it wrong is to write a color down.
+  The zebra is `background.base`
   alternating with `background.weak`; the cursor is `primary.base` with
   `primary.base.text` on it.
-- **A row under the cursor is painted in the accent colour, so text on it has
-  exactly one legible colour** — the one that accent was paired with. A
+- **A row under the cursor is painted in the accent color, so text on it has
+  exactly one legible color** — the one that accent was paired with. A
   dimmed column there gets the same hue at lower alpha, never a grey that was
   chosen against the window instead.
 - **The two highlights mean different things and are drawn differently.** The
@@ -922,7 +933,7 @@ every row is one line. Four things about it are load-bearing:
   the keyboard is elsewhere. The table's is a *cursor*, only ever "where the
   next `j` goes", so it is not drawn at all unless its pane has the keyboard:
   a dimmed one would sit one shade from the zebra and mean something else
-  entirely. The playing track is the one row drawn in the accent *colour*
+  entirely. The playing track is the one row drawn in the accent *color*
   rather than filled with it, so it stays findable under either.
 
 The Album column is the interesting one, because `album` is on the `song`
@@ -1429,10 +1440,42 @@ first. The engine's own decisions are in `../petros/docs/decisions.md`.
   the palette is `mobile/src/theme.ts`, which is forty lines. The two
   dependencies that were added are the two that buy something nothing here can
   do: `expo-audio` and `expo-linear-gradient`.
-- **The gold is not one colour.** Every background and every text colour comes
+- **The gold is not one color.** Every background and every text color comes
   from `theme.ts` and none from a component, which is the phone's version of
   the rule that makes the desktop work in dark mode — but the two themes do not
-  share the accent. A dark sheet can take a bright leaf gold; a warm white one
+  share the accent. A dark sheet can take a bright leaf gold; a white one
   cannot, because `onAccent` has to be legible *on* it and nothing is legible
-  on bright gold. That asymmetry is the only one in the file, and it is there
-  rather than in a component so that it stays the only one.
+  on bright gold. That asymmetry is the only one, and it is in the branding so
+  that it stays the only one.
+- **One description of what the program looks like, and it is not in either
+  client.** The desktop asked iced for its Light and Dark and the phone kept
+  its own tables, so "the gold" was two golds that were equal only while
+  somebody remembered both — and the app icons were still Expo's template
+  blue, which is a third answer nobody chose. `branding/` is the one
+  description now: `nix/palette.nix` is the colors and `nix/icon.nix` is the
+  mark, and the two clients get *generated* files. `iced/src/palette.rs`,
+  `mobile/src/palette.ts` and `iced/web/favicon.svg` are checked the way
+  `README.md` is, so a change to one client's colors that is not a change to
+  the branding fails `nix flake check` rather than shipping.
+
+  Three things worth knowing about how it is built:
+
+  - **iced still picks the theme; we only pick the colors.** A fully custom
+    `iced::Theme` is what you would reach for, and it cannot follow the
+    system: iced resolves the preference internally and surfaces it only by
+    handing the chosen theme to each style closure. So the closures ask
+    `palette::of(theme)`, which reads `is_dark` off what iced picked and
+    answers with ours. The cost is that iced's *own* widget defaults — a
+    `button::text`, a bare `slider` — keep iced's colors; closing that means
+    a colour-scheme dependency (`dark-light`, or `mundy`, which iced already
+    carries) and a moved `cargoVendorHash`.
+  - **The mark is vendored, not drawn.** Several hand-drawn angels were tried
+    and an icon set's trumpet is better than any of them. Pictogrammers' MDI
+    glyph, Apache 2.0, unmodified, with its licence beside it — the same
+    rule the demo's recordings follow: take it on the terms offered, and say
+    so where it can be seen.
+  - **The rasters are not checked files.** `files` compares strings and a PNG
+    is bytes, so `nix run .#icons` writes them into `mobile/assets/images/`
+    the way `nix run .#mutators` writes the module. The favicon is SVG, so it
+    *is* checked — and it carries both themes in a media query, because a tab
+    strip is light or dark and the page is never told which.

@@ -27,6 +27,7 @@
 //! two lines: where the database lives, and which transport carries the bytes.
 
 mod icon;
+mod palette;
 mod player;
 /// The demo's library. Compiled only into the demo, so the client that
 /// talks to a real server carries none of it.
@@ -398,9 +399,9 @@ fn middle(body: &str, max: usize) -> String {
 
 /// One cell of the table: a single line, clipped rather than wrapped.
 ///
-/// Every colour is asked of the theme rather than written down, which is the
+/// Every color is asked of the theme rather than written down, which is the
 /// whole of what makes this work in dark mode — and on the cursor's own row,
-/// which is painted in the accent colour and needs text chosen against *that*
+/// which is painted in the accent color and needs text chosen against *that*
 /// rather than against the window.
 fn cell<'a>(
     body: String,
@@ -420,10 +421,10 @@ fn cell<'a>(
         .width(width)
         .wrapping(text::Wrapping::None)
         .style(move |theme: &iced::Theme| {
-            let palette = theme.extended_palette();
+            let palette = palette::of(theme);
             let color = if on_cursor {
-                // The row is filled with the accent colour, so there is exactly
-                // one colour text on it can be: the one that colour was paired
+                // The row is filled with the accent color, so there is exactly
+                // one color text on it can be: the one that color was paired
                 // with. A dimmed column gets the same hue, not a grey.
                 let text = palette.primary.base.text;
                 if dim {
@@ -449,21 +450,14 @@ fn heading<'a>(label: &'a str, width: Length) -> Element<'a, Message> {
         .size(11)
         .width(width)
         .style(|theme: &iced::Theme| text::Style {
-            color: Some(
-                theme
-                    .extended_palette()
-                    .background
-                    .base
-                    .text
-                    .scale_alpha(0.55),
-            ),
+            color: Some(palette::of(theme).background.base.text.scale_alpha(0.55)),
         })
         .into()
 }
 
 /// A section heading inside the table: the part of the work below it.
 ///
-/// Drawn in the accent colour rather than filled with it, the way the playing
+/// Drawn in the accent color rather than filled with it, the way the playing
 /// track is, because a filled stripe is what the cursor means here and there
 /// can only be one of those. It sits in the same grid as the rows and takes
 /// the whole width, so a work with four suites reads as four blocks rather
@@ -474,7 +468,7 @@ fn section<'a>(label: String) -> Element<'a, Message> {
             .size(12)
             .wrapping(text::Wrapping::None)
             .style(|theme: &iced::Theme| text::Style {
-                color: Some(theme.extended_palette().primary.base.color),
+                color: Some(palette::of(theme).primary.base.color),
             }),
     )
     .width(Length::Fill)
@@ -492,13 +486,13 @@ fn section<'a>(label: String) -> Element<'a, Message> {
 /// What a table row is painted.
 ///
 /// Three states, and they are deliberately not three shades of the same idea:
-/// the cursor is the accent colour when its pane has the keyboard and a plain
+/// the cursor is the accent color when its pane has the keyboard and a plain
 /// strong grey when it does not — the way a native list dims its selection
 /// when you click away — and everything else is the zebra, which is the
 /// window's own background alternating with the faintest step up from it.
-/// Nothing here is a literal colour, so a dark theme restates all of it.
+/// Nothing here is a literal color, so a dark theme restates all of it.
 fn row_style(theme: &iced::Theme, on_cursor: bool, focused: bool, odd: bool) -> container::Style {
-    let palette = theme.extended_palette();
+    let palette = palette::of(theme);
     let background = if on_cursor {
         Some(if focused {
             palette.primary.base.color
@@ -1490,17 +1484,8 @@ impl App {
             if heading.is_some() && heading != under {
                 side = side.push(
                     container(text(heading.unwrap_or_default()).size(10).style(
-                        |theme: &iced::Theme| {
-                            text::Style {
-                                color: Some(
-                                    theme
-                                        .extended_palette()
-                                        .background
-                                        .base
-                                        .text
-                                        .scale_alpha(0.5),
-                                ),
-                            }
+                        |theme: &iced::Theme| text::Style {
+                            color: Some(palette::of(theme).background.base.text.scale_alpha(0.5)),
                         },
                     ))
                     .padding([8, 10]),
@@ -1509,7 +1494,7 @@ impl App {
             under = heading;
 
             // The sidebar has one highlight, not two: its cursor *is* what the
-            // table is showing, so a separate "selected" colour would be a
+            // table is showing, so a separate "selected" color would be a
             // second name for the same row.
             let on_cursor = i == cursor;
             side = side.push(
@@ -1522,15 +1507,15 @@ impl App {
                                 .wrapping(text::Wrapping::None)
                                 .style(move |theme: &iced::Theme| text::Style {
                                     color: Some(if on_cursor && focused {
-                                        theme.extended_palette().primary.base.text
+                                        palette::of(theme).primary.base.text
                                     } else {
-                                        theme.extended_palette().background.base.text
+                                        palette::of(theme).background.base.text
                                     }),
                                 }),
                             text(choice.count.map(|n| n.to_string()).unwrap_or_default())
                                 .size(10)
                                 .style(move |theme: &iced::Theme| {
-                                    let palette = theme.extended_palette();
+                                    let palette = palette::of(theme);
                                     text::Style {
                                         color: Some(if on_cursor && focused {
                                             palette.primary.base.text.scale_alpha(0.7)
@@ -1625,7 +1610,7 @@ impl App {
                             NAME,
                             on_cursor,
                             // The one playing is the only thing in the table drawn
-                            // in the accent colour, so it is findable at a glance
+                            // in the accent color, so it is findable at a glance
                             // in a list of twenty near-identical rows.
                             playing == Some(item.id),
                             false,

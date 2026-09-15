@@ -52,7 +52,7 @@ this app never records.
 ## The look
 
 Light and dark, following the system, with a gold accent. `src/theme.ts` is
-the only place a colour is written down — the same rule the desktop keeps by
+the only place a color is written down — the same rule the desktop keeps by
 asking iced for `extended_palette()` — and the two themes do not use the same
 gold, because a bright leaf gold takes no text on a white sheet.
 

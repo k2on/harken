@@ -132,7 +132,7 @@ A sidebar down the left browses the library: the playlists, then the
 albums, then the artists. Moving onto one shows it — the cursor there
 is the selection, so nothing needs confirming. The tracks are a table
 of Name, Artist, Album and Time, and a now-playing bar sits along the
-bottom. Light or dark follows the system: every colour comes from the
+bottom. Light or dark follows the system: every color comes from the
 theme, so there is none to get wrong, and every icon is drawn rather
 than typed, because the embedded font has no glyph for any of them.
 
@@ -230,3 +230,43 @@ nix run .#expo-android      # the edit loop, with Metro; needs `nix develop .#an
 
 Two apps can be installed side by side: `dev.harken.koon.us` from a
 development build and `harken.koon.us` from a release one.
+
+## Branding
+
+One description of what the program looks like, in `branding/`: the
+palette, and the mark every icon is made from.
+
+Black and white with gold — `#000000` behind a dark theme, `#FFFFFF`
+behind a light one, and one accent that means "this is playing", "this
+is hearted", "press this". The two golds are not the same gold: a dark
+sheet can take a bright leaf, a white one needs a darker, browner gold
+or nothing is legible on it.
+
+Neither client reads a color at run time — one is Rust, the other is
+TypeScript — so both are generated from `branding/nix/palette.nix`:
+
+```
+iced/src/palette.rs     the six colors iced generates a theme from
+mobile/src/palette.ts   the same, as the two tables `theme.ts` picks from
+iced/web/favicon.svg    the mark, carrying both themes in a media query
+```
+
+They are checked files like `README.md`: `nix run .#write-files` writes
+them and `nix flake check` fails while a committed copy differs, which
+is what stops the desktop and the phone drifting to two different golds.
+
+The mark is a trumpet — Pictogrammers' Material Design Icons glyph,
+vendored unmodified under Apache 2.0 with its licence in
+`branding/LICENSE.trumpet`. Everything around it is here: the angle, the
+optical centring on the pixels it inks rather than on its box, the
+gradient ground, and the size each platform asks for.
+
+```
+nix build .#icons     # every SVG and PNG, in the store
+nix run .#icons       # …and written into mobile/assets/images/
+```
+
+The rasters are written into the tree rather than consumed from the
+store because Expo reads them off disk before nix is involved. They
+cannot be checked files the way the palettes are: `files` compares
+strings and a PNG is bytes.

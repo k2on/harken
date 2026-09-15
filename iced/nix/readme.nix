@@ -13,7 +13,7 @@
       albums, then the artists. Moving onto one shows it — the cursor there
       is the selection, so nothing needs confirming. The tracks are a table
       of Name, Artist, Album and Time, and a now-playing bar sits along the
-      bottom. Light or dark follows the system: every colour comes from the
+      bottom. Light or dark follows the system: every color comes from the
       theme, so there is none to get wrong, and every icon is drawn rather
       than typed, because the embedded font has no glyph for any of them.
 

@@ -25,11 +25,11 @@
 //! than by geometry in a shared layer, which is exactly the part that was
 //! broken, and it needs no font and no icon asset.
 //!
-//! Its colour is the theme's, applied through the `svg` style's colour filter
+//! Its color is the theme's, applied through the `svg` style's color filter
 //! rather than written into the file. A heart with `fill="#d9364f"` baked in
 //! is a heart that is the same red on a white row, a dark row and the accent
-//! -coloured row under the cursor — which is three different backgrounds and
-//! one colour that was only ever chosen against the first.
+//! -colored row under the cursor — which is three different backgrounds and
+//! one color that was only ever chosen against the first.
 
 use iced::widget::{svg, Svg};
 use iced::Theme;
@@ -37,8 +37,8 @@ use iced::Theme;
 /// Filled when the song is on the playlist, outlined when it is not. The same
 /// path either way: two cubics down each side, meeting at the point.
 ///
-/// Neither carries a colour worth keeping — the `fill` and `stroke` below are
-/// placeholders that iced's colour filter replaces — because a hardcoded red
+/// Neither carries a color worth keeping — the `fill` and `stroke` below are
+/// placeholders that iced's color filter replaces — because a hardcoded red
 /// is a red that cannot follow the theme. See [`heart`].
 const FILLED: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
 <path d="M12 21.4C2.4 14.3 1 8.3 4.3 5.1 7.3 2.2 10.4 3.7 12 6.9c1.6-3.2 4.7-4.7 7.7-1.8 3.3 3.2 1.9 9.2-7.7 16.3z" fill="#000"/>
@@ -67,7 +67,7 @@ const PREVIOUS: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 
 const NEXT: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
 <path d="M15.5 5H18v14h-2.5zM5 5l9 7-9 7z" fill="#000"/></svg>"##;
 
-/// One of the transport buttons, in the theme's own text colour.
+/// One of the transport buttons, in the theme's own text color.
 ///
 /// `dim` is the pair either side of play/pause: they do the same kind of thing
 /// and should not compete with it for the eye.
@@ -101,12 +101,12 @@ pub fn next<'a>() -> Svg<'a> {
 
 /// The heart, for a row that is on the playlist or is not.
 ///
-/// The colour comes from the theme rather than from the file, through the
-/// `svg` style's colour filter — so the same two shapes serve light and dark,
-/// and a hearted row on the cursor's own background is drawn in the colour
+/// The color comes from the theme rather than from the file, through the
+/// `svg` style's color filter — so the same two shapes serve light and dark,
+/// and a hearted row on the cursor's own background is drawn in the color
 /// that background was built to be read against. `on_cursor` is that case: the
-/// row is painted in the accent colour, so a red heart on it would be two
-/// saturated colours fighting.
+/// row is painted in the accent color, so a red heart on it would be two
+/// saturated colors fighting.
 ///
 /// `from_memory` keys its cache on the bytes, and there are exactly two sets
 /// of them, so rebuilding this every frame parses nothing.
@@ -123,7 +123,7 @@ pub fn heart<'a>(filled: bool, on_cursor: bool) -> Svg<'a> {
         svg::Style {
             color: Some(match (filled, on_cursor) {
                 // On the cursor's row everything is drawn in the one
-                // colour that row is guaranteed to be legible in.
+                // color that row is guaranteed to be legible in.
                 (true, true) => palette.primary.base.text,
                 (false, true) => palette.primary.base.text.scale_alpha(0.55),
                 // Off it, a hearted row earns the accent; an empty one is
