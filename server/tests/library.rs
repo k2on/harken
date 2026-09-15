@@ -3,6 +3,9 @@
 //! What this asserts is the property the feature exists for, not that the code
 //! runs: a directory of audio becomes songs in the log, a second scan of the
 //! same directory adds nothing, and a file that is not audio is not a song.
+//! The paths it checks are the other half — a song's `file` is relative to the
+//! *media* root and so begins `music/`, which is exactly what `/media/` serves
+//! back, and audio outside `music/` is not a track.
 //!
 //! The files are written here rather than checked in. A WAV is a header and
 //! some samples, so a test can make one that `lofty` will really parse — which
@@ -118,7 +121,13 @@ fn temp(name: &str) -> PathBuf {
 #[test]
 fn a_directory_of_audio_becomes_songs_and_a_rescan_adds_none() {
     let root = temp("root");
-    let music = root.join("music");
+    // The media root is a directory *inside* the temp one, so the scanner's own
+    // database can sit beside it rather than in it. A database in the watched
+    // tree is a feedback loop: SQLite writes, the watch fires, the scanner
+    // wakes and writes again. The service puts its log in `StateDirectory` for
+    // the same reason, and the test has no business being laid out differently.
+    let media = root.join("media");
+    let music = media.join("music");
     wav(&music.join("Bach/air.wav"), 2_000);
     wav(&music.join("Beethoven/Bagatelles/fur-elise.wav"), 3_000);
     // Not audio, and not a song. A library folder is full of these.
@@ -127,7 +136,7 @@ fn a_directory_of_audio_becomes_songs_and_a_rescan_adds_none() {
 
     let hub = Hub::<HarkenApp>::open(petros::open_memory().unwrap(), petros::Trusting).unwrap();
     let scanner = harken_server::library::Scanner::start(
-        music.clone(),
+        media.clone(),
         hub.clone(),
         root.join("scanner.db"),
         nobody(),
@@ -139,22 +148,46 @@ fn a_directory_of_audio_becomes_songs_and_a_rescan_adds_none() {
     files.sort();
     assert_eq!(
         files,
-        vec!["Bach/air.wav", "Beethoven/Bagatelles/fur-elise.wav"],
-        "every audio file, by its path relative to the music root — which is \
-         the same string `/media/` serves back"
+        vec![
+            "music/Bach/air.wav",
+            "music/Beethoven/Bagatelles/fur-elise.wav"
+        ],
+        "every audio file under `music/`, by its path relative to the *media* \
+         root — which is the same string `/media/` serves back"
     );
-    assert_eq!(found.len(), 2, "the jpg and the txt are not songs");
+    assert_eq!(
+        found.len(),
+        2,
+        "the jpg and the txt are not songs, and neither is the podcast: it is \
+         audio, but it is not under `music/`"
+    );
 
     // A file appearing after the scan, without anyone asking for a rescan.
     wav(&music.join("Debussy/clair-de-lune.wav"), 1_000);
     assert_eq!(settle(&hub, 3).len(), 3, "the watch picked up a new file");
+
+    // And one appearing outside `music/`, which is audio and is not a track.
+    //
+    // It has to appear *now* rather than before the scanner started: the walk
+    // only ever looks at `music/`, so a file sitting in `podcasts/` at boot is
+    // never offered and never tests anything. The watch is what covers the
+    // whole media root, so this is the only way the refusal in `offer` is
+    // reached at all — written the other way round, the assertion passed with
+    // that refusal deleted.
+    wav(&media.join("podcasts/episode-1.wav"), 5_000);
+    assert_eq!(
+        after(&hub, 3).len(),
+        3,
+        "audio outside `music/` is not a song — the watch reported it and \
+         `offer` refused it"
+    );
 
     // Now the point: scan the whole directory again, over the same log.
     // Every id is fresh, so nothing but the file check in `apply` can stop
     // these becoming three more songs.
     drop(scanner);
     let again = harken_server::library::Scanner::start(
-        music.clone(),
+        media.clone(),
         hub.clone(),
         root.join("scanner-again.db"),
         nobody(),

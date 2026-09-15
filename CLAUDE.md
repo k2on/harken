@@ -36,7 +36,7 @@ domain/                  the domain — the ONLY apply
   nix/default.nix        which crate is the module; the vendored-deps hash; `latency`
 server/                  axum, with one Petros handler mounted on it, and the
                          sign-in routes beside it
-  src/library.rs         the music directory, as a peer: walk it, watch it,
+  src/library.rs         the media directory, as a peer: walk it, watch it,
                          author what it finds
   tests/library.rs       …a directory of real files becoming songs, once
   nix/default.nix        the package, `serve`, and the NixOS service — where
@@ -881,10 +881,31 @@ remove. Those are `#[cfg(not(feature = "demo"))]` rather than deleted, because
 against a real server they are the only way to sign in, add anything, or take
 it back out.
 
-## The music directory is a peer, and a rescan is free
+## The media directory is a peer, and a rescan is free
 
-`services.harken.music` points at a directory. The server walks it at startup,
+`services.harken.mediaPath` points at a directory — `/srv/media` by default,
+created with its `music/` on activation. The server walks it at startup,
 watches it after, and authors each track as an ordinary mutation.
+
+**One root for every kind, and music lives in `music/` under it.** The
+alternative was one directory per kind and one option each, and it is wrong
+for the same reason `media` is kind-neutral in the schema: `file` is a column
+on the kind-neutral side, so its base has to be kind-neutral too. An episode
+becomes `podcasts/` beside `music/`, served by the same `/media/` and carried
+in the log the same way, with nothing new to configure. The cost is that the
+scanner has to *refuse* audio outside `music/` — the watch covers the whole
+root, and a podcast has the extension and the tags of a song — which is one
+`starts_with` in `offer` and the thing to break if you want to see the test
+fail.
+
+**A default has to exist before it can be bound.** `BindReadOnlyPaths` of a
+path that is not there fails the unit at startup, so a default nobody had
+created yet would mean a server that will not boot until someone makes a
+directory. `systemd.tmpfiles.rules` makes it, which is also what makes the
+default worth having: install the module, drop files in `/srv/media/music`.
+`/var/lib/harken` would *not* have worked — `DynamicUser` puts a
+`StateDirectory` under `/var/lib/private`, which is root-only 0700, so the
+path the administrator is told about is not the one the files would land in.
 
 **It is a peer, not a writer.** `server/src/library.rs` holds a real
 `petros::Client` with its own database and its own pending queue, and reaches
@@ -904,10 +925,11 @@ Deciding it inside `apply` means every peer replaying reaches the same answer
 `file` does not collide, because a song typed in by hand has no path and two
 of those are two songs.
 
-**The log carries the path relative to the music root**, and `/media/` serves
-that same path back. One string, so a client plays what the scanner wrote
-without either knowing where the directory is — and the log does not freeze
-this machine's layout into it forever.
+**The log carries the path relative to the media root**, and `/media/` serves
+that same path back — so a track reads `music/Bach/air.flac` and plays from
+`/media/music/Bach/air.flac`. One string, so a client plays what the scanner
+wrote without either knowing where the directory is — and the log does not
+freeze this machine's layout into it forever.
 
 Two things the test found that reading the code would not have:
 

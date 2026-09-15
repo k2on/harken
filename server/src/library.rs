@@ -1,4 +1,4 @@
-//! The music directory, as a peer.
+//! The media directory, as a peer.
 //!
 //! A server that owns a folder of files has to get them into the log somehow,
 //! and there are only two honest ways: write the rows directly, or be a peer
@@ -37,6 +37,15 @@ const AUDIO: &[&str] = &[
     "mp3", "flac", "ogg", "oga", "opus", "m4a", "m4b", "aac", "wav", "wv", "aiff", "aif",
 ];
 
+/// Where music lives under the media root.
+///
+/// The root is kind-neutral because `file` is: one directory holds every kind,
+/// `/media/` serves all of it, and an episode or a sermon gets a sibling of
+/// this rather than a second root and a second URL prefix to configure. So a
+/// song's path reads `music/Bach/air.wav`, and a file outside this
+/// subdirectory is not a track however much it sounds like one.
+const MUSIC: &str = "music";
+
 /// The account a scanned track is authored as.
 ///
 /// A real name would be a lie — nobody added these by hand — and no name at all
@@ -63,7 +72,12 @@ pub struct Scanner {
 }
 
 impl Scanner {
-    /// Start scanning `root`, and watching it.
+    /// Start scanning `music/` under `root`, and watching `root`.
+    ///
+    /// The walk is narrow and the watch is wide, on purpose: only `music/`
+    /// holds tracks, but watching the root is what notices that directory
+    /// being created at all — on a fresh install it may not exist yet, and a
+    /// watch on a path that is not there watches nothing forever.
     ///
     /// Returns immediately: the walk happens on a thread of its own, so a
     /// library of ten thousand files does not hold up the socket.
@@ -152,6 +166,8 @@ fn run(
     let conn = hub.local();
     client.connected()?;
 
+    let music = root.join(MUSIC);
+
     while let Ok(nudge) = rx.recv() {
         // What the replica already has, once per wake rather than once per
         // file. Asking is not what makes this safe — `apply` is — but it keeps
@@ -161,10 +177,10 @@ fn run(
         let added = match nudge {
             Nudge::All => {
                 let mut found = Vec::new();
-                walk(&root, &mut found);
+                walk(&music, &mut found);
                 found
                     .iter()
-                    .filter(|p| offer(&mut client, &known, &root, p))
+                    .filter(|p| offer(&mut client, &known, &root, &music, p))
                     .count()
             }
             // A file is usually still being written when the create arrives,
@@ -187,7 +203,7 @@ fn run(
                 }
                 found
                     .iter()
-                    .filter(|p| offer(&mut client, &known, &root, p))
+                    .filter(|p| offer(&mut client, &known, &root, &music, p))
                     .count()
             }
         };
@@ -242,8 +258,16 @@ fn offer(
     client: &mut Client<HarkenApp>,
     known: &std::collections::HashSet<String>,
     root: &Path,
+    music: &Path,
     path: &Path,
 ) -> bool {
+    // The watch covers the whole media root, so this is where everything that
+    // is not music gets dropped. Without it a podcast appearing under a
+    // sibling directory would be indexed as a song, because it has exactly the
+    // extension and exactly the tags of one.
+    if !path.starts_with(music) {
+        return false;
+    }
     let Some(rel) = relative(root, path) else {
         return false;
     };
@@ -275,8 +299,8 @@ fn offer(
     }
 }
 
-/// The path as the log should carry it: relative to the music root, with `/`
-/// between the parts.
+/// The path as the log should carry it: relative to the media root, with `/`
+/// between the parts. A track therefore reads `music/Bach/air.wav`.
 ///
 /// **Not the absolute path.** The log is permanent, so an absolute one would
 /// freeze this machine's layout into it forever and break the day the
@@ -290,7 +314,7 @@ fn relative(root: &Path, path: &Path) -> Option<String> {
         match part {
             std::path::Component::Normal(p) => parts.push(p.to_str()?.to_string()),
             // Anything that is not a plain name — a `..`, a root — is not
-            // something under the music directory, whatever the path says.
+            // something under the media directory, whatever the path says.
             _ => return None,
         }
     }

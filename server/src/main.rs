@@ -80,24 +80,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let hub = Hub::<HarkenApp>::open(petros::open_path(&path)?, auth.authenticator())?;
 
-    // The music, if there is any. Two halves that have to agree on one string:
-    // the scanner writes each track's path *relative to this directory* into
-    // `file`, and `/media/` serves that same path back — so a client plays
-    // what the scanner wrote without either of them knowing where the
-    // directory is. `ServeDir` answers range requests, which is what makes
+    // The media directory, if there is one. Two halves that have to agree on
+    // one string: the scanner writes each track's path *relative to this
+    // directory* into `file`, and `/media/` serves that same path back — so a
+    // client plays what the scanner wrote without either of them knowing where
+    // the directory is. `ServeDir` answers range requests, which is what makes
     // seeking work rather than re-downloading.
-    let music = env("HARKEN_MUSIC").map(std::path::PathBuf::from);
+    //
+    // One root for every kind rather than one per kind, because `file` is on
+    // the kind-neutral side of the schema and its base has to be kind-neutral
+    // too. Music is `music/` under it and an episode will be a sibling, so a
+    // song's path reads `music/…` and its URL `/media/music/…`.
+    let media = env("HARKEN_MEDIA").map(std::path::PathBuf::from);
     let mut app = Router::new()
         .route("/sync", get(petros_axum::sync::<HarkenApp>))
         .route("/healthz", get(healthz))
         .with_state(hub.clone())
         .merge(petros_auth::server::router(auth.clone()));
-    if let Some(dir) = &music {
+    if let Some(dir) = &media {
         app = app.nest_service("/media", ServeDir::new(dir));
     }
 
     // Kept alive for the life of the process: dropping it stops the watch.
-    let _scanner = match &music {
+    let _scanner = match &media {
         Some(dir) => Some(library::Scanner::start(
             dir.clone(),
             hub.clone(),
@@ -125,11 +130,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // are is fine on a laptop and nowhere else.
         Mode::Dev => println!("  DEV AUTH: anyone is whoever they say they are"),
     }
-    match &music {
-        Some(dir) => println!("  music from {}", dir.display()),
+    match &media {
+        Some(dir) => println!("  media from {} (music in music/)", dir.display()),
         // Said out loud for the same reason as the client below: a server with
-        // no music looks exactly like one whose directory is misconfigured.
-        None => println!("  no music: set HARKEN_MUSIC to a directory"),
+        // no media looks exactly like one whose directory is misconfigured.
+        None => println!("  no media: set HARKEN_MEDIA to a directory"),
     }
     match &web {
         Some(dir) => println!(
