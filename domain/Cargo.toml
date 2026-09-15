@@ -17,7 +17,17 @@ default = ["storage"]
 # feature off. Checked with:
 #   cargo tree -p harken --no-default-features -e normal --target wasm32-unknown-unknown
 # `-e normal` because dev-dependencies pull in the engine and never ship.
-storage = ["dep:petros", "dep:serde", "dep:serde_json", "petros-schema/author"]
+storage = [
+    "dep:petros",
+    "dep:serde",
+    "dep:serde_json",
+    "petros-schema/author",
+    # `Id`'s serde impls, for the listening protocol: an id is the one
+    # domain fact on that wire, and it is what makes "the track that is
+    # playing" the same value at both ends. In the feature and not on the
+    # dependency line, for the reason the comment above gives.
+    "petros-schema/serde",
+]
 # A transport, for a client that runs. The domain itself has no opinion about
 # sockets and neither does the engine.
 ws = ["storage", "petros/ws"]

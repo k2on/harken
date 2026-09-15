@@ -14,6 +14,15 @@
 //! the rest — not the read model, not the engine, not the rows.
 
 pub mod functions;
+/// The listening session: one account, one thing playing, however many devices
+/// are watching it.
+///
+/// Wire types and nothing else — no row is written here and none is read. It
+/// is in this crate because this crate is the only vocabulary the server and
+/// the clients already share, and behind `storage` because the module the
+/// phone loads shares none of it.
+#[cfg(feature = "storage")]
+pub mod listening;
 /// The model: the tables, and the view a client reads.
 ///
 /// The tables are here in every build, because a mutation writes rows and the

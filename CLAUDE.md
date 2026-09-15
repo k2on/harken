@@ -25,6 +25,8 @@ domain/                  the domain — the ONLY apply
                          `tables!` generates the row types from it, and its
                          foreign keys generate the relationships between them
   src/schema.rs          the model: the tables, and the view a client reads
+  src/listening.rs       the *other* wire: one account's audio session, and the
+                         four sentences its devices say. Not the log, ever
   src/functions.rs       every mutation and every query, one definition each;
                          a mutation takes `ctx: &Ctx` for who authored it
   tests/conformance.rs   the native and wasm builds of `apply`, compared
@@ -38,6 +40,8 @@ server/                  axum, with one Petros handler mounted on it, and the
                          sign-in routes beside it
   src/library.rs         the media directory, as a peer: walk it, watch it,
                          author what it finds
+  src/listening.rs       one audio session per account: who is making the
+                         sound, and the socket at /listen that relays it
   tests/library.rs       …a directory of real files becoming songs, once
   nix/default.nix        the package, `serve`, and the NixOS service — where
                          the OpenID Connect provider is configured
@@ -1220,6 +1224,75 @@ only `the media resource ... was not suitable`, which names neither the URL
 nor the type. Each path segment is percent-encoded for the same reason a
 `#` in a filename is worse than a space: everything after it is a fragment,
 so the request stops mid-filename.
+
+## One audio session per account, and it is not in the log
+
+A person with a phone, a laptop and a browser tab has **one** thing playing,
+not three. Every device signed in as them sees it, any of them can pause it,
+and moving the sound from one to another is a sentence rather than a track
+started again somewhere else.
+
+**None of it is in the log, and none of it ever will be.** That is the first
+decision and everything else follows from it. The log is permanent and totally
+ordered: every peer replays every entry, forever. An afternoon of listening is
+thousands of pauses, seeks and skips, and not one of them is worth replaying
+tomorrow — "what is playing right now" is precisely the state that *should* be
+lost when the server restarts. So it lives in the server's memory, over a
+socket of its own at `/listen`, and `functions.rs` is still the only `apply`.
+
+The protocol is `domain/src/listening.rs`, and it is in the domain crate
+because that crate is the only vocabulary the server and the clients already
+share — not because it is domain. Nothing in it writes a row. It is behind
+`storage`, so the module the phone loads never carries it, and `Id`'s serde
+impls come in through that feature rather than the dependency line, for the
+reason the `petros-schema/author` comment gives.
+
+**JSON, not CBOR.** The engine's frames are CBOR because they are the log;
+these are not, and a third client reads them — the phone, in TypeScript, over
+a `WebSocket` the platform already has. `encode` and `decode` are in the
+protocol rather than at each end, so a server writing `serde_json::to_string`
+and a client writing something else cannot become two answers to one question.
+
+Three rules are the whole of `server/src/listening.rs`:
+
+- **Exactly one device is the output**, and only it makes a sound. Every other
+  device of that account draws what it is told.
+- **A command goes to the output, not to whoever asked.** That is the feature:
+  pressing pause on a phone pauses the laptop.
+- **A device that can be heard and asks for something, when nothing else is
+  the output, becomes the output.** Without this the first tap of the day
+  would do nothing and there would be a device to pick before any music could
+  start, which is a setup step for the common case.
+
+Some details that are each a decision:
+
+- **A device is a login.** `petros-auth` says a session is "one login on one
+  device", which is exactly the identity this needs and already exists — so
+  the device id *is* `ctx.session.id`. A reloaded tab is the same device and
+  does not appear twice; signing out and back in is honestly a new one.
+- **`audible` is a field, not a guess.** The desktop build has no audio device
+  at all, so it is a remote control and can never be the output. The server is
+  told rather than inferring it from a user agent.
+- **`Desk` owns no socket.** Every method takes what happened and delivers what
+  falls out, so who becomes the output, what a command does when nothing can be
+  heard, and what a device leaving means are all tested against channels rather
+  than against a network. The engine's own shape, for the engine's own reason.
+- **A hand-off is one command.** `Command::Start` carries the queue, the place
+  in it, the point in the track and whether it was playing — because somebody
+  pressing a track and the session moving to another device are the same
+  sentence with different numbers in it. Two commands would be two code paths
+  on every client and one of them would be the one nobody tested.
+- **The old output is told nothing.** It learns from the broadcast that it is
+  no longer the output, and a client that is not the output is silent. One
+  rule, in one place, rather than a stop command that a dropped socket could
+  lose.
+- **There is no timestamp on the position.** The server has a clock and the
+  clients have clocks and they do not agree, so a device that wants a moving
+  scrubber counts from when *it* received the state — and the output resends
+  about once a second, which is what keeps the counting honest.
+- **The last device out takes the room with it.** Keeping the queue would mean
+  a phone opened tomorrow resumes an afternoon nobody remembers, and the log is
+  where things are kept.
 
 ## The media directory is a peer, and a rescan is free
 

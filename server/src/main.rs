@@ -34,7 +34,8 @@ use axum::extract::State;
 use axum::routing::get;
 use axum::Router;
 use harken::HarkenApp;
-use harken_server::library;
+use harken_server::listening::route::{listen, Listening};
+use harken_server::{library, listening};
 use petros_auth::oidc::Provider;
 use petros_auth::server::{Auth, Mode};
 use petros_auth::session::SessionStore;
@@ -92,10 +93,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // too. Music is `music/` under it and an episode will be a sibling, so a
     // song's path reads `music/…` and its URL `/media/music/…`.
     let media = env("HARKEN_MEDIA").map(std::path::PathBuf::from);
+
+    // What each account is listening to, and where. A `HashMap` in memory
+    // rather than anything durable, and that is the decision rather than a
+    // shortcut: the log is permanent and an afternoon of pauses and skips is
+    // not worth replaying tomorrow. See `harken::listening`.
+    let desk = Arc::new(std::sync::Mutex::new(listening::Desk::new()));
     let mut app = Router::new()
         .route("/sync", get(petros_axum::sync::<HarkenApp>))
         .route("/healthz", get(healthz))
         .with_state(hub.clone())
+        // Its own state, so it is merged rather than added: this one reads who
+        // a token proves and the sessions, and knows nothing about the log.
+        .merge(
+            Router::new()
+                .route("/listen", get(listen))
+                .with_state(Listening {
+                    auth: auth.clone(),
+                    desk: desk.clone(),
+                }),
+        )
         .merge(petros_auth::server::router(auth.clone()));
     if let Some(dir) = &media {
         app = app.nest_service("/media", ServeDir::new(dir));
@@ -124,6 +141,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     println!("harken-server on ws://{addr}/sync — {}", path.display());
+    println!("  one listening session per account on ws://{addr}/listen");
     match auth.mode() {
         Mode::Oidc(provider) => println!("  signing in through {}", provider.issuer()),
         // Loudly, every time: a server that takes people's word for who they
