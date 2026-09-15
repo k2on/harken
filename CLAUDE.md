@@ -1005,6 +1005,14 @@ about the log changed to carry a recording. Every one was checked for a
 licence and a transcode that answers `audio/mpeg` to a range request — a dead
 link there is a silent demo.
 
+**One recording per work.** The harvest found two complete Goldbergs, and
+keeping both meant sixty-four rows for thirty-two pieces — an album claiming
+64 tracks and the same variations twice under two sets of titles. Having a
+piece twice is not having two pieces. The Brandenburgs show the rule is
+about *pieces* rather than performers: no movement there appears twice, and
+Nos. 1 and 4 are two recordings between them because that is the only way
+either is complete.
+
 **Almost all of it reserves no rights, and the exception is paid for rather
 than ignored.** The harvest kept public domain, PDM and CC0 only, because a
 credit nobody draws is a condition nobody met. That rule would have left the
