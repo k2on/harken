@@ -168,7 +168,14 @@ goes through the `petros.*` options the engine's `workspace.nix` declares;
 for the `[patch]`, `petros-codegen` for the module, `rust-toolchain.toml` for
 the toolchain. The `petros` input in `flake.nix` is only the code that does
 that reading, so bumping the engine is editing `Cargo.toml`; `nix flake
-update petros` moves the nix and nothing else. The phone is pinned the same
+update petros` moves the nix and nothing else.
+
+Editing it is not the whole of bumping it, though: `mobile/eas.json` is
+*generated* and carries that revision as `PETROS_REV`, so a pin bump without
+`nix run .#write-files` beside it fails `nix flake check` on the files module
+rather than on anything that compiles. The diff it prints is the revision, on
+one line, which is the whole message — and it is easy to read past as a
+formatting complaint about a file nobody typed. The phone is pinned the same
 way: `mobile/nix` imports petros-js's mobile module from the `@petros/client`
 revision `mobile/package.json` names, the same repository as the client the
 screens call.
