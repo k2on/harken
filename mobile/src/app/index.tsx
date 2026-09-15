@@ -3,7 +3,11 @@
  *
  * Whatever you said last time, because a peer that forgets its server on every
  * launch makes you retype a LAN address before you can look at your own data.
- * The login is remembered too, so signing in is once per server per phone.
+ * The login is remembered too, so signing in is once per server per phone —
+ * which is why a phone that has one for the server it was last pointed at
+ * never reaches this screen at all. Both answers are already given; asking
+ * for them again on every launch is asking somebody to confirm what they
+ * said yesterday. Signing out in the library is what comes back here.
  *
  * The default, the first time and only then, is guessed from whatever host
  * Metro is being served from, because that is almost always the machine
@@ -21,7 +25,7 @@
  */
 
 import { useMemo, useState } from 'react';
-import { router } from 'expo-router';
+import { Redirect, router } from 'expo-router';
 import Constants from 'expo-constants';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -52,6 +56,23 @@ function guessServer(): string {
 }
 
 export default function Connect() {
+  // Taken once, at mount, rather than read as the screen lives: signing in
+  // writes a login, and a value that moved underneath would redirect out of
+  // the very screen that was showing the sheet.
+  const [to] = useState(start);
+  if (to) {
+    return <Redirect href={{ pathname: '/library', params: { server: to, online: '1' } }} />;
+  }
+  return <Ask />;
+}
+
+/** The server this phone can open straight away, if there is one. */
+function start(): string | null {
+  const server = recallServer();
+  return server && remembered(server) ? server : null;
+}
+
+function Ask() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const [server, setServer] = useState(() => recallServer() ?? guessServer());
@@ -71,9 +92,15 @@ export default function Connect() {
     [server, urlProblem],
   );
 
+  // `replace` rather than `push`, because the sign-in may have come back
+  // through the `auth` route and left it on the stack — and a back gesture out
+  // of the library should not land on a screen that is mid-exchange.
   const go = (target: string, online: boolean) => {
     rememberServer(target);
-    router.push({ pathname: '/library', params: { server: target, online: online ? '1' : '0' } });
+    router.replace({
+      pathname: '/library',
+      params: { server: target, online: online ? '1' : '0' },
+    });
   };
 
   const join = async () => {

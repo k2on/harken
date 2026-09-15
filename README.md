@@ -212,7 +212,9 @@ Served by the server there is nothing to tell.
 An Expo app that calls into the same Rust, so it needs a development
 build rather than Expo Go. It signs in through the server too: enter the
 server's address, tap sign in, and the provider opens in a sheet that
-closes itself when the login comes back on `harken://`.
+closes itself when the login comes back on `harken://`. Once per server
+per phone: after that it opens straight into the library, because both
+answers that screen wants have already been given.
 
 It plays, too. The library is the same one the desktop shows, browsed
 by playlist, album or artist; tapping a row starts it and the list

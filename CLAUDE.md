@@ -56,6 +56,7 @@ iced/                    the desktop and browser client
   nix/web.nix            the wasm build, `web` and `web-build`
 mobile/                  the phone client; src/ is UI and a socket, nothing else
   src/auth.ts            …and signing in, through a browser sheet and `harken://`
+  src/app/auth.tsx       …and the route that scheme names, because it is one
   src/peer.ts            the database, the maintained library, and what a
                          screen may ask of either
   src/player.tsx         what is playing — `expo-audio`, the queue, and the
@@ -436,7 +437,8 @@ Where the code comes back to is the one thing that differs:
   `localStorage`. Served by the server it signs in against its own origin,
   which is why `services.harken.web` and `HARKEN_WEB` exist;
 - the phone opens the login in `expo-web-browser`'s sheet and comes back on
-  `harken://auth`, the scheme `app.config.ts` declares; `mobile/src/auth.ts`.
+  `harken://auth`, the scheme `app.config.ts` declares; `mobile/src/auth.ts`,
+  and `mobile/src/app/auth.tsx`, because that URL is also a route.
 
 `nix run .#serve` runs in dev auth — no provider, anyone is whoever they say,
 said loudly at startup — so `nix run .#iced alice` is a login for a name and
@@ -844,6 +846,26 @@ against one of them.
   an empty library over a full database. It reads exactly like "it saves
   nothing", which is a horrible bug to be told about and an easy one to write.
   `@petros/client` puts it in the session's `scratch` for this reason.
+- **The URL a sign-in comes back on is also a route, and it has to exist.**
+  `harken://auth?code=…` is two things at once: the answer
+  `openAuthSessionAsync` is watching for, and a deep link the OS hands to the
+  app. `expo-router` navigates on the second whatever the first does — so with
+  no `src/app/auth.tsx` the sign-in lands on the unmatched-route screen, which
+  says *this screen does not exist* while the exchange is quietly succeeding
+  behind it. That is a lie about which half is broken, and it sends you to the
+  server to look for a page that was never missing. The route takes the code
+  and hands it to the sign-in that is waiting for it (`offer`), which is
+  whichever of the two saw it first; with nothing waiting — the app was killed
+  while the browser was open, and the link relaunched it — it trades the code
+  itself, against the server `signIn` recorded *before* opening the sheet.
+- **A phone that has a login does not ask for one.** Both answers the connect
+  screen wants are remembered, so when `recallServer()` has a login the screen
+  redirects into the library rather than rendering — asking somebody to
+  confirm the server they typed and the account they chose, on every launch,
+  is asking them to agree with themselves. Signing out is what comes back, and
+  it works because it forgets the login first. `go` then `replace`s rather
+  than pushing, so a back gesture out of the library cannot land on an `auth`
+  route that is mid-exchange.
 - **The phone remembers where it was pointed, and who it was there.**
   `src/auth.ts` keeps the last server and, per server, the login — over
   `src/storage.ts`, one JSON file read synchronously, because a connect
