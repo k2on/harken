@@ -1,60 +1,44 @@
 //! The glyphs Fira Sans does not have, drawn rather than typed.
 //!
-//! Two things had to be worked around to put a heart on a row, and the second
+//! Two things had to be worked around to put a shape on a row, and the second
 //! one is only visible in a browser.
 //!
 //! **They cannot be characters.** iced embeds Fira Sans, which is a text face:
-//! it has no U+2665 heart, and no U+25B6 play, U+275A pause or U+2582 block
-//! either. A missing glyph lays out fine and draws a `?`, or nothing at all,
-//! so the button looks broken rather than unfontable — which is how the
-//! transport shipped with a `?` on its play button while the heart beside it
-//! was correct, because only the heart had been through this once already.
+//! it has no U+25B6 play, U+275A pause or U+2582 block, and had no U+2665
+//! heart either back when there was one. A missing glyph lays out fine and
+//! draws a `?`, or nothing at all, so the button looks broken rather than
+//! unfontable — which is how the transport shipped with a `?` on its play
+//! button while the heart beside it was correct, because only the heart had
+//! been through this once already.
 //!
 //! The rule, learned twice: **anything outside Latin-1 is a drawing.** `«`,
 //! `»` and `·` are in the font; `▶`, `❚`, `♥` and `▂` are not.
 //!
 //! **It cannot be a `canvas` either, once there is one per row.** A canvas
 //! inside a `scrollable` is not translated to the row it belongs to under the
-//! WebGL renderer: every heart in the list is drawn at very nearly the same
-//! place, so twenty of them stack into what looks like one stray heart near
-//! the bottom of the list, and scrolling moves the pile rather than the
-//! hearts. It looks like "the heart does not render", which is why it survived
-//! a demo — one heart *was* rendering, and it was all twenty.
+//! WebGL renderer: every one in the list is drawn at very nearly the same
+//! place, so twenty of them stack into what looks like one stray shape near
+//! the bottom of the list, and scrolling moves the pile rather than the rows.
+//! It looks like "it does not render", which is why it survived a demo — one
+//! *was* rendering, and it was all twenty.
 //!
-//! So it is an SVG. An image is positioned by the widget that holds it rather
-//! than by geometry in a shared layer, which is exactly the part that was
-//! broken, and it needs no font and no icon asset.
+//! So these are SVGs. An image is positioned by the widget that holds it
+//! rather than by geometry in a shared layer, which is exactly the part that
+//! was broken, and it needs no font and no icon asset.
 //!
-//! Its color is the theme's, applied through the `svg` style's color filter
-//! rather than written into the file. A heart with `fill="#d9364f"` baked in
-//! is a heart that is the same red on a white row, a dark row and the accent
-//! -colored row under the cursor — which is three different backgrounds and
-//! one color that was only ever chosen against the first.
+//! Their color is the theme's, applied through the `svg` style's color filter
+//! rather than written into the file. A shape with a color baked in is the
+//! same color on a white row, a dark row and the accent-colored row under the
+//! cursor — three different backgrounds, and one color that was only ever
+//! chosen against the first.
 
 use iced::widget::{svg, Svg};
 use iced::Theme;
 
-/// Filled when the song is on the playlist, outlined when it is not. The same
-/// path either way: two cubics down each side, meeting at the point.
-///
-/// Neither carries a color worth keeping — the `fill` and `stroke` below are
-/// placeholders that iced's color filter replaces — because a hardcoded red
-/// is a red that cannot follow the theme. See [`heart`].
-const FILLED: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-<path d="M12 21.4C2.4 14.3 1 8.3 4.3 5.1 7.3 2.2 10.4 3.7 12 6.9c1.6-3.2 4.7-4.7 7.7-1.8 3.3 3.2 1.9 9.2-7.7 16.3z" fill="#000"/>
-</svg>"##;
-
-const OUTLINE: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-<path d="M12 21.4C2.4 14.3 1 8.3 4.3 5.1 7.3 2.2 10.4 3.7 12 6.9c1.6-3.2 4.7-4.7 7.7-1.8 3.3 3.2 1.9 9.2-7.7 16.3z" fill="none" stroke="#000" stroke-width="1.6"/>
-</svg>"##;
-
-/// How big a heart is drawn in a table row.
-pub const SIZE: f32 = 15.0;
-
 /// How big a transport button is drawn in the now-playing bar.
 pub const TRANSPORT: f32 = 15.0;
 
-/// The transport glyphs, as paths in the same 24-unit box as the heart.
+/// The transport glyphs, as paths in a 24-unit box.
 const PLAY: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
 <path d="M8 5l11 7-11 7z" fill="#000"/></svg>"##;
 
@@ -99,38 +83,29 @@ pub fn next<'a>() -> Svg<'a> {
     transport(NEXT, true)
 }
 
-/// The heart, for a row that is on the playlist or is not.
+/// The transport, on the row that is playing.
 ///
-/// The color comes from the theme rather than from the file, through the
-/// `svg` style's color filter — so the same two shapes serve light and dark,
-/// and a hearted row on the cursor's own background is drawn in the color
-/// that background was built to be read against. `on_cursor` is that case: the
-/// row is painted in the accent color, so a red heart on it would be two
-/// saturated colors fighting.
+/// The only shape in the table, which is what makes it the thing the eye
+/// finds: a list of a hundred near-identical names has one row with a mark
+/// beside it, and that row is the one making a sound. It is a button as well
+/// as a mark, because the place you look to see what is playing is the place
+/// you reach to stop it.
 ///
-/// `from_memory` keys its cache on the bytes, and there are exactly two sets
-/// of them, so rebuilding this every frame parses nothing.
-pub fn heart<'a>(filled: bool, on_cursor: bool) -> Svg<'a> {
-    svg(svg::Handle::from_memory(if filled {
-        FILLED
-    } else {
-        OUTLINE
-    }))
-    .width(SIZE)
-    .height(SIZE)
-    .style(move |theme: &Theme, _| {
-        let palette = crate::palette::of(theme);
-        svg::Style {
-            color: Some(match (filled, on_cursor) {
-                // On the cursor's row everything is drawn in the one
-                // color that row is guaranteed to be legible in.
-                (true, true) => palette.primary.base.text,
-                (false, true) => palette.primary.base.text.scale_alpha(0.55),
-                // Off it, a hearted row earns the accent; an empty one is
-                // an outline that should not compete with the title.
-                (true, false) => palette.danger.base.color,
-                (false, false) => palette.background.base.text.scale_alpha(0.35),
-            }),
-        }
-    })
+/// `on_cursor` is the case the color has to answer: that row is painted in
+/// the accent, so the mark takes the one color that background was paired
+/// with. Off it, the mark *is* the accent, the same as the title beside it.
+pub fn playing<'a>(paused: bool, on_cursor: bool) -> Svg<'a> {
+    svg(svg::Handle::from_memory(if paused { PLAY } else { PAUSE }))
+        .width(TRANSPORT)
+        .height(TRANSPORT)
+        .style(move |theme: &Theme, _| {
+            let palette = crate::palette::of(theme);
+            svg::Style {
+                color: Some(if on_cursor {
+                    palette.primary.base.text
+                } else {
+                    palette.primary.base.color
+                }),
+            }
+        })
 }

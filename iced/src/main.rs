@@ -10,11 +10,11 @@
 //!   browser:     nix run .#web            # this, at http://localhost:8080
 //!   a phone:     the Expo app, same server
 //!
-//! All of them are peers of one server, so a song favourited in the browser
-//! hearts itself on the phone. Press the offline button in any of them, mutate
-//! on both sides, come back online, and watch the rebase: your favourite lands
-//! after whatever arrived while you were away, because "add to favourites"
-//! reads the end of the playlist rather than naming a position.
+//! All of them are peers of one server, so a song the scanner finds is in the
+//! library on the phone. Press the offline button in any of them, mutate on
+//! both sides, come back online, and watch the rebase: what you did lands
+//! after whatever arrived while you were away, because a playlist mutation
+//! reads the end of the list rather than naming a position.
 //!
 //! Who you are is what the server says. Signing in is `petros_auth`'s flow —
 //! open one URL, get one code back — and looks different on the two targets
@@ -245,8 +245,8 @@ impl Source {
 /// refused `l` in the sidebar means the track list.
 ///
 /// The now-playing bar is deliberately not one of them. Everything it does has
-/// a key of its own — `p`, `{`, `}` — so making it a third place the cursor
-/// can be would only add a stop to `<Tab>` that nobody needs to pass through.
+/// a key of its own — `<Space>`, `{`, `}` — so making it a third place the
+/// cursor can be would only add a stop to `<Tab>` nobody needs to pass through.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Pane {
     Sidebar,
@@ -326,8 +326,7 @@ fn encode(part: &str, out: &mut String) {
 #[cfg_attr(feature = "demo", allow(dead_code))]
 #[derive(Debug, Clone)]
 enum Message {
-    /// The heart: on the playlist, or off it.
-    ToggleFavorite(Id, bool),
+    /// Whether this row is on the playlist the view was read against.
     ToggleLink,
     /// The sidebar: show a playlist, an album, an artist, or everything.
     Select(Source),
@@ -357,8 +356,12 @@ struct Choice {
 }
 
 // The table's columns. Portions rather than pixels, so the text columns share
-// whatever width is left after the heart, the track number and the duration,
+// whatever width is left after the transport, the track number and the duration,
 // and none of them can push the others off the edge at a narrow window.
+/// The column the playing row's transport sits in, and the gutter every
+/// other row leaves empty. A fixed width, so the titles line up whatever is
+/// or is not playing.
+const TRANSPORT: Length = Length::Fixed(31.0);
 const TRACK: Length = Length::Fixed(30.0);
 const NAME: Length = Length::FillPortion(5);
 const ARTIST: Length = Length::FillPortion(3);
@@ -474,7 +477,7 @@ fn section<'a>(label: String) -> Element<'a, Message> {
     )
     .width(Length::Fill)
     // Indented to where the track numbers start, so the heading sits over the
-    // column it heads rather than out in the heart's margin.
+    // column it heads rather than out in the transport's gutter.
     .padding(iced::Padding {
         top: 8.0,
         right: 4.0,
@@ -541,15 +544,9 @@ struct Peer {
     /// What `view` draws. iced's `view` takes `&self` and decoding needs
     /// nothing mutable, but doing it once per change beats once per frame.
     items: Vec<Item>,
-    /// The playlist's size, maintained. The status line showed it by counting
-    /// the list on every frame — twenty times a second, over every song.
-    /// How many items are on the playlist the hearts stand for.
-    on_playlist: harken::PlaylistCount,
-    /// Which playlist a heart means. The domain has no favourites of its own.
-    ///
-    /// Not the same thing as what the sidebar is *showing*: a heart always
-    /// means favourites, so hearting something while browsing an album puts it
-    /// where a heart has always put it.
+    /// The playlist the library view is read against, which is what gives
+    /// every row its `on_playlist`. The domain has no favourites of its own —
+    /// a playlist named Favourites is just the first one.
     playlist: harken::Id<harken::tables::Playlist>,
     /// What the sidebar picked, and the list that answers it.
     ///
@@ -619,7 +616,7 @@ impl Peer {
         client.set_session(Some(login.session.clone()));
         client.set_token(Some(login.token.clone()));
 
-        // A heart means "on this playlist", so there has to be one. The first
+        // The view is read against a playlist, so there has to be one. The first
         // run of a peer makes it; after that it is whichever came back first,
         // which is stable because playlists are ordered by when they were made.
         let playlist = {
@@ -641,7 +638,6 @@ impl Peer {
             client,
             link: None,
             library: harken::library_view(playlist),
-            on_playlist: harken::playlist_count(playlist),
             playlist,
             source: Source::Library,
             shown: Vec::new(),
@@ -654,7 +650,6 @@ impl Peer {
         {
             let mut store = peer.client.store();
             peer.library.hydrate(&mut store);
-            peer.on_playlist.hydrate(&mut store);
         }
         peer.items = harken::items_of(&peer.library);
         let _ = peer.client.take_changes();
@@ -690,7 +685,6 @@ impl Peer {
             Changes::Applied(changes) => {
                 let patches = {
                     let mut store = self.client.store();
-                    self.on_playlist.apply(&mut store, &changes);
                     self.library.apply(&mut store, &changes)
                 };
                 // Splice rather than rebuild: the query is maintained, and so
@@ -701,7 +695,6 @@ impl Peer {
                 {
                     let mut store = self.client.store();
                     self.library.hydrate(&mut store);
-                    self.on_playlist.hydrate(&mut store);
                 }
                 self.items = harken::items_of(&self.library);
             }
@@ -1051,24 +1044,10 @@ impl App {
                 self.pane = self.pane.next();
                 self.reveal()
             }
-            vim::Action::Toggle => {
-                let at = self.at(self.pane);
-                match self.pane {
-                    // A heart, which is what a row's own toggle is here.
-                    Pane::Tracks => {
-                        let row = self
-                            .peer
-                            .as_ref()
-                            .and_then(|p| p.rows().get(at))
-                            .map(|i| (i.id, i.on_playlist()));
-                        match row {
-                            Some((id, on)) => self.update(Message::ToggleFavorite(id, on)),
-                            None => Task::none(),
-                        }
-                    }
-                    Pane::Sidebar => self.activate(),
-                }
-            }
+            // The same in both panes, because it is not about what the
+            // cursor is on: `p` used to do this and a music player's most
+            // pressed key should be the biggest one on the keyboard.
+            vim::Action::Toggle => self.update(Message::PlayPause),
             vim::Action::Search(query) => {
                 self.search = query;
                 // From one before the cursor, so that a search finds a match
@@ -1090,7 +1069,6 @@ impl App {
                     self.help = !self.help;
                     Task::none()
                 }
-                'p' => self.update(Message::PlayPause),
                 '}' => self.update(Message::Skip(1)),
                 '{' => self.update(Message::Skip(-1)),
                 _ => Task::none(),
@@ -1280,8 +1258,6 @@ impl App {
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
-        // Typing, ticking and pulling the plug all leave the list alone.
-        let edited = matches!(message, Message::ToggleFavorite(..));
         let outcome: Result<(), String> = match message {
             Message::SignIn => return self.start_sign_in(),
             Message::SignedIn(outcome) => {
@@ -1392,14 +1368,6 @@ impl App {
                         }
                         Ok(())
                     }
-                    Message::ToggleFavorite(id, favorited) => {
-                        let m = if favorited {
-                            mutators::remove_from_playlist(peer.playlist, id)
-                        } else {
-                            mutators::add_to_playlist(peer.playlist, id)
-                        };
-                        peer.client.mutate(m).map(|_| ())
-                    }
                     Message::ToggleLink => {
                         match peer.link {
                             Some(_) => {
@@ -1436,7 +1404,10 @@ impl App {
                     login.token.clear();
                 }
             }
-            if edited || arrived {
+            // Nothing this client does writes to the library any more — the
+            // scanner authors it and the playlists are read here — so the
+            // list moves only when something arrives from the server.
+            if arrived {
                 peer.refresh();
             }
         }
@@ -1550,13 +1521,13 @@ impl App {
 
     /// What the sidebar picked.
     ///
-    /// The demo is a listening UI and nothing else: no sign-in (it has no
-    /// accounts and no server), no typing a song in, no bulk favouriting and
-    /// no per-row remove. The real client keeps all four, because against a
-    /// server they are the only way to sign in, add anything, or take it back
-    /// out again — so they are compiled out here rather than deleted.
+    /// A listening UI and nothing else: the library is what the scanner
+    /// found, and this reads it. The one thing the demo drops is signing in,
+    /// because it has no accounts and no server to sign in to — compiled out
+    /// rather than deleted, since the real client's is the only way in.
     fn view_list(&self, peer: &'_ Peer) -> Element<'_, Message> {
         let playing = self.player.track().map(|t| t.id);
+        let sounding = self.player.is_playing();
         // Only drawn while this pane has the keyboard. A dimmed cursor here
         // would sit one shade away from the zebra and mean something entirely
         // different from it, which is a worse thing to show than nothing: the
@@ -1589,12 +1560,25 @@ impl App {
                             col = col.push(section(part.clone()));
                         }
                     }
-                    let mut line = Row::new().spacing(0).align_y(iced::Alignment::Center).push(
-                        button(icon::heart(item.on_playlist(), on_cursor))
-                            .style(button::text)
-                            .padding([0, 8])
-                            .on_press(Message::ToggleFavorite(item.id, item.on_playlist())),
-                    );
+                    // The one shape in the table, on the one row making a
+                    // sound. Every other row leaves the column empty rather
+                    // than drawing something greyed out: a mark that is
+                    // always there is a mark that says nothing.
+                    let here = playing == Some(item.id);
+                    let mut line =
+                        Row::new()
+                            .spacing(0)
+                            .align_y(iced::Alignment::Center)
+                            .push(if here {
+                                Element::from(
+                                    button(icon::playing(!sounding, on_cursor))
+                                        .style(button::text)
+                                        .padding([0, 8])
+                                        .on_press(Message::PlayPause),
+                                )
+                            } else {
+                                Element::from(container(text("")).width(TRANSPORT))
+                            });
                     if album_page {
                         line = line.push(cell(
                             // 0 is "nobody said", and an empty cell says that
@@ -1618,7 +1602,7 @@ impl App {
                             // The one playing is the only thing in the table drawn
                             // in the accent color, so it is findable at a glance
                             // in a list of twenty near-identical rows.
-                            playing == Some(item.id),
+                            here,
                             false,
                         ))
                         .push(cell(item.creator.clone(), ARTIST, on_cursor, false, true))
@@ -1661,7 +1645,7 @@ impl App {
         let mut headings = Row::new()
             .spacing(0)
             .align_y(iced::Alignment::Center)
-            .push(container(text("")).width(Length::Fixed(31.0)));
+            .push(container(text("")).width(TRANSPORT));
         if album_page {
             headings = headings.push(heading("#", TRACK));
         }
@@ -1749,10 +1733,9 @@ impl App {
                 "<Enter>  o",
                 "in the sidebar, step into it; in the table, play",
             ),
-            ("<Space>", "heart the track under the cursor"),
+            ("<Space>", "play or pause"),
             ("/", "search this pane; <Enter> accepts, <Esc> drops it"),
             ("n  N", "the next match, the one before"),
-            ("p", "play or pause"),
             ("{  }", "the previous track, the next one"),
             ("?", "this"),
         ];
@@ -1775,9 +1758,8 @@ impl App {
     /// been applied, `pending` is what this peer has done that no server has
     /// confirmed yet. Kept in the demo — it is most of what the demo is for.
     fn view_status(&self, peer: &'_ Peer) -> Element<'_, Message> {
-        let favorites = peer.on_playlist.get();
         let mut line = format!(
-            "{} songs, {favorites} favourited · cursor {} · {} pending",
+            "{} songs · cursor {} · {} pending",
             peer.items.len(),
             peer.client.cursor(),
             peer.pending,
@@ -1851,8 +1833,8 @@ impl App {
 
         let position = self.player.position();
         let duration = self.player.duration().max(0.1);
-        // Nothing here takes the cursor: `p`, `{` and `}` do all three, so a
-        // pane for them would be a stop on `<Tab>` that nobody needs.
+        // Nothing here takes the cursor: `<Space>`, `{` and `}` do all three,
+        // so a pane for them would be a stop on `<Tab>` that nobody needs.
         let transport = row![
             button(icon::previous())
                 .style(button::text)

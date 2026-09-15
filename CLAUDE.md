@@ -11,11 +11,12 @@ domain crate rather than a package, because everything it exports was already
 defined there. Each directory carries its own nix under `nix/`.
 
 The domain is media — songs today, an episode or a sermon later — and
-playlists. There is no favourites table: a heart means "on the playlist this
-client is showing", and which playlist that is belongs to the client. A
-playlist is ordered, so adding to one reads `MAX(pos) + 1` — which is what
-makes the rebase visible: heart something while offline and it lands after
-whatever arrived while you were away.
+playlists. There is no favourites table: the phone's heart means "on the
+playlist this client is showing", and which playlist that is belongs to the
+client. A playlist is ordered, so adding to one reads `MAX(pos) + 1` — which
+is what makes the rebase visible: heart something on the phone while offline
+and it lands after whatever arrived while you were away. The desktop has no
+heart; see "There is one shape in the table" below.
 
 ## Layout
 
@@ -45,7 +46,7 @@ server/                  axum, with one Petros handler mounted on it, and the
 iced/                    the desktop and browser client
   src/main.rs            …and how each target signs in: a loopback port, or the page
   src/icon.rs            every glyph the font has not got, drawn as SVG:
-                         the heart and the transport (see below)
+                         the transport, in the bar and on the playing row
   src/vim.rs             the keyboard: vim's grammar, and the one trait a
                          component implements to get it
   src/player.rs          what is playing — an <audio> element in a browser,
@@ -928,6 +929,14 @@ every row is one line. Four things about it are load-bearing:
   exactly one legible color** — the one that accent was paired with. A
   dimmed column there gets the same hue at lower alpha, never a grey that was
   chosen against the window instead.
+- **There is one shape in the table, and it is on the row making a sound.**
+  The heart used to sit in that column on every row, which meant the column
+  said something about all hundred of them and therefore nothing about any.
+  Now it is empty except on what is playing, where it is the transport —
+  play or pause, and a button, because the place you look to see what is
+  playing is the place you reach to stop it. The hearts are gone with it:
+  `add_to_playlist` is still in the domain and still what the phone calls,
+  it simply has no button here, the same as `add_song`.
 - **The two highlights mean different things and are drawn differently.** The
   sidebar's is a *selection* — what the table is showing — so it persists when
   the keyboard is elsewhere. The table's is a *cursor*, only ever "where the
@@ -1142,9 +1151,9 @@ others and mixing them is what makes keyboard code untestable:
   in `vim.rs`.
 
 There are two panes, the sidebar and the table, and **the now-playing bar is
-not one of them**: everything it does has a key of its own (`p`, `{`, `}`), so
-making it a third place the cursor can be would only add a stop to `<Tab>`
-that nobody needs to pass through. In the sidebar the cursor *is* the
+not one of them**: everything it does has a key of its own (`<Space>`, `{`,
+`}`), so making it a third place the cursor can be would only add a stop to
+`<Tab>` that nobody needs to pass through. In the sidebar the cursor *is* the
 selection — moving onto a row shows it, with no `<Enter>` in between, because
 needing a key to confirm what you have already moved onto is a keystroke that
 only ever means "yes, that one". `<Enter>` there steps into the table instead.
