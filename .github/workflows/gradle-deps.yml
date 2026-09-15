@@ -22,7 +22,11 @@ on:
 jobs:
   record:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    # The recording is a cold build by construction: it restores no gradle
+    # state layer, because realising one would replay the very lockfile being
+    # regenerated. So it recompiles the plugins and re-runs CMake that a
+    # normal build gets from the layer, and costs what a first build costs.
+    timeout-minutes: 180
 
     steps:
       - uses: actions/checkout@v4
