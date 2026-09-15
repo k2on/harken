@@ -98,7 +98,7 @@ fn decode(s: &str) -> String {
 }
 
 #[cfg(target_arch = "wasm32")]
-pub use browser::{push, read};
+pub use browser::{read, write};
 
 #[cfg(target_arch = "wasm32")]
 mod browser {
@@ -110,22 +110,28 @@ mod browser {
         (!hash.is_empty()).then(|| Route::parse(&hash))
     }
 
-    /// Put `route` in the address bar, as a new entry in the history.
+    /// Put `route` in the address bar, as a new entry in the history or in
+    /// place of the current one.
     ///
-    /// `pushState` rather than setting `location.hash`: the two do the same
-    /// thing to the URL, and the second also fires a `hashchange` that the
-    /// poll would read back as somebody pressing the back button. Writing
-    /// through the history API leaves the page's own read of the hash to be
-    /// the one it just wrote.
-    pub fn push(route: &Route) {
+    /// The history API rather than setting `location.hash`: the two do the
+    /// same thing to the URL, and the second also fires a `hashchange` that
+    /// the poll would read back as somebody pressing the back button. Writing
+    /// through `history` leaves the page's own read of the hash to be the one
+    /// it just wrote.
+    pub fn write(route: &Route, keep: bool) {
         let Some(window) = web_sys::window() else {
             return;
         };
         let Ok(history) = window.history() else {
             return;
         };
-        let _ =
-            history.push_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(&route.fragment()));
+        let url = Some(route.fragment());
+        let null = wasm_bindgen::JsValue::NULL;
+        let _ = if keep {
+            history.push_state_with_url(&null, "", url.as_deref())
+        } else {
+            history.replace_state_with_url(&null, "", url.as_deref())
+        };
     }
 }
 
@@ -138,7 +144,7 @@ pub fn read() -> Option<Route> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub fn push(_route: &Route) {}
+pub fn write(_route: &Route, _keep: bool) {}
 
 #[cfg(test)]
 mod tests {

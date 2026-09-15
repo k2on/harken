@@ -1026,12 +1026,34 @@ every row is one line. Four things about it are load-bearing:
     subscribe to. The tick already runs twenty times a second for the
     transport, and reading `location.hash` on it is a string compare that
     gives the same answer a frame later.
-  - **`pushState`, not `location.hash = …`.** Both change the URL; the second
-    also fires a `hashchange` the poll would read back as somebody pressing
-    the back button. And the push is skipped when the address bar already says
-    it, which is exactly the case where the route *came* from the back
-    button — pushing there would make one place two history entries and the
-    back button need pressing twice.
+  - **The history API, not `location.hash = …`.** Both change the URL; the
+    second also fires a `hashchange` the poll would read back as somebody
+    pressing the back button. And the write is skipped when the address bar
+    already says it, which is exactly the case where the route *came* from the
+    back button — writing there would make one place two history entries and
+    the back button need pressing twice.
+  - **The bar is reconciled, not pushed.** This is the part the first version
+    got wrong, and it is worth the paragraph. There are four ways what is
+    shown can change — a click on the sidebar, `j` in it, the row menu's
+    "Go to", and the back button — and pushing the route from `Message::Select`
+    covered three of them. The one it missed was the sidebar's own cursor,
+    which is how this window is actually driven: the cursor *is* the selection
+    there, so every `j` changes what is shown without going through `Select`
+    at all, and the URL silently stopped matching the screen.
+
+    So `update` is a wrapper now: it runs `step`, then `sync_route`, which is
+    the only thing in this program that writes the address bar. Every path
+    reconciles, including the several that `return` early out of `step` and
+    the ones that recurse back into `update`. A rule each call site has to
+    remember is a rule that is already broken; this one cannot be missed
+    because nothing has to remember it.
+  - **Walking the sidebar is one navigation, not forty.** Since the cursor is
+    the selection, holding `j` through forty albums changes what is shown
+    forty times — and forty history entries is a back button that needs forty
+    presses to undo one scroll. `Nav::Replace` says rewrite rather than add,
+    it is set by `show_under_cursor` alone, and `sync_route` resets it every
+    time so only the step that meant it gets it. The URL is still right at
+    every one of the forty.
 
   `App::routed` is what stops the tick re-resolving the same fragment twenty
   times a second, and a route is not consumed until the sidebar has something

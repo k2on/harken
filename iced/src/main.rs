@@ -380,6 +380,17 @@ enum Message {
     Tick,
 }
 
+/// How the next change to what is shown should reach the history.
+///
+/// Everything is a place you went, except walking the sidebar's cursor: that
+/// is one navigation however many rows it passes through, and recording each
+/// would leave a back button that needs forty presses to undo one scroll.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Nav {
+    Push,
+    Replace,
+}
+
 /// A row's menu: what the three dots open, and what a right click opens.
 ///
 /// Held by id rather than by index, because the list under it can move while
@@ -710,6 +721,10 @@ struct App {
     /// other way. Seeded with what `main` asks for and kept in step by
     /// `window::resize_events`.
     window: iced::Size,
+    /// Whether the next reconciliation adds to the history or rewrites it.
+    /// Reset to [`Nav::Push`] every time, so only the step that meant
+    /// otherwise is the one that gets it.
+    nav: Nav,
     /// The last fragment this window acted on.
     ///
     /// Without it the tick would re-resolve the same route twenty times a
@@ -1015,6 +1030,7 @@ impl App {
                 help: false,
                 picker: None,
                 menu: None,
+                nav: Nav::Push,
                 routed: None,
                 cursor: iced::Point::ORIGIN,
                 window: iced::Size::new(860.0, 600.0),
@@ -1041,6 +1057,7 @@ impl App {
                 help: false,
                 picker: None,
                 menu: None,
+                nav: Nav::Push,
                 routed: None,
                 cursor: iced::Point::ORIGIN,
                 window: iced::Size::new(860.0, 600.0),
@@ -1339,6 +1356,10 @@ impl App {
                 return;
             }
             peer.source = source;
+            // Moving onto a row *is* showing it here — there is no `<Enter>`
+            // in between — so the cursor walking down the sidebar changes what
+            // is shown on every step. One navigation, not one per row.
+            self.nav = Nav::Replace;
             peer.reload_shown();
             // A different list is a different row one, so the cursor goes back
             // to the top rather than to wherever it happened to be.
@@ -1559,7 +1580,45 @@ impl App {
             .unwrap_or_default()
     }
 
+    /// Do the thing, then make the address bar agree with what is on screen.
+    ///
+    /// The agreeing is *here* and not in the places that change what is shown,
+    /// which is the whole architecture: there are four of them — a click on
+    /// the sidebar, `j` in it, the row menu's "Go to", and the back button
+    /// itself — and the first version pushed the route from one of them. The
+    /// one it missed was the sidebar's own cursor, which is the way this
+    /// window is actually driven. A rule that every call site has to remember
+    /// is a rule that is already broken; this one cannot be missed, because
+    /// nothing has to remember it.
     fn update(&mut self, message: Message) -> Task<Message> {
+        let task = self.step(message);
+        self.sync_route();
+        task
+    }
+
+    /// Where the address bar is made to agree. Nothing else writes it.
+    fn sync_route(&mut self) {
+        let Some(peer) = &self.peer else {
+            return;
+        };
+        let want = peer.source.route();
+        if self.routed.as_ref() == Some(&want) {
+            return;
+        }
+        // Skipped when the bar already says it, which is exactly the case
+        // where the route *came* from the back button: writing there would
+        // make one place two history entries.
+        if route::read().as_ref() != Some(&want) {
+            // The sidebar's cursor is a scrub, not forty places visited.
+            // Holding `j` through forty albums should leave the back button
+            // where it was, and leave the URL right the whole way down.
+            route::write(&want, self.nav == Nav::Push);
+        }
+        self.routed = Some(want);
+        self.nav = Nav::Push;
+    }
+
+    fn step(&mut self, message: Message) -> Task<Message> {
         // An entry was picked: the menu has said everything it had to say.
         // `OpenPicker` is not here because it reads the menu on its way out.
         if matches!(message, Message::PlayItem(_) | Message::Select(_)) {
@@ -1790,16 +1849,6 @@ impl App {
                     // would carry on from wherever it was and the highlight
                     // would be somewhere the table is not.
                     Message::Select(source) => {
-                        // Record it, unless the address bar is already saying
-                        // it — which is the case when this *came* from the
-                        // address bar, and pushing then would mean two history
-                        // entries for one place and a back button that needs
-                        // pressing twice.
-                        let route = source.route();
-                        if route::read().as_ref() != Some(&route) {
-                            route::push(&route);
-                        }
-                        self.routed = Some(route);
                         let at = peer.choices.iter().position(|c| c.source == source);
                         peer.source = source;
                         peer.reload_shown();
