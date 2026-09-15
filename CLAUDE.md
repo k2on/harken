@@ -875,11 +875,25 @@ so nothing about the log changed to carry a recording. Every one was checked
 for a public-domain licence and a transcode that answers `audio/mpeg` to a
 range request — a dead link there is a silent demo.
 
-The demo is also a listening UI and nothing else: no sign-in (it has no
-accounts and no server), no typing a song in, no bulk favouriting, no per-row
-remove. Those are `#[cfg(not(feature = "demo"))]` rather than deleted, because
-against a real server they are the only way to sign in, add anything, or take
-it back out.
+The library is filled by the scanner, so the client does not add to it:
+there is no entry box to type a song into, no bulk favourite and no per-row
+remove in either build. The mutations stay in the domain — the log is
+permanent and `add_song` is what the scanner authors — they simply have no
+button. What is still `#[cfg(not(feature = "demo"))]` is signing in and going
+offline, which the demo has nothing to do either of with.
+
+**A track's `file` is not a URL, and handing it to the player as one is a
+silent failure.** The scanner writes a path relative to the media root and
+`/media/` serves that same path back, so the client has to join the two —
+`media_url` in `iced/src/main.rs`, which passes a whole URL through unchanged
+because the demo's library is Wikimedia links. Skipping the join does not
+404: the relative path resolves against the page, loses the `/media/` prefix,
+and a server with a single-page fallback answers *any* unknown path with
+`index.html` and a **200**. The `<audio>` element is handed HTML and reports
+only `the media resource ... was not suitable`, which names neither the URL
+nor the type. Each path segment is percent-encoded for the same reason a
+`#` in a filename is worse than a space: everything after it is a fragment,
+so the request stops mid-filename.
 
 ## The media directory is a peer, and a rescan is free
 

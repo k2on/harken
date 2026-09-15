@@ -58,8 +58,8 @@
       library, published to GitHub Pages on every push to `main`. It is the
       real client — the same `apply`, the same maintained view, the same
       rebase — with a feature that removes the parts needing somewhere to
-      connect to, and the parts that make no sense without one: there is no
-      sign-in, nothing to type a song into, and no remove button.
+      connect to: there is no sign-in and no going offline, because there is
+      nothing to be offline from.
 
       Its library is public-domain classical recordings streamed from
       Wikimedia Commons, so the bar plays. Pick a composer under Artists, or
