@@ -148,9 +148,9 @@ export function Debug({
             />
             <Row k="shown" v={String(peer.shown.length)} theme={theme} />
             <Row k="source" v={peer.source.kind} theme={theme} />
-            <Row k="hearted" v={String(peer.onPlaylist)} theme={theme} />
+            <Row k="on playlist" v={String(peer.onPlaylist)} theme={theme} />
             <Row
-              k="hearts playlist"
+              k="read against"
               v={peer.playlist ?? '(none — createPlaylist failed)'}
               bad={peer.playlist === null}
               theme={theme}

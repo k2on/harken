@@ -24,30 +24,30 @@ import type { Item } from 'harken-native';
 import { Artwork } from './artwork';
 import { Icon } from './icon';
 
-/** The heart, with a pop.
+/** Open the playlist sheet for this row, with a nudge.
  *
- *  Worth the six lines: a tap that changes a color and nothing else reads as
- *  a tap that might not have registered, and this is the one control in the
- *  app whose effect is invisible until the server agrees. */
-function Heart({ on, onPress, theme }: { on: boolean; onPress: () => void; theme: Theme }) {
+ *  Worth the six lines: a tap on a small target that opens something reads as
+ *  a tap that might have missed, and the press state belongs to the row rather
+ *  than to this. */
+function AddTo({ onPress, theme }: { onPress: () => void; theme: Theme }) {
   const pop = useSharedValue(1);
   const style = useAnimatedStyle(() => ({ transform: [{ scale: pop.value }] }));
   return (
     <Pressable
       hitSlop={12}
       accessibilityRole="button"
-      accessibilityLabel={on ? 'remove from the playlist' : 'add to the playlist'}
+      accessibilityLabel="add to a playlist"
       onPress={() => {
         pop.value = withSequence(
-          withTiming(1.32, { duration: 110 }),
-          withTiming(1, { duration: 160 }),
+          withTiming(1.22, { duration: 90 }),
+          withTiming(1, { duration: 140 }),
         );
         onPress();
       }}
       style={{ padding: space.sm }}
     >
       <Animated.View style={style}>
-        <Icon name={on ? 'heartFilled' : 'heart'} size={19} tint={on ? theme.accent : theme.faint} />
+        <Icon name="addTo" size={19} tint={theme.faint} />
       </Animated.View>
     </Pressable>
   );
@@ -63,10 +63,10 @@ export type TrackRowProps = {
   // the whole list instead of making three per row per render — which is what
   // makes the memo below worth having at all.
   onPress: (item: Item) => void;
-  onHeart: (item: Item) => void;
+  onAdd: (item: Item) => void;
 };
 
-function Row({ item, album, playing, theme, onPress, onHeart }: TrackRowProps) {
+function Row({ item, album, playing, theme, onPress, onAdd }: TrackRowProps) {
   const s = styles(theme);
   return (
     <Pressable
@@ -94,7 +94,7 @@ function Row({ item, album, playing, theme, onPress, onHeart }: TrackRowProps) {
       {/* Blank rather than `0:00` for a length nothing knows yet: an unknown
           duration should read as absent, not as a track of no length. */}
       <Text style={s.time}>{item.durationMs > 0n ? clockMs(item.durationMs) : ''}</Text>
-      <Heart on={item.onPlaylist} onPress={() => onHeart(item)} theme={theme} />
+      <AddTo onPress={() => onAdd(item)} theme={theme} />
     </Pressable>
   );
 }
@@ -110,7 +110,7 @@ export const TrackRow = memo(
     a.playing === b.playing &&
     a.theme === b.theme &&
     a.onPress === b.onPress &&
-    a.onHeart === b.onHeart,
+    a.onAdd === b.onAdd,
 );
 
 const styles = (t: Theme) =>

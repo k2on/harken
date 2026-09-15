@@ -1,7 +1,7 @@
 /**
  * Every glyph this app draws, in one table.
  *
- * `iced/src/icon.rs` exists because the font iced embeds has no heart and no
+ * `iced/src/icon.rs` exists because the font iced embeds has no play and no
  * transport, and a missing glyph lays out fine and draws nothing — so the
  * button looks *broken* rather than unfontable, which is a hard thing to
  * recognise as a font problem. React Native is not immune to that; it is only
@@ -16,7 +16,7 @@
  * where the play button should be.
  *
  * Nothing here chooses a color. `tint` is passed in from the theme, for the
- * same reason the desktop's heart is drawn with placeholder `fill` and
+ * same reason the desktop's glyphs are drawn with placeholder `fill` and
  * `stroke` that the style replaces: a gold baked into the glyph is the same
  * gold on a dark row, a light one and the gold-filled one under the cursor.
  */
@@ -33,8 +33,11 @@ const GLYPHS = {
   pause: { ios: 'pause.fill', android: 'pause', text: '❚❚' },
   next: { ios: 'forward.fill', android: 'skip_next', text: '⏭' },
   previous: { ios: 'backward.fill', android: 'skip_previous', text: '⏮' },
-  heart: { ios: 'heart', android: 'favorite_border', text: '♡' },
-  heartFilled: { ios: 'heart.fill', android: 'favorite', text: '♥' },
+  // Adding a track to a playlist, and the two states of one that is on it.
+  addTo: { ios: 'text.badge.plus', android: 'playlist_add', text: '+' },
+  ticked: { ios: 'checkmark.circle.fill', android: 'check_circle', text: '●' },
+  untick: { ios: 'circle', android: 'radio_button_unchecked', text: '○' },
+  plus: { ios: 'plus', android: 'add', text: '+' },
   note: { ios: 'music.note', android: 'music_note', text: '♪' },
   library: { ios: 'music.note.list', android: 'library_music', text: '≡' },
   playlist: { ios: 'list.bullet', android: 'queue_music', text: '≡' },

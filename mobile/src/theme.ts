@@ -37,9 +37,9 @@ export type Theme = {
   dim: string;
   /** Tertiary: a hint, a status line, a placeholder. */
   faint: string;
-  /** The gold. What is playing, what is hearted, what to press. */
+  /** The gold. What is playing, what is on a playlist, what to press. */
   accent: string;
-  /** The gold at a tenth of its confidence: a chip's fill, a heart's ghost. */
+  /** The gold at a tenth of its confidence: a chip's fill, a tick's ghost. */
   accentSoft: string;
   /** The one legible color for text *on* `accent`. */
   onAccent: string;

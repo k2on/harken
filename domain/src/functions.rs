@@ -48,7 +48,7 @@ use crate::schema::Item;
 // come out in. An ordered map, so the lists come out in a stable order without
 // a sort — two peers showing the same library show it the same way.
 #[cfg(feature = "storage")]
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 // ------------------------------------------------------------------ mutations
 
@@ -534,6 +534,26 @@ pub fn playlists(db: &mut Db) -> Result<Vec<crate::schema::Playlist>> {
             created_ms: p.created_ms,
             user_id: p.user_id,
         })
+        .collect())
+}
+
+/// Which playlists a track is already on, in the order the playlists were made.
+///
+/// The sheet that adds a song to a playlist needs this to be a *toggle* rather
+/// than a one-way door: a list of every playlist with no mark on the ones it
+/// is already on is a list you can add the same track to twice and never take
+/// it off. Read from the entries rather than from the playlists, so the cost
+/// is the memberships this one track has and not the number of playlists.
+#[query]
+pub fn playlists_of(db: &mut Db, media_id: Id<Media>) -> Result<Vec<crate::schema::Playlist>> {
+    let on: BTreeSet<Id<Playlist>> = db
+        .select(PlaylistItem::all().filter(PlaylistItem::media_id.eq(media_id)))
+        .into_iter()
+        .map(|e| e.playlist_id)
+        .collect();
+    Ok(playlists(db)?
+        .into_iter()
+        .filter(|p| on.contains(&p.id))
         .collect())
 }
 

@@ -13,7 +13,7 @@ then the playlists, then the albums, then the artists — is two rows of chips
 here: the headings on the first, what is under the chosen heading on the
 second. Its table of Name, Artist, Album and Time is a stacked row. Its
 now-playing bar is a bar above the bottom inset that expands, on a tap or a
-drag, into a full-screen player with the seek bar and the heart.
+drag, into a full-screen player with the seek bar beside it.
 
 Tapping a row plays it and makes the list on screen the queue, exactly as the
 desktop does: a snapshot taken when play was pressed, so changing what is
@@ -22,8 +22,11 @@ next.
 
 There is nothing here that puts a track *into* the library, for the same
 reason the desktop has nothing: the server's media directory is scanned, so a
-client that types songs in is answering a question nobody asks. The heart
-stays, because which playlist something is on is still a client's to say.
+client that types songs in is answering a question nobody asks. Playlists are
+the exception, because which playlist something is on is a client's to say:
+every row has a button that opens a sheet of them, each ticked or not, with
+"New playlist" at the end. The browser's chips carry a `+ New` for the same
+sheet with nothing to add.
 
 The grouping is not this directory's idea of how to fold a library. `albums`,
 `artists`, `playlists`, `album` and `artist` are queries in `../domain`, and

@@ -218,7 +218,8 @@ answers that screen wants have already been given.
 
 It plays, too. The library is the same one the desktop shows, browsed
 by playlist, album or artist; tapping a row starts it and the list
-becomes the queue. Playback is `expo-audio` — ExoPlayer on Android,
+becomes the queue, and every row opens a sheet of playlists to put it on
+or make another. Playback is `expo-audio` — ExoPlayer on Android,
 AVPlayer on iOS — with the transport on the lock screen, so it keeps
 going when the screen does not.
 

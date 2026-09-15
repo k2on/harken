@@ -11,12 +11,11 @@ domain crate rather than a package, because everything it exports was already
 defined there. Each directory carries its own nix under `nix/`.
 
 The domain is media — songs today, an episode or a sermon later — and
-playlists. There is no favourites table: the phone's heart means "on the
-playlist this client is showing", and which playlist that is belongs to the
-client. A playlist is ordered, so adding to one reads `MAX(pos) + 1` — which
-is what makes the rebase visible: heart something on the phone while offline
-and it lands after whatever arrived while you were away. The desktop has no
-heart; see "There is one shape in the table" below.
+playlists. There is no favourites table and no heart on either client: a
+playlist is a list somebody made, and which one a track is on is a client's
+question to ask. A playlist is ordered, so adding to one reads `MAX(pos) + 1`
+— which is what makes the rebase visible: put something on a playlist while
+offline and it lands after whatever arrived while you were away.
 
 ## Layout
 
@@ -67,6 +66,7 @@ mobile/                  the phone client; src/ is UI and a socket, nothing else
                          in this directory a color is written down
   src/ui/icon.tsx        every glyph, as an SF Symbol, a Material Symbol, and a
                          character to fall back to (see below)
+  src/ui/playlists.tsx   which playlists a track is on, and how to make one
   src/ui/debug.tsx       every number the peer holds, on the phone being wrong —
                          and the one screen that can re-point it
   src/ui/                the rest of the screen: the chips, the row, the bar,
@@ -1449,6 +1449,29 @@ first. The engine's own decisions are in `../petros/docs/decisions.md`.
   the palette is `mobile/src/theme.ts`, which is forty lines. The two
   dependencies that were added are the two that buy something nothing here can
   do: `expo-audio` and `expo-linear-gradient`.
+- **A heart was an answer to a question the domain does not ask.** It meant
+  "on the playlist this client happens to be showing membership for", which
+  is one playlist out of however many exist, chosen by the client and invisible
+  in the UI. So both clients lost it. The phone has a sheet instead: every
+  playlist, each ticked or not, and "New playlist" at the end — which is the
+  question people were actually asking, and the only shape that lets a track
+  be on two lists. The desktop has neither; its one column is the transport.
+
+  Three things it needed:
+
+  - **A `playlists_of` query, so it can be a toggle.** A list of every
+    playlist with nothing marked is a list you can add the same track to twice
+    and never take it off. It is one query for one track, asked when the sheet
+    opens — carrying every track's memberships in the shelf would make every
+    change in the app pay for something only that sheet asks.
+  - **`run` is the only way into the client, so a read borrows it.**
+    `@petros/client`'s hook exposes `run(f)` and nothing else, and it calls
+    `f` synchronously — so `playlistsOf` writes into a local and returns it.
+    The cost is one render and a `lastMutationMs` that timed a query.
+  - **Creating a playlist does not add to it.** `create_playlist` and
+    `add_to_playlist` are two entries, and the first one's id is not known
+    until it has been applied — so the new row appears in the sheet and is one
+    tap away, rather than the sheet pretending to know an id it cannot have.
 - **The gold is not one color.** Every background and every text color comes
   from `theme.ts` and none from a component, which is the phone's version of
   the rule that makes the desktop work in dark mode — but the two themes do not

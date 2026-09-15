@@ -122,8 +122,17 @@ export type Peer = Shelf & {
   /** What the browser picked, and how to pick something else. */
   source: Source;
   setSource: (next: Source) => void;
-  /** The heart: on the playlist a heart stands for, or off it. */
-  setOnPlaylist: (id: string, on: boolean) => void;
+  /** Which playlists a track is already on, read on demand.
+   *
+   *  Not part of the shelf: it is one track's answer, asked when a sheet
+   *  opens, where the shelf is read on every change. Putting it in the shelf
+   *  would make every mutation pay for a question nobody is asking. */
+  playlistsOf: (id: string) => Playlist[];
+  /** Put a track on a playlist, or take it off. */
+  setOnPlaylist: (playlist: PlaylistId, id: string, on: boolean) => void;
+  /** Make one. The name is trimmed and a blank one is refused by `apply`,
+   *  not here — the same rule on every peer. */
+  newPlaylist: (name: string) => void;
   mutate: <K extends Verb>(kind: K, ...args: ArgsFor<K>) => void;
   toggleLink: () => void;
   /** Try the socket now, rather than waiting out the backoff. */
@@ -143,21 +152,21 @@ export function databasePath(user: string): string {
 }
 
 /**
- * Which playlist a heart means, making one the first time.
+ * The playlist the library view is read against, making one the first time.
  *
- * The domain has no favourites of its own — a heart means "on the playlist
- * this client is showing membership for", and which playlist that is belongs
- * to the client. So the first run of a peer makes one; after that it is
- * whichever came back first, which is stable because playlists are ordered by
- * when they were made. The same three lines as `Peer::open` in the desktop
- * client, and for the same reason.
+ * Every read of a list wants a playlist to report membership against — that is
+ * what gives a row its `on_playlist` — so a peer with none has nothing to read
+ * against. The first run makes one; after that it is whichever came back
+ * first, which is stable because playlists are ordered by when they were made.
+ * The same three lines as `Peer::open` in the desktop client, and for the same
+ * reason.
  *
  * It has to happen after the module is installed, because creating a playlist
  * is a mutation and a mutation is what the module *is*. `usePeer` installs in
  * an effect that runs before the one that first calls this, so by here there
  * is an `apply` to run.
  */
-function heartsPlaylist(client: PeerLike): PlaylistId | null {
+function firstPlaylist(client: PeerLike): PlaylistId | null {
   let lists = client.playlists();
   if (lists.length === 0) {
     try {
@@ -201,10 +210,10 @@ export function usePeer(login: Login, server: string | null): Peer {
         playlist: null,
       }));
       if (kept.playlist === null) {
-        kept.playlist = heartsPlaylist(client);
-        // Membership of *that* playlist is what a heart draws, so the view has
-        // to be told. The next update is a reset, which is why this is asked
-        // once per session and not once per render.
+        kept.playlist = firstPlaylist(client);
+        // Membership of *that* playlist is what a row reports, so the view
+        // has to be told. The next update is a reset, which is why this is
+        // asked once per session and not once per render.
         if (kept.playlist !== null) client.showPlaylist(kept.playlist);
       }
 
@@ -323,13 +332,25 @@ export function usePeer(login: Login, server: string | null): Peer {
       mutators: peer.mutators,
       lastMutationMs: peer.lastMutationMs,
       server: peer.server,
-      setOnPlaylist: (id: string, on: boolean) =>
+      playlistsOf: (id: string) => {
+        // `run` is the only way in, and it is synchronous — it calls this
+        // before it returns — so a read can borrow it. The cost is one render
+        // and a `lastMutationMs` that measured a query; worth it against
+        // carrying every track's memberships in the shelf, which would make
+        // every change pay for a question only an open sheet asks.
+        let on: Playlist[] = [];
         peer.run((c) => {
-          if (playlist === null) return;
+          on = c.playlistsOf(asId('media', id));
+        });
+        return on;
+      },
+      setOnPlaylist: (list: PlaylistId, id: string, on: boolean) =>
+        peer.run((c) => {
           const media = asId('media', id);
-          if (on) c.addToPlaylist(playlist, media);
-          else c.removeFromPlaylist(playlist, media);
+          if (on) c.addToPlaylist(list, media);
+          else c.removeFromPlaylist(list, media);
         }),
+      newPlaylist: (name: string) => peer.run((c) => c.createPlaylist(name)),
       mutate: <K extends Verb>(kind: K, ...args: ArgsFor<K>) =>
         peer.run((c) => c.mutate(kind, JSON.stringify(args[0] ?? {}))),
       toggleLink: peer.toggleLink,

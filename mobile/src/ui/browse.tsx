@@ -59,6 +59,7 @@ function BrowseRows({
   albums,
   artists,
   libraryCount,
+  onNewPlaylist,
   theme,
 }: {
   source: Source;
@@ -67,6 +68,9 @@ function BrowseRows({
   albums: Album[];
   artists: Artist[];
   libraryCount: number;
+  /** Opens the playlist sheet with nothing to add: making one, and picking
+   *  from a list too long for a strip of chips. */
+  onNewPlaylist: () => void;
   theme: Theme;
 }) {
   // Which heading is open. Follows the source when that changes underneath —
@@ -77,7 +81,7 @@ function BrowseRows({
   const s = styles(theme);
   const headings: { kind: Kind; label: string; count?: number }[] = [
     { kind: 'library', label: 'Library', count: libraryCount },
-    ...(playlists.length ? [{ kind: 'playlist' as const, label: 'Playlists' }] : []),
+    { kind: 'playlist' as const, label: 'Playlists' },
     ...(albums.length ? [{ kind: 'album' as const, label: 'Albums' }] : []),
     ...(artists.length ? [{ kind: 'artist' as const, label: 'Artists' }] : []),
   ];
@@ -113,18 +117,25 @@ function BrowseRows({
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={s.strip}
           >
-            {kind === 'playlist' &&
-              playlists.map((p) => (
-                <Chip
-                  key={p.id}
-                  label={p.name}
-                  on={source.kind === 'playlist' && source.id === p.id}
-                  theme={theme}
-                  onPress={() =>
-                    onSelect({ kind: 'playlist', id: asId('playlist', p.id), name: p.name })
-                  }
-                />
-              ))}
+            {kind === 'playlist' && (
+              <>
+                {playlists.map((p) => (
+                  <Chip
+                    key={p.id}
+                    label={p.name}
+                    on={source.kind === 'playlist' && source.id === p.id}
+                    theme={theme}
+                    onPress={() =>
+                      onSelect({ kind: 'playlist', id: asId('playlist', p.id), name: p.name })
+                    }
+                  />
+                ))}
+                {/* Last rather than first: the chips are a list you read
+                    left to right, and the way to add one belongs at the end
+                    of it, not in front of what is already there. */}
+                <Chip label="+ New" on={false} theme={theme} onPress={onNewPlaylist} />
+              </>
+            )}
             {kind === 'album' &&
               albums.map((a) => (
                 <Chip

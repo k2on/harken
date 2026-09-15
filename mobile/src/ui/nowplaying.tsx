@@ -1,8 +1,8 @@
 /**
  * The full-screen player.
  *
- * Everything the desktop's bar does — previous, play/pause, next, seek — with
- * the heart from the table beside it, because on a phone this is where you are
+ * Everything the desktop's bar does — previous, play/pause, next, seek — and
+ * beside it the way onto a playlist, because on a phone this is where you are
  * when you decide you like something.
  *
  * It slides up over the list rather than being a route of its own, for a
@@ -39,8 +39,7 @@ import { SeekBar } from './seekbar';
 export function NowPlaying({
   player,
   album,
-  hearted,
-  onHeart,
+  onAdd,
   onClose,
   theme,
   status,
@@ -51,8 +50,7 @@ export function NowPlaying({
 }: {
   player: Player;
   album: string;
-  hearted: boolean;
-  onHeart: () => void;
+  onAdd: () => void;
   onClose: () => void;
   theme: Theme;
   /** The engine, showing through: cursor, pending, the module's generation. */
@@ -129,12 +127,14 @@ export function NowPlaying({
               {track.creator || '—'}
             </Text>
           </View>
-          <Pressable onPress={onHeart} hitSlop={12} style={s.heart} accessibilityLabel="heart">
-            <Icon
-              name={hearted ? 'heartFilled' : 'heart'}
-              size={26}
-              tint={hearted ? theme.accent : theme.dim}
-            />
+          <Pressable
+            onPress={onAdd}
+            hitSlop={12}
+            style={s.addTo}
+            accessibilityRole="button"
+            accessibilityLabel="add to a playlist"
+          >
+            <Icon name="addTo" size={26} tint={theme.dim} />
           </Pressable>
         </View>
 
@@ -251,7 +251,7 @@ const styles = (t: Theme) =>
     titleText: { flex: 1, gap: 3 },
     title: { fontSize: 24, fontWeight: '700', color: t.text },
     creator: { fontSize: 15, color: t.dim },
-    heart: { padding: space.xs },
+    addTo: { padding: space.xs },
     clocks: { flexDirection: 'row', justifyContent: 'space-between', marginTop: -6 },
     clock: { fontSize: 11, color: t.faint, fontVariant: ['tabular-nums'] },
     transport: {

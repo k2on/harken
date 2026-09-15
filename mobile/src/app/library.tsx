@@ -2,11 +2,11 @@
  * The library, the browser, and the player.
  *
  * The same library the iced window shows, because it is the same `apply` — see
- * `domain`. Take it offline with the pill, heart a few tracks, heart some on
- * another peer too, come back: your hearts land *after* whatever arrived while
- * you were away, because "add to the playlist" reads the end of it rather than
- * naming a position. That is the rebase, and it is the one thing this app is
- * really demonstrating.
+ * `domain`. Take it offline with the pill, put a few tracks on a playlist,
+ * put some on from another peer too, come back: yours land *after* whatever
+ * arrived while you were away, because "add to the playlist" reads the end of
+ * it rather than naming a position. That is the rebase, and it is the one
+ * thing this app is really demonstrating.
  *
  * What this screen owns is the arrangement. The peer owns the data and the
  * reads (`src/peer.ts`), the player owns what is sounding (`src/player.tsx`),
@@ -31,6 +31,7 @@ import { Debug } from '@/ui/debug';
 import { Icon } from '@/ui/icon';
 import { MiniPlayer } from '@/ui/miniplayer';
 import { NowPlaying } from '@/ui/nowplaying';
+import { Playlists } from '@/ui/playlists';
 import { TrackRow } from '@/ui/trackrow';
 
 export default function Library() {
@@ -61,6 +62,9 @@ function Signed(props: { server: string; login: Login; online: boolean }) {
   const [open, setOpen] = useState(false);
   const [debug, setDebug] = useState(false);
   const [scrub, setScrub] = useState<number | null>(null);
+  // Which track's playlist sheet is open. `null` in the tuple is the browser's
+  // own: the same sheet, with nothing to add.
+  const [adding, setAdding] = useState<{ item: Item | null } | null>(null);
   const [busy, setBusy] = useState(false);
 
   const rows = peer.shown;
@@ -100,9 +104,7 @@ function Signed(props: { server: string; login: Login; online: boolean }) {
     [player.play],
   );
 
-  const onHeart = useCallback((item: Item) => {
-    latest.current.peer.setOnPlaylist(item.id, !item.onPlaylist);
-  }, []);
+  const onAdd = useCallback((item: Item) => setAdding({ item }), []);
 
   // Stable, because the player sheet builds its drag gesture from it and the
   // status ticks four times a second.
@@ -151,10 +153,6 @@ function Signed(props: { server: string; login: Login; online: boolean }) {
   );
 
   const playingId = player.track?.id;
-  const heartedNow = useMemo(
-    () => (playingId ? (peer.items.find((i) => i.id === playingId)?.onPlaylist ?? false) : false),
-    [peer.items, playingId],
-  );
 
   const s = styles(theme);
   return (
@@ -177,6 +175,7 @@ function Signed(props: { server: string; login: Login; online: boolean }) {
         albums={peer.albums}
         artists={peer.artists}
         libraryCount={peer.items.length}
+        onNewPlaylist={() => setAdding({ item: null })}
         theme={theme}
       />
 
@@ -199,7 +198,7 @@ function Signed(props: { server: string; login: Login; online: boolean }) {
               playing={playingId === item.id}
               theme={theme}
               onPress={onPress}
-              onHeart={onHeart}
+              onAdd={onAdd}
             />
           )}
         />
@@ -229,8 +228,10 @@ function Signed(props: { server: string; login: Login; online: boolean }) {
         <NowPlaying
           player={player}
           album={playingId ? (peer.albumOf[playingId] ?? '') : ''}
-          hearted={heartedNow}
-          onHeart={() => playingId && peer.setOnPlaylist(playingId, !heartedNow)}
+          onAdd={() => {
+            const now = peer.items.find((i) => i.id === playingId);
+            if (now) setAdding({ item: now });
+          }}
           onClose={closePlayer}
           theme={theme}
           status={status}
@@ -238,6 +239,16 @@ function Signed(props: { server: string; login: Login; online: boolean }) {
           bottom={insets.bottom}
           scrub={scrub}
           onScrub={setScrub}
+        />
+      ) : null}
+
+      {adding ? (
+        <Playlists
+          item={adding.item}
+          peer={peer}
+          theme={theme}
+          bottom={insets.bottom}
+          onClose={() => setAdding(null)}
         />
       ) : null}
     </View>
@@ -279,7 +290,7 @@ function Header({
           {sourceTitle(peer.source)}
         </Text>
         <Text style={s.sub} numberOfLines={1}>
-          {tracks} {tracks === 1 ? 'track' : 'tracks'} · {peer.onPlaylist} hearted
+          {tracks} {tracks === 1 ? 'track' : 'tracks'}
           {peer.pending > 0 ? ` · ${peer.pending} pending` : ''}
         </Text>
       </View>

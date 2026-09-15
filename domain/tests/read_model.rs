@@ -621,6 +621,60 @@ fn an_album_is_in_the_works_order_and_not_the_librarys() {
     );
 }
 
+/// Which playlists a track is on, which is what makes the phone's sheet a
+/// toggle rather than a one-way door.
+#[test]
+fn a_track_knows_which_playlists_it_is_on() {
+    let mut c = Client::<harken::HarkenApp>::open(
+        petros::open_memory().unwrap(),
+        "alice",
+        AutoCtx::seeded(17),
+    )
+    .unwrap();
+    let favs = favourites(&mut c);
+    c.mutate(harken::create_playlist("Evening".into())).unwrap();
+    let evening = harken::playlists(&mut c.store()).unwrap()[1].id;
+
+    for t in ["Air", "Gigue"] {
+        c.mutate(harken::add_song(
+            t.into(),
+            "Handel".into(),
+            String::new(),
+            0,
+            String::new(),
+            0,
+            String::new(),
+            String::new(),
+            String::new(),
+            0,
+        ))
+        .unwrap();
+    }
+    let all = harken::library(&mut c.store(), favs).unwrap();
+    let (air, gigue) = (all[0].id, all[1].id);
+
+    let names = |c: &mut Client<harken::HarkenApp>, id| {
+        harken::playlists_of(&mut c.store(), id)
+            .unwrap()
+            .into_iter()
+            .map(|p| p.name)
+            .collect::<Vec<_>>()
+    };
+    assert!(names(&mut c, air).is_empty(), "on nothing to begin with");
+
+    c.mutate(harken::add_to_playlist(evening, air)).unwrap();
+    c.mutate(harken::add_to_playlist(favs, air)).unwrap();
+    assert_eq!(
+        names(&mut c, air),
+        vec!["Favourites", "Evening"],
+        "in the order the playlists were made, not the order it joined them"
+    );
+    assert!(names(&mut c, gigue).is_empty(), "and only this track's");
+
+    c.mutate(harken::remove_from_playlist(favs, air)).unwrap();
+    assert_eq!(names(&mut c, air), vec!["Evening"], "taking it off shows");
+}
+
 /// A rescan is a no-op, and that is decided in `apply` rather than by whatever
 /// is scanning.
 ///
