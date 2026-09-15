@@ -14,7 +14,7 @@
 //!
 //! **A route is not a [`crate::Source`].** A playlist is identified by id and
 //! an id is not in the URL: two peers of one server agree about the id, but
-//! the address bar is read by a person, and `#playlist/Favourites` is the part
+//! the address bar is read by a person, and `#playlist/Favorites` is the part
 //! they can type. So this carries names, and the app resolves a name against
 //! the playlists it has — which also means a link to a playlist that has since
 //! been renamed lands on the library rather than on nothing.
@@ -156,7 +156,7 @@ mod tests {
     fn a_route_survives_the_address_bar() {
         for route in [
             Route::Library,
-            Route::Playlist("Favourites".into()),
+            Route::Playlist("Favorites".into()),
             Route::Album("Water Music".into()),
             Route::Artist("Johann Sebastian Bach".into()),
             // The ones that break a naive encoding: a slash would look like

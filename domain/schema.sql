@@ -82,8 +82,8 @@ CREATE TABLE IF NOT EXISTS song (
     bpm      BIGINT NOT NULL
 );
 
--- A playlist. "Favourites" is one of these and nothing special: a heart in a
--- client means "this is in the favourites playlist", not a flag on the row.
+-- A playlist. "Favorites" is one of these and nothing special: a heart in a
+-- client means "this is in the favorites playlist", not a flag on the row.
 -- That is why there is no `favorite` table — there was one, and it was a
 -- playlist wearing a different name, which meant a second playlist could never
 -- reuse any of it.

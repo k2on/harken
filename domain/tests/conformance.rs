@@ -37,7 +37,7 @@ fn database() -> Connection {
 
 fn rows(conn: &mut Connection, playlist: harken::Id<harken::tables::Playlist>) -> Vec<Row> {
     // Through the app's own read model, which is the thing both builds have to
-    // agree about. It reads a song with its favourite hanging off it, so one
+    // agree about. It reads a song with its favorite hanging off it, so one
     // pass covers the library and the playlist it is read against.
     harken::library(&mut SqliteStore::new(conn), playlist)
         .expect("read")
@@ -118,7 +118,7 @@ fn every_verb_produces_the_same_rows_natively_and_in_wasm() {
 
     let ghost = "67e55084-765d-446c-9191-4ff9861f6d8e";
     let script: Vec<(&str, serde_json::Value)> = vec![
-        ("CreatePlaylist", json!({ "name": "Favourites" })),
+        ("CreatePlaylist", json!({ "name": "Favorites" })),
         ("AddSong", json!({ "title": "Glue", "artist": "Bicep" })),
         (
             "AddSong",
@@ -259,7 +259,7 @@ fn fill_auto_agrees_between_the_two_builds() {
     for kind in ["CreatePlaylist", "AddToPlaylist", "RemoveMedia"] {
         let id = "67e55084-765d-446c-9191-4ff9861f6d8e";
         let args = match kind {
-            "CreatePlaylist" => serde_json::json!({ "name": "Favourites" }),
+            "CreatePlaylist" => serde_json::json!({ "name": "Favorites" }),
             "AddToPlaylist" => {
                 serde_json::json!({ "playlist_id": id, "media_id": id })
             }

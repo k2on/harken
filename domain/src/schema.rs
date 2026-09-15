@@ -25,7 +25,7 @@ pub mod tables {
 #[cfg(feature = "storage")]
 petros_schema::row! {
     /// Something playable — a song today, an episode or a sermon later — and
-    /// where it sits in the favourites playlist if it is on it.
+    /// where it sits in the favorites playlist if it is on it.
     ///
     /// Deliberately kind-neutral: a list renders this and nothing else, so a
     /// new kind reaches every client without a screen learning about it. What
@@ -126,7 +126,7 @@ petros_schema::row! {
         tracks: i64,
     };
 
-    /// A playlist. "Favourites" is one of these and nothing more — which
+    /// A playlist. "Favorites" is one of these and nothing more — which
     /// playlist a heart stands for is the client's choice, not the domain's.
     Playlist => {
         id: Id<tables::Playlist> => String { |id| id.to_string() },

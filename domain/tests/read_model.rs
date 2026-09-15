@@ -10,7 +10,7 @@ fn library_and_favorites_agree_with_what_apply_wrote() {
         AutoCtx::seeded(7),
     )
     .unwrap();
-    let favs = favourites(&mut c);
+    let favs = favorites(&mut c);
 
     for (t, a) in [("Glue", "Bicep"), ("Opal", "Bicep"), ("Gosh", "Jamie xx")] {
         c.mutate(harken::add_song(
@@ -90,7 +90,7 @@ fn the_maintained_library_agrees_with_the_read_one() {
         petros::AutoCtx::seeded(7),
     )
     .unwrap();
-    let favs = favourites(&mut client);
+    let favs = favorites(&mut client);
 
     let mut view = harken::library_view(favs);
     let mut favorites = harken::playlist_count(favs);
@@ -200,7 +200,7 @@ fn a_peers_changes_reach_the_maintained_library() {
 
     // Client 0 is the phone; client 1 is the browser, holding a view.
     let mut sim = Sim::<harken::HarkenApp>::new(3, 2);
-    let favs = favourites(sim.client(0));
+    let favs = favorites(sim.client(0));
     sim.settle();
     let mut view = harken::library_view(favs);
     let mut favorites = harken::playlist_count(favs);
@@ -308,14 +308,14 @@ fn a_peers_changes_reach_the_maintained_library() {
 ///
 /// This is the browser's first sync: it opens an empty database, hydrates the
 /// view against it, then the server hands over everything at once — every song
-/// and every favourite together. A join sees each favourite twice there, once
+/// and every favorite together. A join sees each favorite twice there, once
 /// because the song it hangs off is hydrated out of the store that already
-/// holds it and once because the favourite's own entry is applied, and a
-/// doubled favourite is what made the web client show hearts on the wrong
+/// holds it and once because the favorite's own entry is applied, and a
+/// doubled favorite is what made the web client show hearts on the wrong
 /// rows, keep a heart filled after an unheart, and grow a nameless row after a
 /// remove. The fix is in `petros-ivm`; this is the scenario that exercised it.
 #[test]
-fn a_first_sync_delivers_songs_and_favourites_without_doubling() {
+fn a_first_sync_delivers_songs_and_favorites_without_doubling() {
     use petros::Changes;
     use petros_testkit::Sim;
 
@@ -323,7 +323,7 @@ fn a_first_sync_delivers_songs_and_favourites_without_doubling() {
     // so none of it reaches the browser one entry at a time — it all lands in
     // one batch when the browser first connects.
     let mut sim = Sim::<harken::HarkenApp>::new(5, 2);
-    let favs = favourites(sim.client(0));
+    let favs = favorites(sim.client(0));
     sim.partition(1);
     for (t, a) in [("Glue", "Bicep"), ("Opal", "Bicep"), ("Gosh", "Jamie xx")] {
         sim.mutate(
@@ -390,8 +390,8 @@ fn a_first_sync_delivers_songs_and_favourites_without_doubling() {
     // reordered the phone's entries on the way, which is the rebase and not a
     // bug — so the test compares the spliced list to a re-read rather than to
     // any fixed order. What must hold is that the two agree, that the view
-    // agrees with both, and that two songs are favourited and not, say, two
-    // favourites doubled onto one.
+    // agrees with both, and that two songs are favorited and not, say, two
+    // favorites doubled onto one.
     let shown = |songs: &[harken::Item]| -> Vec<(String, Option<i64>)> {
         songs
             .iter()
@@ -409,13 +409,13 @@ fn a_first_sync_delivers_songs_and_favourites_without_doubling() {
     assert_eq!(
         favorites.get(),
         2,
-        "two favourites, counted once each — a doubled child would make this 4"
+        "two favorites, counted once each — a doubled child would make this 4"
     );
     let mut positions: Vec<i64> = rendered.iter().filter_map(|s| s.playlist_pos).collect();
     positions.sort_unstable();
     assert_eq!(positions, vec![1, 2], "the two positions, no duplicate");
 
-    // Unfavourite one the browser holds as hearted: its heart empties, rather
+    // Unfavorite one the browser holds as hearted: its heart empties, rather
     // than a duplicate child surviving and keeping it filled. Which song that
     // is depends on the browser's own order, so it is read from there.
     let hearted = read.iter().find(|s| s.on_playlist()).unwrap().id;
@@ -447,21 +447,97 @@ fn a_first_sync_delivers_songs_and_favourites_without_doubling() {
         "the heart emptied on one unheart"
     );
     assert_eq!(shown(&rendered), shown(&read), "still matches a re-read");
-    assert_eq!(favorites.get(), 1, "one favourite left");
+    assert_eq!(favorites.get(), 1, "one favorite left");
 }
 
-/// A playlist to hang hearts on. There is no favourites table: a heart means
+/// A playlist to hang hearts on. There is no favorites table: a heart means
 /// membership of whichever playlist a client shows, so every test makes one.
-fn favourites<A: petros::App>(
-    client: &mut petros::Client<A>,
-) -> harken::Id<harken::tables::Playlist>
+fn favorites<A: petros::App>(client: &mut petros::Client<A>) -> harken::Id<harken::tables::Playlist>
 where
     A::Mutation: From<petros_schema::cbor::Value>,
 {
     client
-        .mutate(harken::create_playlist("Favourites".into()))
+        .mutate(harken::create_playlist("Favorites".into()))
         .unwrap();
     harken::playlists(&mut client.store()).unwrap()[0].id
+}
+
+/// A person cannot end up with two playlists of one name, however many
+/// devices they sign in on.
+///
+/// This is the bug the rule exists for, in miniature. Every client makes a
+/// default playlist on its first run, and it has to do that *before* it has
+/// seen the log — the list is empty because nothing has synced yet, not
+/// because nobody has one. So a phone, a laptop and a browser tab each
+/// authored a "Favorites" with a fresh id, and every one of them landed.
+///
+/// Authoring twice on one client is exactly what that reduces to, because it
+/// is what replay does: the log merges and both entries run through one
+/// `apply` against one database. That reduction is the whole argument for the
+/// check being in `apply` rather than in the clients — no client could have
+/// caught it, since each of them was right about what it could see.
+#[test]
+fn one_person_cannot_have_two_playlists_of_one_name() {
+    let mut c = Client::<harken::HarkenApp>::open(
+        petros::open_memory().unwrap(),
+        "alice",
+        AutoCtx::seeded(7),
+    )
+    .unwrap();
+
+    c.mutate(harken::create_playlist("Favorites".into()))
+        .unwrap();
+    c.mutate(harken::create_playlist("Favorites".into()))
+        .unwrap();
+    // …and the shape a second client's would arrive in if somebody typed it.
+    c.mutate(harken::create_playlist("  Favorites  ".into()))
+        .unwrap();
+
+    let names = |c: &mut petros::Client<harken::HarkenApp>| {
+        harken::playlists(&mut c.store())
+            .unwrap()
+            .into_iter()
+            .map(|p| p.name)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(names(&mut c), ["Favorites"], "one, whoever asked twice");
+
+    // It is the name that collides and not the verb: another name is another
+    // playlist, and the numbering carries on past the one that was refused.
+    c.mutate(harken::create_playlist("Gym".into())).unwrap();
+    assert_eq!(names(&mut c), ["Favorites", "Gym"]);
+
+    // Case is not folded, deliberately. A name is what somebody typed, and
+    // deciding that "favorites" is the same word as "Favorites" is deciding
+    // what they meant — which `add_song`'s file check does not do either.
+    c.mutate(harken::create_playlist("favorites".into()))
+        .unwrap();
+    assert_eq!(names(&mut c), ["Favorites", "Gym", "favorites"]);
+}
+
+/// …and the rule is about a *person*, not about the library.
+///
+/// One log is one library and several people may be in it, so Bob's
+/// "Favorites" is not Alice's. A check that looked only at the name would
+/// leave whoever signed in second without the playlist their client just made
+/// for them, which is a worse bug than the one it fixed and would only appear
+/// on a server with two accounts on it.
+#[test]
+fn two_people_each_get_a_playlist_of_one_name() {
+    use petros_testkit::Sim;
+
+    let mut sim = Sim::<harken::HarkenApp>::new(11, 2);
+    sim.mutate(0, harken::create_playlist("Favorites".into()));
+    sim.mutate(1, harken::create_playlist("Favorites".into()));
+    sim.settle();
+
+    for i in 0..2 {
+        let lists = harken::playlists(&mut sim.client(i).store()).unwrap();
+        let mut whose: Vec<&str> = lists.iter().map(|p| p.user_id.as_str()).collect();
+        whose.sort_unstable();
+        assert_eq!(whose, ["c0", "c1"], "one each, and every peer sees both");
+        assert!(lists.iter().all(|p| p.name == "Favorites"));
+    }
 }
 
 /// The sidebar's three lists, and the lists they select.
@@ -477,7 +553,7 @@ fn albums_and_artists_group_the_library_and_select_it_back() {
         AutoCtx::seeded(11),
     )
     .unwrap();
-    let favs = favourites(&mut c);
+    let favs = favorites(&mut c);
 
     for (title, artist, album) in [
         ("Für Elise", "Beethoven", "Bagatelles"),
@@ -566,7 +642,7 @@ fn an_album_is_in_the_works_order_and_not_the_librarys() {
         AutoCtx::seeded(13),
     )
     .unwrap();
-    let favs = favourites(&mut c);
+    let favs = favorites(&mut c);
 
     // Second suite before the first, and neither in track order.
     for (title, part, track) in [
@@ -631,7 +707,7 @@ fn a_track_knows_which_playlists_it_is_on() {
         AutoCtx::seeded(17),
     )
     .unwrap();
-    let favs = favourites(&mut c);
+    let favs = favorites(&mut c);
     c.mutate(harken::create_playlist("Evening".into())).unwrap();
     let evening = harken::playlists(&mut c.store()).unwrap()[1].id;
 
@@ -666,7 +742,7 @@ fn a_track_knows_which_playlists_it_is_on() {
     c.mutate(harken::add_to_playlist(favs, air)).unwrap();
     assert_eq!(
         names(&mut c, air),
-        vec!["Favourites", "Evening"],
+        vec!["Favorites", "Evening"],
         "in the order the playlists were made, not the order it joined them"
     );
     assert!(names(&mut c, gigue).is_empty(), "and only this track's");
@@ -690,7 +766,7 @@ fn the_same_file_twice_is_one_song() {
         AutoCtx::seeded(5),
     )
     .unwrap();
-    let favs = favourites(&mut c);
+    let favs = favorites(&mut c);
 
     let add = |title: &str, file: &str| {
         harken::add_song(

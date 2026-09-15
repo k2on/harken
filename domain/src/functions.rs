@@ -151,6 +151,36 @@ pub fn create_playlist(
     if db.exists::<Playlist>(&Playlist::key_of(&id)) {
         return Ok(());
     }
+    // And the same *name* from the same person is a no-op too, which is what
+    // makes a second device safe.
+    //
+    // Every client makes a default playlist on its first run, and it has to do
+    // that before it has seen the log — the list is empty because nothing has
+    // synced yet, not because nobody has one. So a person signing in on a
+    // phone, a laptop and a browser tab authored three "Favorites", and they
+    // all landed.
+    //
+    // It has to be decided here rather than in the clients, for the reason
+    // `add_song`'s file check does: `id` is chosen fresh per authoring call, so
+    // the second device authors a *different* id for a name the log already
+    // has and nothing above could catch it. Inside `apply`, every peer
+    // replaying reaches the same answer — the first entry for a (person, name)
+    // wins, wherever it was authored.
+    //
+    // By person, because the log is one library and several people may be in
+    // it: Bob's "Favorites" is not Alice's, and a rule that looked only at the
+    // name would leave whoever signed in second without one.
+    let name = name.trim().to_string();
+    if !db
+        .select(
+            Playlist::all()
+                .filter(Playlist::user_id.eq(ctx.user.id.clone()))
+                .filter(Playlist::name.eq(name.clone())),
+        )
+        .is_empty()
+    {
+        return Ok(());
+    }
     let last = db
         .select(Playlist::all().order_by(Playlist::pos.desc()).limit(1))
         .first()
@@ -158,7 +188,7 @@ pub fn create_playlist(
         .unwrap_or(0);
     db.put(&Playlist {
         id,
-        name: name.trim().to_string(),
+        name,
         pos: last + 1,
         created_ms,
         user_id: ctx.user.id.clone(),
@@ -306,8 +336,8 @@ fn last_playlist_pos(db: &mut impl Store, playlist: Id<Playlist>) -> i64 {
 /// that only appears on someone else's machine.
 #[query]
 pub fn library(db: &mut Db, playlist_id: Id<Playlist>) -> Result<Vec<Item>> {
-    // An item *with* its favourite, which is a tree rather than a join: one
-    // that is not favourited is still a row, carrying nothing. That is the LEFT
+    // An item *with* its favorite, which is a tree rather than a join: one
+    // that is not favorited is still a row, carrying nothing. That is the LEFT
     // JOIN, and it is the relationship's shape rather than a keyword.
     //
     // One table, whatever the kind. A screen that lists the library never joins
@@ -329,7 +359,7 @@ fn library_query() -> petros_schema::Query<Media> {
 ///
 /// Filtered to a single playlist, so a media row carries at most the one entry
 /// saying where it sits on it — which is what a heart draws. There is no
-/// favourites table and no favourites verb: a heart means "this is on the
+/// favorites table and no favorites verb: a heart means "this is on the
 /// playlist I am showing you", and which playlist that is belongs to the
 /// client, not to the domain.
 #[cfg(feature = "storage")]
@@ -365,7 +395,7 @@ pub fn items_of(view: &LibraryView) -> Vec<Item> {
 ///
 /// A screen shows this beside the list and would otherwise recount it on every
 /// frame. A tally holds the number rather than the rows, so it costs nothing at
-/// any library size — and it is the *favourites* that are counted, so it reads
+/// any library size — and it is the *favorites* that are counted, so it reads
 /// the playlist table rather than filtering songs.
 #[cfg(feature = "storage")]
 pub type PlaylistCount = petros::ivm::Tally;
@@ -560,7 +590,7 @@ pub fn playlists_of(db: &mut Db, media_id: Id<Media>) -> Result<Vec<crate::schem
 /// One playlist's contents, in playlist order.
 #[query]
 pub fn playlist(db: &mut Db, id: Id<Playlist>) -> Result<Vec<Item>> {
-    // Read from the other end: favourites, each carrying its item. A favourite
+    // Read from the other end: favorites, each carrying its item. A favorite
     // whose item is gone carries nothing and is dropped, which is the INNER
     // JOIN — and `remove_song` deletes both, so it should not arise.
     let rows = db.select_with(
@@ -628,7 +658,7 @@ pub struct Views {
     library: LibraryView,
     count: PlaylistCount,
     /// Which playlist a heart means. Nil until a caller says, because the
-    /// domain has no favourites of its own — a client chooses the playlist it
+    /// domain has no favorites of its own — a client chooses the playlist it
     /// is showing membership for.
     playlist: Id<Playlist>,
     /// What the library did since the caller last collected. A foreign caller
@@ -808,7 +838,7 @@ impl Peer {
 
     /// Show membership of this playlist: what a heart in the library means.
     ///
-    /// The domain has no favourites of its own, so a client says which playlist
+    /// The domain has no favorites of its own, so a client says which playlist
     /// it is drawing hearts for. The next `library_update` is a reset, because
     /// no sequence of patches turns one playlist's memberships into another's.
     pub fn show_playlist(&self, id: String) -> ::core::result::Result<(), crate::PeerError> {

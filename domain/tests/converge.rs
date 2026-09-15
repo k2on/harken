@@ -65,9 +65,9 @@ fn the_domain_converges_when_peers_go_dark_and_come_back() {
         );
         sim.step();
     }
-    // A playlist to put things on. There is no favourites table any more — a
+    // A playlist to put things on. There is no favorites table any more — a
     // heart is membership of whichever playlist a client shows.
-    sim.mutate(0, harken::create_playlist("Favourites".into()));
+    sim.mutate(0, harken::create_playlist("Favorites".into()));
     sim.settle();
 
     // And the interesting one: both sides put the whole library on the same

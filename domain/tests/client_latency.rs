@@ -244,7 +244,7 @@ fn a_bulk_mutation_row_by_row() {
             }
 
             // A playlist to fill, made through the same path as everything else.
-            let raw = harken::create_playlist("Favourites".into());
+            let raw = harken::create_playlist("Favorites".into());
             let mut bytes = Vec::new();
             ciborium::into_writer(&raw, &mut bytes).unwrap();
             let filled = m.fill_auto(&bytes, &mut auto).unwrap();
@@ -330,7 +330,7 @@ fn maintained_against_re_read_on_the_client_path() {
         }
 
         client
-            .mutate(harken::create_playlist("Favourites".into()))
+            .mutate(harken::create_playlist("Favorites".into()))
             .unwrap();
         let favs = harken::playlists(&mut client.store()).unwrap()[0].id;
         let mut view = harken::library_view(favs);

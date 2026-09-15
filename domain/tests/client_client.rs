@@ -60,10 +60,10 @@ fn the_client_runs_the_module() {
             0,
         )
         .expect("second");
-    // A playlist to heart onto: there is no favourites table, so a heart is
+    // A playlist to heart onto: there is no favorites table, so a heart is
     // membership of whichever playlist the client shows.
     client
-        .create_playlist("Favourites".into())
+        .create_playlist("Favorites".into())
         .expect("playlist");
     let favs = client.playlists().expect("playlists")[0].id.clone();
     // The row's id comes from the module, so it arrives through `list`.
@@ -159,7 +159,7 @@ fn a_verb_the_client_never_heard_of() {
         )
         .unwrap();
     client
-        .mutate("CreatePlaylist".into(), r#"{"name":"Favourites"}"#.into())
+        .mutate("CreatePlaylist".into(), r#"{"name":"Favorites"}"#.into())
         .unwrap();
     let favs = client.playlists().unwrap()[0].id.clone();
     let items = client.library(favs.clone()).unwrap();
@@ -229,7 +229,7 @@ fn the_peer_maintains_its_library() {
     client.load_mutators(MODULE.to_vec()).expect("install");
 
     client
-        .create_playlist("Favourites".into())
+        .create_playlist("Favorites".into())
         .expect("playlist");
     let favs = client.playlists().expect("playlists")[0].id.clone();
     client

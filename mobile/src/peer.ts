@@ -169,7 +169,7 @@ function firstPlaylist(client: PeerLike): PlaylistId | null {
   let lists = client.playlists();
   if (lists.length === 0) {
     try {
-      client.createPlaylist('Favourites');
+      client.createPlaylist('Favorites');
     } catch {
       // A module that would not install leaves nothing to author with. That is
       // a note in the status line, not a screen that will not render: the
@@ -208,11 +208,18 @@ export function usePeer(login: Login, server: string | null): Peer {
         items: [],
         playlist: null,
       }));
-      if (kept.playlist === null) {
+      // The playlist the view is read against can stop existing, and now
+      // routinely does: `create_playlist` refuses a name this person already
+      // has, so the default this peer made on its first run is dropped on the
+      // rebase when another device's turns out to have been first. So it is
+      // resolved against the list rather than remembered once.
+      const playlists: Playlist[] = client.playlists();
+      if (kept.playlist === null || !playlists.some((p: Playlist) => p.id === kept.playlist)) {
         kept.playlist = firstPlaylist(client);
-        // Membership of *that* playlist is what a row reports, so the view
-        // has to be told. The next update is a reset, which is why this is
-        // asked once per session and not once per render.
+        // Membership of *that* playlist is what a row reports, so the view has
+        // to be told. Said only when it moves, because the next update is then
+        // a reset — which is the whole list across the bridge, and the reason
+        // this is not done per render.
         if (kept.playlist !== null) client.showPlaylist(kept.playlist);
       }
 
@@ -266,7 +273,7 @@ export function usePeer(login: Login, server: string | null): Peer {
         shown,
         playlist: kept.playlist,
         onPlaylist: update.onPlaylist,
-        playlists: client.playlists(),
+        playlists,
         albums: client.albums(),
         artists: client.artists(),
         albumOf,

@@ -11,7 +11,7 @@ domain crate rather than a package, because everything it exports was already
 defined there. Each directory carries its own nix under `nix/`.
 
 The domain is media — songs today, an episode or a sermon later — and
-playlists. There is no favourites table and no heart on either client: a
+playlists. There is no favorites table and no heart on either client: a
 playlist is a list somebody made, and which one a track is on is a client's
 question to ask. A playlist is ordered, so adding to one reads `MAX(pos) + 1`
 — which is what makes the rebase visible: put something on a playlist while
@@ -525,7 +525,7 @@ a sandbox that has no SQLite in it.
 
 A join is not a keyword either. `REFERENCES song(id)` in the DDL generates
 `Song::favorite` and `Favorite::song`, and a read through one of them returns a
-*tree* — a song with its favourites hanging off it — rather than a flat product.
+*tree* — a song with its favorites hanging off it — rather than a flat product.
 Which direction you read decides whether a childless parent survives, so
 `library()` gets the LEFT JOIN and `favorites()` the INNER one without either
 word appearing.
@@ -1219,7 +1219,7 @@ music, and the one place it has to appear is next to the performer it belongs
 to.
 
 The library is filled by the scanner, so the client does not add to it:
-there is no entry box to type a song into, no bulk favourite and no per-row
+there is no entry box to type a song into, no bulk favorite and no per-row
 remove in either build. The mutations stay in the domain — the log is
 permanent and `add_song` is what the scanner authors — they simply have no
 button. What is still `#[cfg(not(feature = "demo"))]` is signing in and going
@@ -1473,6 +1473,43 @@ Deciding it inside `apply` means every peer replaying reaches the same answer
 — the first entry for a path wins, wherever the rescan happened. An empty
 `file` does not collide, because a song typed in by hand has no path and two
 of those are two songs.
+
+**A default playlist is made by every client, and only one of them survives.**
+Each peer makes "Favorites" on its first run, and it has to do that *before*
+anything has synced — the list is empty because the log has not arrived, not
+because nobody has one. So a person signing in on a phone, a laptop and a
+browser tab authored three, each with a fresh id, and all three landed. The
+fix is `add_song`'s, in the same place and for the same reason:
+`create_playlist` refuses a name that person already has, inside `apply`, so
+every peer replaying reaches the same answer and the first entry for a
+(person, name) wins wherever it was authored. No client could have caught it —
+each of them was right about what it could see.
+
+Three things follow:
+
+- **By person, not by library.** One log is one library and several people may
+  be in it, so Bob's "Favorites" is not Alice's. A check on the name alone
+  would leave whoever signed in second without the playlist their own client
+  had just made for them — a worse bug, and one that only appears on a server
+  with two accounts on it.
+- **Case is not folded**, deliberately. A name is what somebody typed, and
+  deciding that "favorites" is the same word as "Favorites" is deciding what
+  they meant. `add_song`'s file check does not do that either.
+- **The id a client is holding can now vanish**, because the loser is dropped
+  on the rebase. Both clients resolve the playlist their view is read against
+  against the *list* rather than remembering the one they chose —
+  `reload_sidebar` on the desktop, and the scratch's `kept.playlist` on the
+  phone — and re-point the view only when it actually moved, because that
+  costs a re-hydrate.
+
+This is the one `SCHEMA_VERSION` bump that is not a shape change. `playlist`
+has exactly the columns it had; what moved is what `apply` *means*, and an
+app's tables are a function of the log. Without the bump a peer that already
+had the duplicates would keep them for ever while a fresh install replayed the
+same log into one row — two databases disagreeing, neither of them wrong.
+The phone does not pay for the rebuild and does not get it either:
+`ForeignApp` leaves `SCHEMA_VERSION` at 0 on purpose, so a phone with
+duplicates keeps them until it is reinstalled.
 
 **The log carries the path relative to the media root**, and `/media/` serves
 that same path back — so a track reads `music/Bach/air.flac` and plays from

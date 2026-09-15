@@ -695,8 +695,8 @@ struct Peer {
     /// nothing mutable, but doing it once per change beats once per frame.
     items: Vec<Item>,
     /// The playlist the library view is read against, which is what gives
-    /// every row its `on_playlist`. The domain has no favourites of its own —
-    /// a playlist named Favourites is just the first one.
+    /// every row its `on_playlist`. The domain has no favorites of its own —
+    /// a playlist named Favorites is just the first one.
     playlist: harken::Id<harken::tables::Playlist>,
     /// What the sidebar picked, and the list that answers it.
     ///
@@ -808,12 +808,19 @@ impl Peer {
         // The view is read against a playlist, so there has to be one. The first
         // run of a peer makes it; after that it is whichever came back first,
         // which is stable because playlists are ordered by when they were made.
+        //
+        // Made *before* anything has synced, necessarily — the list is empty
+        // because the log has not arrived, not because nobody has one. Which
+        // is why `create_playlist` refuses a name this person already has:
+        // three devices would otherwise author three of these. The one that
+        // loses is dropped on the rebase, and `reload_sidebar` re-points this
+        // when that happens.
         let playlist = {
             let existing = harken::playlists(&mut client.store()).unwrap_or_default();
             match existing.first() {
                 Some(p) => p.id,
                 None => {
-                    let _ = client.mutate(mutators::create_playlist("Favourites".into()));
+                    let _ = client.mutate(mutators::create_playlist("Favorites".into()));
                     harken::playlists(&mut client.store())
                         .unwrap_or_default()
                         .first()
@@ -905,6 +912,26 @@ impl Peer {
         let albums = harken::albums(&mut store).unwrap_or_default();
         let artists = harken::artists(&mut store).unwrap_or_default();
         drop(store);
+
+        // The playlist the view is read against can stop existing, and now
+        // routinely does: `create_playlist` refuses a name this person already
+        // has, so the default this peer authored on its first run is dropped
+        // on the rebase when another device's turns out to have been first.
+        // Holding the id it chose would leave the view reading against a row
+        // nobody has.
+        //
+        // Re-hydrating is what re-pointing costs — one full read of the list,
+        // which is what `library_view` is built from — so it happens only when
+        // the id actually moved, not on every refresh.
+        let first = playlists.first().map(|p| p.id).unwrap_or_default();
+        if !playlists.iter().any(|p| p.id == self.playlist) && self.playlist != first {
+            self.playlist = first;
+            self.library = harken::library_view(first);
+            let mut store = self.client.store();
+            self.library.hydrate(&mut store);
+            drop(store);
+            self.items = harken::items_of(&self.library);
+        }
 
         self.details = harken::track_details(&mut self.client.store())
             .unwrap_or_default()

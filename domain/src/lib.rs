@@ -43,12 +43,29 @@ pub use petros_schema::Id;
 #[cfg(feature = "storage")]
 petros::app!(HarkenApp {
     schema: crate::schema::SCHEMA,
-    // 2, because `song` grew the columns that say where a track sits in its
-    // album — the number, the part, the catalogue, who played it, the tempo.
-    // Every peer rebuilds its tables from the log on the next open; the log
-    // itself did not move, and entries written before those arguments existed
-    // replay with them at their defaults.
-    schema_version: 2,
+    // 3, and this one is not a shape change — `playlist` has exactly the
+    // columns it had. `create_playlist` changed its *meaning*: a name a person
+    // already has is now a no-op, because every client makes a default
+    // playlist before it has seen the log and a person on three devices ended
+    // up with three "Favorites".
+    //
+    // An app's tables are a function of the log, and this changed the
+    // function. Nothing rebuilds without being told to, so a peer that already
+    // has the duplicates would keep them for ever while a fresh install
+    // replayed the same log into one row — the two disagreeing about a
+    // database neither of them is wrong about. Bumping this is what makes them
+    // agree: drop, recreate, replay, and the first entry for each name wins
+    // everywhere.
+    //
+    // The cost is one replay per peer, once, bounded by the log's length. The
+    // phone does not pay it and does not get it either: `ForeignApp` leaves
+    // `SCHEMA_VERSION` at 0 on purpose — a migration is the one thing that
+    // should not arrive over the air — so a phone with duplicates keeps them
+    // until it is reinstalled.
+    //
+    // 2 was `song` growing the columns that say where a track sits in its
+    // album: the number, the part, the catalogue, who played it, the tempo.
+    schema_version: 3,
     apply: crate::functions::apply,
     fill_auto: crate::functions::fill_auto,
 });

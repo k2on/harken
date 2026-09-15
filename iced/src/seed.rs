@@ -1648,9 +1648,9 @@ pub fn seed(peer: &mut Peer) {
     peer.refresh();
 
     // Two more playlists, so the sidebar shows what a playlist *is* here:
-    // an ordered list somebody made, of which "Favourites" is one and not
+    // an ordered list somebody made, of which "Favorites" is one and not
     // a special case. Made after the hearts above so that the first
-    // playlist — the one a heart means — stays Favourites.
+    // playlist — the one a heart means — stays Favorites.
     const SETS: &[(&str, &[&str])] = &[
         (
             "Piano",
