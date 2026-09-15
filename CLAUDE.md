@@ -782,6 +782,28 @@ against one of them.
   not on a laptop — recording runs both assembles, and a store plus two Android
   builds is about twenty gigabytes. `expo-audio` is the case that made this
   worth writing down: it brings androidx.media3, which nothing here had.
+- **…and adding the first one found that the recording could not record.**
+  Worth keeping because of how it presented. The recording is made from the
+  APK derivation, which restores the gradle state layer — and the layer is an
+  ordinary sandboxed build that replays `gradle-deps.json`. So recording a new
+  dependency meant first building a layer offline from the graph that, by
+  definition, does not have it. The message was not a cycle and named nothing
+  to do with one:
+
+  ```
+  error: Cannot build '…-harken-gradle-state.drv'
+  > Could not find androidx.media3:media3-exoplayer:1.9.0
+    Searched in the following locations:
+      - https://dl.google.com/dl/android/maven2/androidx/media3/…
+  ```
+
+  which is a published artifact at a reachable URL, so it sends you to check
+  the repository list and the version, and both are fine. android.nix records
+  from a build with no layer to restore now, which also makes the graph the
+  complete one: a build with nothing restored fetches everything itself.
+  The lesson that generalises is the one about the state layer already in this
+  file — *a cache that is also a build input is a cache that can make the
+  build wrong* — and this is that, one level up.
 - **nix does not supply the Android SDK** for the *devshell*, on purpose:
   gradle installs missing
   components into the SDK directory and the store is read-only. Bring your own

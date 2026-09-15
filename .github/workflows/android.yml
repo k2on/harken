@@ -48,6 +48,11 @@ concurrency:
 jobs:
   apk:
     runs-on: ubuntu-latest
+    # A cold run — no store cache, gradle and the NDK from source — is about
+    # forty minutes; a warm one is ten. Without a bound a build that hangs
+    # rather than fails takes GitHub's default six hours of runner with it,
+    # and the step that would have said so never runs.
+    timeout-minutes: 120
 
     # `actions: write` is what lets the cache purge below delete anything. Run
     # 14 tried and logged "Failed to delete the cache", so the store caches were
