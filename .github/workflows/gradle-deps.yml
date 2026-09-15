@@ -47,11 +47,11 @@ jobs:
 
       - name: What changed
         run: |
-          wc -c expo/gradle-deps.json
-          git diff --stat -- expo/gradle-deps.json || true
+          wc -c mobile/gradle-deps.json
+          git diff --stat -- mobile/gradle-deps.json || true
 
       - uses: actions/upload-artifact@v4
         with:
           name: gradle-deps
-          path: expo/gradle-deps.json
+          path: mobile/gradle-deps.json
           if-no-files-found: error
