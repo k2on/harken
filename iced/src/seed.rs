@@ -226,7 +226,23 @@ pub fn seed(peer: &mut Peer) {
     "https://upload.wikimedia.org/wikipedia/commons/transcoded/b/be/Clair_de_lune_%28Claude_Debussy%29_Suite_bergamasque.ogg/Clair_de_lune_%28Claude_Debussy%29_Suite_bergamasque.ogg.mp3",
 ),
     ];
-    for (title, artist, album, ms, file) in LIBRARY {
+
+    /// Bach, as far as Commons has him.
+    ///
+    /// Harvested rather than chosen: every audio file under Commons' own
+    /// "Compositions by Johann Sebastian Bach", kept when its licence reserves no
+    /// rights and its transcode answers a range request. That is not the complete
+    /// works and does not pretend to be — it is what has been recorded, released
+    /// freely, and put there.
+    ///
+    /// CC BY and CC BY-SA files are left out on purpose. They are free to use and
+    /// they want attribution, and a demo with nowhere to put a credit cannot give
+    /// it, so taking them would be taking something on terms it was not offered
+    /// on.
+    // BACH-START
+    pub const BACH: &[(&str, &str, &str, i64, &str)] = &[];
+    // BACH-END
+    for (title, artist, album, ms, file) in LIBRARY.iter().chain(BACH) {
         let _ = peer.client.mutate(mutators::add_song(
             (*title).into(),
             (*artist).into(),
