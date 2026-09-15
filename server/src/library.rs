@@ -290,6 +290,14 @@ fn offer(
         track.album,
         track.duration_ms,
         rel,
+        track.number,
+        // Neither is in a standard tag: a part is a division of a work and a
+        // catalogue number is a scholarly index, and no file carries either.
+        // Left empty rather than guessed out of the folder names.
+        String::new(),
+        String::new(),
+        track.performer,
+        track.bpm,
     )) {
         Ok(_) => true,
         Err(e) => {
@@ -326,6 +334,15 @@ struct Track {
     artist: String,
     album: String,
     duration_ms: i64,
+    /// The tag's own numbering, 0 when the file has none.
+    number: i64,
+    /// `ALBUMARTIST` where there is one. On a classical recording the artist
+    /// tag is usually the composer and this is the performer, which is exactly
+    /// the pair the schema keeps apart.
+    performer: String,
+    /// `TBPM`. Rare, and the reason the column is worth storing rather than
+    /// deriving: when a file states its tempo, that is a fact and not a guess.
+    bpm: i64,
 }
 
 /// What the tags say, with the file name as the fallback for a title.
@@ -352,11 +369,25 @@ fn read(path: &Path) -> Option<Track> {
     } else {
         title
     };
+    // A tag that is there but unparseable is the same as no tag: a number
+    // nobody can read is not a number.
+    let number = |key| {
+        tag.and_then(|t| t.get_string(key).map(str::to_string))
+            .and_then(|v| v.split('/').next().unwrap_or("").trim().parse::<i64>().ok())
+            .unwrap_or(0)
+    };
     Some(Track {
         title,
         artist: text(tag.and_then(|t| t.artist())),
         album: text(tag.and_then(|t| t.album())),
         duration_ms,
+        number: number(lofty::tag::ItemKey::TrackNumber).clamp(0, 999),
+        performer: tag
+            .and_then(|t| t.get_string(lofty::tag::ItemKey::AlbumArtist))
+            .unwrap_or_default()
+            .trim()
+            .to_string(),
+        bpm: number(lofty::tag::ItemKey::Bpm),
     })
 }
 

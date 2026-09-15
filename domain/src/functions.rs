@@ -23,6 +23,14 @@
 //! error rather than a missing row on a device, and a write says what it
 //! changed — which is what an incrementally maintained query will need.
 
+// A mutation's arguments are the wire format: each one is a field in the
+// log, and every verb here is generated into several functions — the
+// authoring call, the dispatch arm, the foreign export. So the lint fires
+// on code nobody wrote, and the refactor it asks for (bundle them into a
+// struct) would put a second shape between a caller and the entry, which
+// is the thing `mutations.txt` exists to pin down.
+#![allow(clippy::too_many_arguments)]
+
 use petros_schema::prelude::*;
 
 // `#[mutation]` and `#[query]` each emit a method on the peer a foreign caller
@@ -60,6 +68,16 @@ pub fn add_song(
     album: String,
     duration_ms: i64,
     file: String,
+    // Everything below was added after the log had entries in it. That is
+    // allowed and is why the arguments are at the end: a payload written
+    // before they existed decodes with each at its default, so an old entry
+    // replays as a song with no track number and no catalogue — which is
+    // exactly what it was.
+    track: i64,
+    part: String,
+    catalogue: String,
+    performer: String,
+    bpm: i64,
 ) -> Result {
     if title.trim().is_empty() {
         return Err("a song needs a title".into());
@@ -104,6 +122,16 @@ pub fn add_song(
     db.put(&Song {
         media_id: id,
         album: album.trim().to_string(),
+        // Negatives are not a position in an album, and neither is a number
+        // past any plausible one: clamped rather than refused, because a bad
+        // track number is not a reason to lose the recording.
+        track: track.clamp(0, 999),
+        part: part.trim().to_string(),
+        catalogue: catalogue.trim().to_string(),
+        performer: performer.trim().to_string(),
+        // The slowest marking anybody writes is around 20 and the fastest
+        // around 300; outside that it is not a tempo.
+        bpm: if (20..=300).contains(&bpm) { bpm } else { 0 },
     })?;
     Ok(())
 }
@@ -420,13 +448,18 @@ pub fn artists(db: &mut Db) -> Result<Vec<crate::schema::Artist>> {
 /// The column a table draws beside the artist. Read from the song end, so a
 /// kind with no albums contributes nothing and needs no case here.
 #[query]
-pub fn track_albums(db: &mut Db) -> Result<Vec<crate::schema::TrackAlbum>> {
+pub fn track_details(db: &mut Db) -> Result<Vec<crate::schema::TrackDetail>> {
     Ok(db
         .select(Song::all())
         .into_iter()
-        .map(|s| crate::schema::TrackAlbum {
+        .map(|s| crate::schema::TrackDetail {
             media_id: s.media_id,
             album: s.album,
+            track: s.track,
+            part: s.part,
+            catalogue: s.catalogue,
+            performer: s.performer,
+            bpm: s.bpm,
         })
         .collect())
 }

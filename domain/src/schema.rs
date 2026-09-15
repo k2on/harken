@@ -89,16 +89,31 @@ petros_schema::row! {
         tracks: i64,
     };
 
-    /// Which album a track is on, for a client drawing a column of them.
+    /// What is true of a track as a *song*, for a client drawing those columns.
     ///
-    /// A pair rather than a field on [`Item`], and that is the whole point:
-    /// `album` is true of the *song* kind and lives on `song`, so folding it
-    /// into the kind-neutral library row would put a join behind every list —
-    /// the thing `media` exists to avoid. A screen that wants the column asks
-    /// for it and joins in memory; a screen that does not, does not pay.
-    TrackAlbum => {
+    /// Beside [`Item`] rather than folded into it, and that is the whole
+    /// point: every field here is true of the song kind and lives on `song`,
+    /// so putting them on the kind-neutral library row would put a join behind
+    /// every list — the thing `media` exists to avoid. A screen that wants
+    /// these asks for them and joins in memory; a screen that does not, does
+    /// not pay. It was `TrackAlbum` when `album` was the only one.
+    TrackDetail => {
         media_id: Id<tables::Media> => String { |id| id.to_string() },
         album: String,
+        /// Where it sits in the album; 0 when nobody said.
+        track: i64,
+        /// The suite or book inside the work, when the work has them. Empty
+        /// otherwise, which is most albums.
+        part: String,
+        /// `BWV 988`. The one name for a classical work that survives
+        /// translation, so it is what two recordings of one piece agree on.
+        catalogue: String,
+        /// Who played it. `Item::creator` is who *wrote* it, and for this
+        /// repertoire they are three hundred years apart.
+        performer: String,
+        /// Beats per minute; 0 when nobody said. See `schema.sql` for what
+        /// counts as somebody saying.
+        bpm: i64,
     };
 
     /// Whoever made something, as a sidebar lists them.

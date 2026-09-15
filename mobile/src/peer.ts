@@ -230,8 +230,11 @@ export function usePeer(login: Login, server: string | null): Peer {
         }
       }
 
+      // `trackDetails` carries the track number, the part, the catalogue and
+      // who played it as well. Only the album is folded out here, because that
+      // is all this screen draws — the rest is a query away when it wants it.
       const albumOf: Record<string, string> = {};
-      for (const pair of client.trackAlbums()) albumOf[pair.mediaId] = pair.album;
+      for (const d of client.trackDetails()) albumOf[d.mediaId] = d.album;
 
       // A copy of references, so React sees a new array without anything being
       // decoded twice. That is the part still proportional to the library, and

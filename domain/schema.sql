@@ -36,7 +36,50 @@ CREATE TABLE IF NOT EXISTS media (
 -- kind to prove it.
 CREATE TABLE IF NOT EXISTS song (
     media_id BLOB PRIMARY KEY NOT NULL REFERENCES media(id),
-    album    TEXT NOT NULL
+    album    TEXT NOT NULL,
+    -- Where it sits in the album. 0 is "not known", which is honest for a
+    -- single somebody typed in and for a file with no tag — and sorts first,
+    -- which is where an unplaced track belongs.
+    track    BIGINT NOT NULL,
+    -- The division of the work this belongs to, when a work has them: a suite
+    -- inside Water Music, a book of the Well-Tempered Clavier, an act. Empty
+    -- when the album is undivided, which is most of them.
+    --
+    -- Not folded into `album`, because they answer different questions: the
+    -- album is what you put on, and this is where you are inside it. A client
+    -- that groups by album still groups correctly when a work has three
+    -- suites, and one that shows the division can.
+    part     TEXT NOT NULL,
+    -- The catalogue number: `BWV 988`, `K. 525`, `Op. 23`. Empty for music
+    -- nobody catalogued.
+    --
+    -- This is the only *stable* name a classical work has. Titles are
+    -- translated, transliterated and abbreviated differently by every
+    -- publisher; the number is the same in every language and every edition,
+    -- which makes it the thing to match on when two recordings are the same
+    -- piece.
+    catalogue TEXT NOT NULL,
+    -- Who played it, which is not who wrote it. `media.creator` carries the
+    -- composer, because that is the line a kind-neutral list draws under a
+    -- title — and for three hundred years of music the performer is a
+    -- different person, sometimes several of them on one album.
+    --
+    -- Empty when unknown rather than repeating the composer: saying nothing is
+    -- better than saying something false, and a client can tell them apart.
+    performer TEXT NOT NULL,
+    -- Beats per minute, 0 when unknown.
+    --
+    -- Two honest sources, and neither is a machine listening to the audio. A
+    -- tagged file states it in `TBPM` and the scanner reads it. Failing that,
+    -- the *tempo marking* is one: `Allegro` and `Adagio` are instructions
+    -- about speed, written by the composer, and the conventional metronome
+    -- ranges for them are what a performer reads. Taking the middle of the
+    -- range for the marking is an approximation and is stored as one.
+    --
+    -- What is not allowed here is a number with no source. 0 means nobody
+    -- said, and a movement titled `Variatio 7 a 1 ovvero 2 Clav` is a
+    -- movement nobody said a tempo for.
+    bpm      BIGINT NOT NULL
 );
 
 -- A playlist. "Favourites" is one of these and nothing special: a heart in a

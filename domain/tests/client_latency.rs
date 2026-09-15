@@ -43,6 +43,11 @@ fn the_cost_of_the_thread() {
             String::new(),
             0,
             String::new(),
+            0,
+            String::new(),
+            String::new(),
+            String::new(),
+            0,
         );
         let mut bytes = Vec::new();
         ciborium::into_writer(&raw, &mut bytes).unwrap();
@@ -91,6 +96,11 @@ fn fsync_or_wasm() {
                 String::new(),
                 0,
                 String::new(),
+                0,
+                String::new(),
+                String::new(),
+                String::new(),
+                0,
             ))
             .unwrap();
         let mut ts = vec![];
@@ -103,6 +113,11 @@ fn fsync_or_wasm() {
                     String::new(),
                     0,
                     String::new(),
+                    0,
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                    0,
                 ))
                 .unwrap();
             ts.push(t.elapsed().as_secs_f64() * 1000.0);
@@ -141,6 +156,11 @@ fn one_tap_at_a_fixed_depth() {
                     String::new(),
                     0,
                     String::new(),
+                    0,
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                    0,
                 ))
                 .unwrap();
             }
@@ -151,6 +171,11 @@ fn one_tap_at_a_fixed_depth() {
                 String::new(),
                 0,
                 String::new(),
+                0,
+                String::new(),
+                String::new(),
+                String::new(),
+                0,
             ))
             .unwrap();
             ts.push(t.elapsed().as_secs_f64() * 1000.0);
@@ -204,6 +229,11 @@ fn a_bulk_mutation_row_by_row() {
                     String::new(),
                     0,
                     String::new(),
+                    0,
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                    0,
                 );
                 let mut bytes = Vec::new();
                 ciborium::into_writer(&raw, &mut bytes).unwrap();
@@ -290,6 +320,11 @@ fn maintained_against_re_read_on_the_client_path() {
                     String::new(),
                     0,
                     String::new(),
+                    0,
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                    0,
                 ))
                 .unwrap();
         }
@@ -315,6 +350,11 @@ fn maintained_against_re_read_on_the_client_path() {
                     String::new(),
                     0,
                     String::new(),
+                    0,
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                    0,
                 ))
                 .unwrap();
 
@@ -393,6 +433,11 @@ fn what_crosses_the_boundary() {
                 String::new(),
                 0,
                 String::new(),
+                0,
+                String::new(),
+                String::new(),
+                String::new(),
+                0,
             )
             .unwrap();
         }
@@ -407,6 +452,11 @@ fn what_crosses_the_boundary() {
                 String::new(),
                 0,
                 String::new(),
+                0,
+                String::new(),
+                String::new(),
+                String::new(),
+                0,
             )
             .unwrap();
 

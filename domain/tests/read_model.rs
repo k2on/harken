@@ -19,6 +19,11 @@ fn library_and_favorites_agree_with_what_apply_wrote() {
             String::new(),
             0,
             String::new(),
+            0,
+            String::new(),
+            String::new(),
+            String::new(),
+            0,
         ))
         .unwrap();
     }
@@ -146,6 +151,11 @@ fn the_maintained_library_agrees_with_the_read_one() {
                 String::new(),
                 0,
                 String::new(),
+                0,
+                String::new(),
+                String::new(),
+                String::new(),
+                0,
             ))
             .unwrap();
         settle(&mut client, &mut view, &mut favorites, &mut rendered);
@@ -254,6 +264,11 @@ fn a_peers_changes_reach_the_maintained_library() {
                 String::new(),
                 0,
                 String::new(),
+                0,
+                String::new(),
+                String::new(),
+                String::new(),
+                0,
             ),
         );
     }
@@ -313,7 +328,18 @@ fn a_first_sync_delivers_songs_and_favourites_without_doubling() {
     for (t, a) in [("Glue", "Bicep"), ("Opal", "Bicep"), ("Gosh", "Jamie xx")] {
         sim.mutate(
             0,
-            harken::add_song(t.into(), a.into(), String::new(), 0, String::new()),
+            harken::add_song(
+                t.into(),
+                a.into(),
+                String::new(),
+                0,
+                String::new(),
+                0,
+                String::new(),
+                String::new(),
+                String::new(),
+                0,
+            ),
         );
         sim.step();
     }
@@ -465,6 +491,11 @@ fn albums_and_artists_group_the_library_and_select_it_back() {
             album.into(),
             0,
             String::new(),
+            0,
+            String::new(),
+            String::new(),
+            String::new(),
+            0,
         ))
         .unwrap();
     }
@@ -544,6 +575,11 @@ fn the_same_file_twice_is_one_song() {
             "Bagatelles".into(),
             0,
             file.into(),
+            0,
+            String::new(),
+            String::new(),
+            String::new(),
+            0,
         )
     };
     c.mutate(add("Für Elise", "beethoven/fur-elise.mp3"))

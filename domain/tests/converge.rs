@@ -20,6 +20,11 @@ fn the_domain_converges_when_peers_go_dark_and_come_back() {
                     String::new(),
                     0,
                     String::new(),
+                    0,
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                    0,
                 ),
             );
             sim.step();
@@ -36,6 +41,11 @@ fn the_domain_converges_when_peers_go_dark_and_come_back() {
                 String::new(),
                 0,
                 String::new(),
+                0,
+                String::new(),
+                String::new(),
+                String::new(),
+                0,
             ),
         );
         sim.mutate(
@@ -46,6 +56,11 @@ fn the_domain_converges_when_peers_go_dark_and_come_back() {
                 String::new(),
                 0,
                 String::new(),
+                0,
+                String::new(),
+                String::new(),
+                String::new(),
+                0,
             ),
         );
         sim.step();

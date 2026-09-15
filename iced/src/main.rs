@@ -350,13 +350,47 @@ struct Choice {
     count: Option<i64>,
 }
 
-// The table's columns. Portions rather than pixels, so the three text columns
-// share whatever width is left after the heart and the duration, and none of
-// them can push the others off the edge at a narrow window.
-const NAME: Length = Length::FillPortion(4);
+// The table's columns. Portions rather than pixels, so the text columns share
+// whatever width is left after the heart, the track number and the duration,
+// and none of them can push the others off the edge at a narrow window.
+const TRACK: Length = Length::Fixed(30.0);
+const NAME: Length = Length::FillPortion(5);
 const ARTIST: Length = Length::FillPortion(3);
-const ALBUM: Length = Length::FillPortion(3);
+const ALBUM: Length = Length::FillPortion(4);
 const TIME: Length = Length::Fixed(56.0);
+
+/// Roughly how many characters fit in one portion of the table, at size 13.
+///
+/// An estimate on purpose. iced lays text out in pixels and this runs before
+/// layout, so the exact answer is not available here — but the failure it
+/// prevents is not subtle: `Wrapping::None` does not shorten a string, it
+/// draws it at full length, and a long title runs straight under the next
+/// column. Erring short costs an ellipsis nobody needed; erring long costs
+/// two columns of text on top of each other.
+const PER_PORTION: usize = 13;
+
+/// Shorten to `max` characters, taking the middle out rather than the end.
+///
+/// The ends are what identify a track: a Bach movement is
+/// `Prelude No. 14 in F-sharp minor, BWV 859` and the tail carries the
+/// catalogue number that tells it from the other twenty-three preludes.
+/// Clipping the end leaves a column of `Prelude No. 14 in F-shar…`, which is
+/// the half that is the same in all of them.
+fn middle(body: &str, max: usize) -> String {
+    let chars: Vec<char> = body.chars().collect();
+    if chars.len() <= max || max < 5 {
+        return body.to_string();
+    }
+    // One for the ellipsis, and the remainder split with the bias forward:
+    // the head is doing more work than the tail.
+    let keep = max - 1;
+    let head = keep.div_ceil(2);
+    let tail = keep - head;
+    let mut out: String = chars[..head].iter().collect();
+    out.push('\u{2026}');
+    out.extend(chars[chars.len() - tail..].iter());
+    out
+}
 
 /// One cell of the table: a single line, clipped rather than wrapped.
 ///
@@ -371,6 +405,12 @@ fn cell<'a>(
     accent: bool,
     dim: bool,
 ) -> Element<'a, Message> {
+    // Shortened here rather than by the renderer, because `Wrapping::None`
+    // clips nothing — it draws the whole string, over whatever is next to it.
+    let body = match width {
+        Length::FillPortion(n) => middle(&body, n as usize * PER_PORTION),
+        _ => body,
+    };
     text(body)
         .size(13)
         .width(width)
@@ -493,7 +533,7 @@ struct Peer {
     /// belongs to the song kind and the library row is deliberately
     /// kind-neutral. Read when the library changes, like the sidebar, and
     /// joined in memory while drawing.
-    albums: std::collections::HashMap<harken::Id<harken::tables::Media>, String>,
+    details: std::collections::HashMap<harken::Id<harken::tables::Media>, harken::TrackDetail>,
     /// The sidebar, rebuilt when the library changes rather than per frame.
     ///
     /// One flat list of the lines a cursor can sit on, in the order they are
@@ -573,7 +613,7 @@ impl Peer {
             playlist,
             source: Source::Library,
             shown: Vec::new(),
-            albums: std::collections::HashMap::new(),
+            details: std::collections::HashMap::new(),
             choices: Vec::new(),
             items: Vec::new(),
             pending: 0,
@@ -652,10 +692,10 @@ impl Peer {
         let artists = harken::artists(&mut store).unwrap_or_default();
         drop(store);
 
-        self.albums = harken::track_albums(&mut self.client.store())
+        self.details = harken::track_details(&mut self.client.store())
             .unwrap_or_default()
             .into_iter()
-            .map(|t| (t.media_id, t.album))
+            .map(|t| (t.media_id, t))
             .collect();
 
         let mut choices = vec![Choice {
@@ -681,9 +721,20 @@ impl Peer {
         self.choices = choices;
     }
 
-    /// The album a track is on, or nothing if its kind has none.
-    fn album_of(&self, id: harken::Id<harken::tables::Media>) -> String {
-        self.albums.get(&id).cloned().unwrap_or_default()
+    /// What is true of a track as a song, or nothing if its kind has none.
+    fn detail_of(&self, id: harken::Id<harken::tables::Media>) -> harken::TrackDetail {
+        self.details
+            .get(&id)
+            .cloned()
+            .unwrap_or(harken::TrackDetail {
+                media_id: id,
+                album: String::new(),
+                track: 0,
+                part: String::new(),
+                catalogue: String::new(),
+                performer: String::new(),
+                bpm: 0,
+            })
     }
 
     /// The list under the header, for whatever the sidebar picked.
@@ -1467,7 +1518,7 @@ impl App {
             .enumerate()
             .fold(column![].spacing(0), |col, (i, item)| {
                 let on_cursor = cursor == Some(i);
-                let album = peer.album_of(item.id);
+                let detail = peer.detail_of(item.id);
                 #[cfg_attr(feature = "demo", allow(unused_mut))]
                 let line = Row::new()
                     .spacing(0)
@@ -1479,6 +1530,19 @@ impl App {
                             .on_press(Message::ToggleFavorite(item.id, item.on_playlist())),
                     )
                     .push(cell(
+                        // 0 is "nobody said", and an empty cell says that
+                        // better than a zero does.
+                        if detail.track > 0 {
+                            detail.track.to_string()
+                        } else {
+                            String::new()
+                        },
+                        TRACK,
+                        on_cursor,
+                        false,
+                        true,
+                    ))
+                    .push(cell(
                         item.title.clone(),
                         NAME,
                         on_cursor,
@@ -1489,7 +1553,7 @@ impl App {
                         false,
                     ))
                     .push(cell(item.creator.clone(), ARTIST, on_cursor, false, true))
-                    .push(cell(album, ALBUM, on_cursor, false, true))
+                    .push(cell(detail.album.clone(), ALBUM, on_cursor, false, true))
                     .push(cell(
                         clock(item.duration_ms as f64 / 1000.0),
                         TIME,
@@ -1513,6 +1577,7 @@ impl App {
                 .spacing(0)
                 .align_y(iced::Alignment::Center)
                 .push(container(text("")).width(Length::Fixed(31.0)))
+                .push(heading("#", TRACK))
                 .push(heading("Name", NAME))
                 .push(heading("Artist", ARTIST))
                 .push(heading("Album", ALBUM))
