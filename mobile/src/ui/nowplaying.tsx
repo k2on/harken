@@ -40,6 +40,7 @@ export function NowPlaying({
   player,
   album,
   onAdd,
+  onDevices,
   onClose,
   theme,
   status,
@@ -51,6 +52,8 @@ export function NowPlaying({
   player: Player;
   album: string;
   onAdd: () => void;
+  /** Open the device sheet. */
+  onDevices: () => void;
   onClose: () => void;
   theme: Theme;
   /** The engine, showing through: cursor, pending, the module's generation. */
@@ -185,6 +188,37 @@ export function NowPlaying({
             server that has the bytes.
           </Text>
         )}
+        {/* Where the sound is. Under the transport rather than in the header,
+            because it is a thing to *do* and the header is a thing to read —
+            and because this is the one control that answers "why can I not
+            hear anything", which is a question people ask with their thumb
+            already on the transport. Drawn only where there is a session to
+            move: a peer working alone has nowhere to send it. */}
+        {player.devices.length > 0 ? (
+          <Pressable
+            onPress={onDevices}
+            style={({ pressed }) => [s.devices, pressed && s.devicesPressed]}
+            accessibilityRole="button"
+            accessibilityLabel="which device is playing"
+          >
+            <Icon
+              name="devices"
+              size={17}
+              tint={player.elsewhere ? theme.accent : theme.dim}
+            />
+            <Text
+              style={[s.devicesText, player.elsewhere && s.devicesOn]}
+              numberOfLines={1}
+            >
+              {player.elsewhere
+                ? `Playing on ${player.output?.name ?? 'another device'}`
+                : player.outputsHere
+                  ? 'Playing on this phone'
+                  : 'Choose a device'}
+            </Text>
+          </Pressable>
+        ) : null}
+
         {player.error ? <Text style={s.trouble}>{player.error}</Text> : null}
 
         <Text style={s.status} numberOfLines={2}>
@@ -271,6 +305,18 @@ const styles = (t: Theme) =>
       backgroundColor: t.accent,
     },
     bigOff: { backgroundColor: t.cardHigh },
+    devices: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      alignSelf: 'center',
+      gap: space.sm,
+      paddingHorizontal: space.md,
+      paddingVertical: space.sm,
+      borderRadius: radius.pill,
+    },
+    devicesPressed: { backgroundColor: t.cardHigh },
+    devicesText: { fontSize: 12.5, color: t.dim },
+    devicesOn: { color: t.accent, fontWeight: '600' },
     trouble: { fontSize: 12, lineHeight: 17, color: t.danger },
     status: { fontSize: 11, color: t.faint, textAlign: 'center' },
   });

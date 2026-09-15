@@ -57,6 +57,19 @@ export function MiniPlayer({
             {player.buffering ? 'buffering…' : track.url ? track.creator : 'nothing to stream'}
           </Text>
         </View>
+        {/* One glyph, and only when the sound is not here. This bar has room
+            for exactly three things and this is not a fourth control — it is
+            the answer to "why is this phone silent", which without it is a
+            mute button somebody has to go looking for. The sheet this opens
+            is where the list lives; this only says there is one. */}
+        {player.elsewhere ? (
+          <View
+            style={s.away}
+            accessibilityLabel={`playing on ${player.output?.name ?? 'another device'}`}
+          >
+            <Icon name="devices" size={16} tint={theme.accent} />
+          </View>
+        ) : null}
         <Pressable
           hitSlop={10}
           onPress={player.toggle}
@@ -105,6 +118,7 @@ const styles = (t: Theme) =>
     },
     pressed: { backgroundColor: t.cardHigh },
     text: { flex: 1, gap: 1 },
+    away: { paddingHorizontal: space.xs },
     title: { fontSize: 14, fontWeight: '600', color: t.text },
     meta: { fontSize: 12, color: t.dim },
     button: { padding: space.sm, borderRadius: radius.pill },

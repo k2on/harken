@@ -49,6 +49,14 @@ const GLYPHS = {
   offline: { ios: 'wifi.slash', android: 'cloud_off', text: '•' },
   signOut: { ios: 'rectangle.portrait.and.arrow.right', android: 'logout', text: '⇥' },
   playing: { ios: 'waveform', android: 'graphic_eq', text: '♪' },
+  // Where the sound is coming from, and the devices it could come from.
+  // `airplayaudio` is Apple's own word for this control, which is what people
+  // already reach for; Android's cast glyph means the same thing to the same
+  // hand.
+  devices: { ios: 'airplayaudio', android: 'cast', text: '⌁' },
+  phone: { ios: 'iphone', android: 'smartphone', text: '▯' },
+  laptop: { ios: 'laptopcomputer', android: 'computer', text: '▭' },
+  stop: { ios: 'stop.circle', android: 'stop_circle', text: '■' },
   debug: { ios: 'ladybug', android: 'bug_report', text: '?' },
 } as const satisfies Record<string, Glyph>;
 

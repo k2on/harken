@@ -66,14 +66,18 @@ mobile/                  the phone client; src/ is UI and a socket, nothing else
   src/app/auth.tsx       …and the route that scheme names, because it is one
   src/peer.ts            the database, the maintained library, and what a
                          screen may ask of either
-  src/player.tsx         what is playing — `expo-audio`, the queue, and the
-                         transport on the lock screen
+  src/player.tsx         what is playing — `expo-audio`, the queue, the
+                         transport on the lock screen, and this account's end
+                         of the listening session, because they are one thing
+  src/listening.ts       …the socket that carries it, and the wire spelt the
+                         way the wire spells it
   src/media.ts           …and the one place a `file` becomes a URL
   src/theme.ts           the palette: light, dark, and the gold. The only place
                          in this directory a color is written down
   src/ui/icon.tsx        every glyph, as an SF Symbol, a Material Symbol, and a
                          character to fall back to (see below)
   src/ui/playlists.tsx   which playlists a track is on, and how to make one
+  src/ui/devices.tsx     which device is making the sound, and moving it
   src/ui/debug.tsx       every number the peer holds, on the phone being wrong —
                          and the one screen that can re-point it
   src/ui/                the rest of the screen: the chips, the row, the bar,
@@ -1385,6 +1389,46 @@ device so it can never be the output; being a *remote control* is the half it
 could still do, and that wants a native WebSocket client, which is a dependency
 this workspace does not have and a `cargoVendorHash` to move for it. `nix run
 .#web` is the desktop client for anyone who wants one.
+
+### And the phone, which is the device the feature is about
+
+`mobile/src/listening.ts` is the same end in TypeScript — the protocol mirrored
+from `domain/src/listening.rs`, and a module-level singleton socket beside
+`@petros/client`'s `session()`, for the reason that one exists: it has to
+outlive every screen. `src/app/library.tsx` *points* it (it is the screen that
+knows which server and which login) and never owns it.
+
+**The wire is spelt the way the wire spells it**: `position_ms`, not
+`positionMs`. Renaming on the way in would be a second description of the
+protocol living in the client that reads it, and the first time a field moved
+the two would disagree somewhere nobody was looking. The awkwardness is the
+point — a field that looks foreign is a field somebody else defined. `player.tsx`
+holds the only two conversions, `wireOf` and `trackOf`, and `Track` gained a
+`file` beside its `url`: the URL is this phone's answer and the path is what
+another device is handed, because it resolves one of its own.
+
+**It is inside `PlayerProvider` rather than in a provider of its own**, because
+these are one thing: the session is what is playing, and so is this. Which buys
+the part worth having — `usePlayer()` answers with the *session*, so
+`miniplayer.tsx` and `nowplaying.tsx` draw a laptop's track without either of
+them learning that a laptop exists. Only the picker is new UI.
+
+Three phone-specific things:
+
+- **The lock screen needs no special case, and that is the report's doing.**
+  `expo-audio` drives its own transport, so a pause from the notification
+  moves the platform rather than calling any of this — and because reporting
+  is driven by the *status* rather than by the buttons, the session hears
+  about it on the next tick anyway. A device that is not the output has
+  nothing on its lock screen to press, because it is not playing.
+- **A remote scrubber needs a ticker.** The output reports about once a second
+  and nothing else re-renders in between, so a bar drawn from another device
+  would step rather than move. 250ms while `elsewhere && playing`, and not at
+  all otherwise.
+- **A device that cannot be heard is drawn and not selectable**, the same as on
+  the desktop and for the same reason: hiding the laptop would answer "where
+  is my laptop" with silence, and "no audio device" is a different answer from
+  "not here". The sheet says which.
 
 ## The media directory is a peer, and a rescan is free
 

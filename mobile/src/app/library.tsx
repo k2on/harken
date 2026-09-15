@@ -13,7 +13,7 @@
  * and the domain owns everything either of them means.
  */
 
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Redirect, router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Login } from '@petros/client';
@@ -22,12 +22,14 @@ import { Alert, FlatList, Pressable, StyleSheet, Text, View } from 'react-native
 import Animated, { FadeIn, LinearTransition } from 'react-native-reanimated';
 
 import { recallServer, remembered, signIn, signOut } from '@/auth';
+import { listening } from '@/listening';
 import { mediaUrl } from '@/media';
 import { sourceTitle, usePeer, type Peer } from '@/peer';
 import { usePlayer, type Track } from '@/player';
 import { radius, space, useTheme, type Theme } from '@/theme';
 import { Browse } from '@/ui/browse';
 import { Debug } from '@/ui/debug';
+import { Devices } from '@/ui/devices';
 import { Icon } from '@/ui/icon';
 import { MiniPlayer } from '@/ui/miniplayer';
 import { NowPlaying } from '@/ui/nowplaying';
@@ -59,12 +61,33 @@ function Signed(props: { server: string; login: Login; online: boolean }) {
   const peer = usePeer(login, props.online ? server : null);
   const player = usePlayer();
 
+  // Where this phone's listening session is, and who it is there. The socket
+  // outlives every screen — the provider that drives it is at the root — so
+  // this points it rather than owning it, exactly as the peer's session is
+  // pointed. "Offline" is a real answer here too: no socket, and the bar
+  // simply has no devices to offer.
+  useEffect(() => {
+    if (!props.online) {
+      listening.close();
+      return;
+    }
+    // A device *is* a login: `login.session` is one login on one device, which
+    // is already issued, already stable across a relaunch, and honestly new
+    // when somebody signs out and back in.
+    listening.point(server, login.token, login.session);
+  }, [server, login.token, login.session, props.online]);
+
   const [open, setOpen] = useState(false);
   const [debug, setDebug] = useState(false);
   const [scrub, setScrub] = useState<number | null>(null);
   // Which track's playlist sheet is open. `null` in the tuple is the browser's
   // own: the same sheet, with nothing to add.
   const [adding, setAdding] = useState<{ item: Item | null } | null>(null);
+  // Which device is making the sound. Its own flag rather than a mode of the
+  // player sheet, because it opens *over* that sheet: you reach it from the
+  // transport, and closing it should put the transport back rather than the
+  // library.
+  const [picking, setPicking] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const rows = peer.shown;
@@ -83,6 +106,10 @@ function Signed(props: { server: string; login: Login; online: boolean }) {
       album: peer.albumOf[item.id] ?? '',
       ms: Number(item.durationMs),
       url: mediaUrl(item.file, server),
+      // Beside the URL rather than instead of it: the URL is this phone's
+      // answer, and the path is what another device is handed so it can
+      // resolve one of its own.
+      file: item.file,
     }),
     [peer.albumOf, server],
   );
@@ -129,6 +156,10 @@ function Signed(props: { server: string; login: Login; online: boolean }) {
         style: 'destructive',
         onPress: async () => {
           await signOut(server);
+          // A device is a login, so signing out is this phone *leaving* the
+          // session rather than going quiet inside it — everything else should
+          // stop offering it in the picker.
+          listening.close();
           router.replace('/');
         },
       },
@@ -232,6 +263,7 @@ function Signed(props: { server: string; login: Login; online: boolean }) {
             const now = peer.items.find((i) => i.id === playingId);
             if (now) setAdding({ item: now });
           }}
+          onDevices={() => setPicking(true)}
           onClose={closePlayer}
           theme={theme}
           status={status}
@@ -249,6 +281,19 @@ function Signed(props: { server: string; login: Login; online: boolean }) {
           theme={theme}
           bottom={insets.bottom}
           onClose={() => setAdding(null)}
+        />
+      ) : null}
+
+      {/* Last, so it is over the player sheet it was opened from. */}
+      {picking ? (
+        <Devices
+          devices={player.devices}
+          output={player.output?.id ?? null}
+          me={player.me}
+          theme={theme}
+          bottom={insets.bottom}
+          onPick={player.pickDevice}
+          onClose={() => setPicking(false)}
         />
       ) : null}
     </View>
