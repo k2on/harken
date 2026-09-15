@@ -53,6 +53,8 @@ iced/                    the desktop and browser client
   src/vim.rs             the keyboard: vim's grammar, and the one trait a
                          component implements to get it
   src/route.rs           what the address bar says, and the back button
+  src/listening.rs       this device's end of the account's audio session:
+                         the socket, and the one rule about making a sound
   src/player.rs          what is playing — an <audio> element in a browser,
                          and nothing at all on the desktop
   nix/readme.nix         its section of README.md
@@ -1300,6 +1302,89 @@ Some details that are each a decision:
 - **The last device out takes the room with it.** Keeping the queue would mean
   a phone opened tomorrow resumes an afternoon nobody remembers, and the log is
   where things are kept.
+
+### What the client does with it, and the one rule
+
+`iced/src/listening.rs` is this device's end. Everything the rest of the
+program needs from it is two questions — *am I the output* and *is the sound
+somewhere else* — and they are deliberately not each other's negation: a
+session with **no** output is neither, and there the right answer is to play
+here and let the report claim it. Without that third case the first tap of the
+day would need a device picked first, which is a setup step for the common
+case.
+
+`App::ask` is the one place a transport button is routed, and the whole of it
+is:
+
+```rust
+fn ask(&mut self, command: listening::Command) -> Task<Message> {
+    if self.listening.elsewhere() {
+        self.listening.ask(command);   // a message
+        return Task::none();
+    }
+    self.obey(command)                 // an instruction
+}
+```
+
+`obey` is also what the *server* calls into when it tells this device to do
+something, so a button pressed on a phone and a button pressed here reach the
+same five lines. Everything routes through it: play/pause, the two skips, the
+scrubber, a click on a row — and the media keys, because a lock-screen button
+is a transport button and the controller this page put there is a remote for
+the *session* rather than for the tab.
+
+Seven things that each had to be decided:
+
+- **The queue is a `listening::Track`, not an `Item`.** It is also what a
+  hand-off carries, and the device receiving it may not have that album in its
+  replica yet — so the rows are copied rather than referred to. One type means
+  reporting costs a clone instead of a conversion per frame. `file` travels as
+  the log's path and each device joins it to *its own* server, which is what
+  `media_url` was always for.
+- **`Player::toggle` is gone.** Play and pause are two verbs, because no caller
+  is in a position to toggle: an operating system's controller says which it
+  means, another device cannot know from here whether this one is playing, and
+  even the button in this window now asks the *session* which is true before
+  deciding. A toggle would answer a lock screen showing "paused" by pausing a
+  track something else had already resumed.
+- **Silence is enforced on the tick, not at the buttons.** Losing the sound is
+  not something a device *does* — it is told, by a broadcast — so the only
+  place that can notice is the loop that reads them. One line, and no rule for
+  a call site to remember.
+- **A device that has never played anything says nothing.** Reporting is what
+  claims the output, so a report from an idle tab would take the sound from
+  the one actually using it. The guard is `player.track().is_some()`.
+- **One number decides when to report.** The position drifting past 1.1s is
+  the heartbeat while playing (it crosses about once a second), silence while
+  paused (it never moves), and a seek (it crosses at once, however long ago
+  the last report was). Three behaviours nobody had to write separately.
+- **The bar is optimistic, the way the engine's view is.** A press updates the
+  copy of the session this device holds and the broadcast replaces it — because
+  the scrubber is *dragged*, and waiting for a round trip per pixel reads as a
+  control that did not take. Only play, pause and seek are guessed: `Next` and
+  `Start` change which track it is, which would mean guessing against a queue
+  another device holds, and a bar showing the wrong title is worse than a bar a
+  moment behind.
+- **The transport works in a build that cannot make a sound.** `AUDIBLE` only
+  decides whether *this* device can be the one playing; being a remote control
+  is a use, so the buttons are enabled whenever there is a session to send them
+  to.
+
+And the picker, `d` or the speaker at the end of the bar: one row per device,
+plus a last row that stops it everywhere — the same shape the playlist picker
+has, so `j` reaches it without a second key to learn, and the same `fit` places
+it, so being asked for from the bottom of the window is what makes it open
+upwards. A device that cannot be heard is **drawn and not selectable**: hiding
+it would be worse, because a laptop that is in the session and controlling it
+should see itself listed, and "no audio device" is a different answer from "not
+here".
+
+**A browser, and only a browser** — the same `cfg` as the media session, for
+the same reason it was put there the first time. The desktop has no audio
+device so it can never be the output; being a *remote control* is the half it
+could still do, and that wants a native WebSocket client, which is a dependency
+this workspace does not have and a `cargoVendorHash` to move for it. `nix run
+.#web` is the desktop client for anyone who wants one.
 
 ## The media directory is a peer, and a rescan is free
 

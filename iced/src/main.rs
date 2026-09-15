@@ -27,6 +27,7 @@
 //! two lines: where the database lives, and which transport carries the bytes.
 
 mod icon;
+mod listening;
 mod palette;
 mod player;
 mod route;
@@ -376,9 +377,33 @@ enum Message {
     Key(iced::keyboard::Key, iced::keyboard::Modifiers),
     /// The window changed size. Only the menu cares.
     Resized(iced::Size),
+    /// Which device is making the sound: open the picker, walk it, pick.
+    OpenDevices,
+    DeviceAt(usize),
+    /// `None` is the last row: stop it everywhere.
+    PickDevice(Option<listening::DeviceId>),
+    CloseDevices,
     /// Pump the transport. Nothing else drives a sans-io client.
     Tick,
 }
+
+/// What the now-playing bar draws, from wherever it came.
+///
+/// A struct rather than the player, because the bar has two sources — this
+/// device's element, and whatever the session says another device is doing —
+/// and a view that branched on that twice would eventually branch on it
+/// differently in the two places.
+struct Bar {
+    title: String,
+    creator: String,
+    playing: bool,
+    position: f64,
+    duration: f64,
+}
+
+/// What `view_devices` draws a row at, and `fit` has to assume.
+const DEVICE_ROW: f32 = 208.0;
+const DEVICES_WIDTH: f32 = 216.0;
 
 /// How the next change to what is shown should reach the history.
 ///
@@ -746,7 +771,18 @@ struct App {
     /// A snapshot rather than a reference to the shown list, so that changing
     /// the sidebar selection — or somebody else's edit arriving — does not
     /// silently redirect what plays next.
-    queue: Vec<Item>,
+    ///
+    /// [`listening::Track`] rather than `Item`, because this queue is also
+    /// what a hand-off carries: the other device gets the list, not a
+    /// reference into a library it may not have yet. One type, so reporting
+    /// costs a clone rather than a conversion per frame.
+    queue: Vec<listening::Track>,
+    /// This account's listening session: every device signed in as this
+    /// person, which one is making the sound, and what it is playing.
+    listening: listening::Remote,
+    /// The device picker, when it is up. `at` walks it like every other
+    /// overlay; the last row is "nowhere".
+    devices: Option<usize>,
     server: String,
     /// A name to offer a dev server, so `nix run .#iced alice` needs no
     /// browser. Ignored by a real one.
@@ -1036,6 +1072,8 @@ impl App {
                 window: iced::Size::new(860.0, 600.0),
                 player: Player::new(),
                 queue: Vec::new(),
+                listening: listening::Remote::new(),
+                devices: None,
                 login: Some(login),
                 server: String::new(),
                 user: None,
@@ -1063,6 +1101,8 @@ impl App {
                 window: iced::Size::new(860.0, 600.0),
                 player: Player::new(),
                 queue: Vec::new(),
+                listening: listening::Remote::new(),
+                devices: None,
                 login: remembered::recall(&server),
                 server,
                 user,
@@ -1074,6 +1114,8 @@ impl App {
                 let mut peer = Peer::open(login);
                 app.note = peer.connect(&app.server);
                 app.peer = Some(peer);
+                app.listening
+                    .open(&app.server, &login.token, &login.session);
                 return (app, Task::none());
             }
             // Nobody yet. A page that just came back from signing in has the
@@ -1164,6 +1206,11 @@ impl App {
                 self.peer = Some(peer);
             }
         }
+        // A device is a login, so a new login is a new device — which is
+        // what makes signing out and back in honestly a different row in
+        // somebody else's picker, and a reloaded tab the same one.
+        self.listening
+            .open(&self.server, &login.token, &login.session);
         self.login = Some(login);
     }
 
@@ -1245,6 +1292,15 @@ impl App {
                 _ => return Task::none(),
             }
         }
+        if self.devices.is_some() {
+            match action {
+                vim::Action::Move(motion) => return self.devices_travel(motion),
+                vim::Action::Activate => return self.pick_device(),
+                vim::Action::Cancel => return self.update(Message::CloseDevices),
+                vim::Action::Toggle => return self.update(Message::PlayPause),
+                _ => return Task::none(),
+            }
+        }
         match action {
             vim::Action::Move(motion) => self.travel(motion),
             vim::Action::Activate => self.activate(),
@@ -1300,6 +1356,10 @@ impl App {
                         None => Task::none(),
                     }
                 }
+                // Where the sound is. A letter rather than a motion for the
+                // same reason `a` and `m` are: it asks a question about the
+                // session rather than moving a cursor through a list.
+                'd' => self.update(Message::OpenDevices),
                 '}' => self.update(Message::Skip(1)),
                 '{' => self.update(Message::Skip(-1)),
                 _ => Task::none(),
@@ -1469,6 +1529,38 @@ impl App {
     /// What `a` reads: every playlist, with the ones this track is already on
     /// marked. One query for one track, asked when the picker opens — the same
     /// trade the phone makes, and for the same reason.
+    /// Walk the device picker. One more cell than there are devices, because
+    /// the last row is "stop everywhere" — the same shape the playlist picker
+    /// has, so `j` reaches it without a second key to learn.
+    fn devices_travel(&mut self, motion: vim::Motion) -> Task<Message> {
+        use vim::Navigate;
+        let Some(at) = self.devices else {
+            return Task::none();
+        };
+        let cells = self.listening.devices().len() + 1;
+        if let Some(next) = (vim::List { cells }).step(at, motion) {
+            self.devices = Some(next);
+        }
+        Task::none()
+    }
+
+    /// Run the row the device cursor is on.
+    ///
+    /// A device that cannot be heard is not a target here either, exactly as
+    /// it is not a click target: `<Enter>` on it does nothing rather than
+    /// asking for a transfer the server will refuse.
+    fn pick_device(&mut self) -> Task<Message> {
+        let Some(at) = self.devices else {
+            return Task::none();
+        };
+        let to = match self.listening.devices().get(at) {
+            Some(device) if !device.audible => return Task::none(),
+            Some(device) => Some(device.id.clone()),
+            None => None,
+        };
+        self.update(Message::PickDevice(to))
+    }
+
     fn open_picker(&mut self) -> Task<Message> {
         // Whatever the menu was opened for, or the track under the cursor.
         // The menu stays up: this is its submenu, and a submenu that closes
@@ -1545,39 +1637,97 @@ impl App {
     /// Move through the queue, and stop at either end rather than wrapping —
     /// a list that loops silently is hard to tell from one that is stuck.
     fn skip(&mut self, delta: i32) {
-        let Some(current) = self.player.track().map(|t| t.id) else {
-            return;
-        };
-        let Some(at) = self.queue.iter().position(|i| i.id == current) else {
-            return;
-        };
-        let next = at as i32 + delta;
-        if next < 0 || next as usize >= self.queue.len() {
+        let next = self.playing_at() as i32 + delta;
+        if self.player.track().is_none() || next < 0 || next as usize >= self.queue.len() {
             return;
         }
-        let item = self.queue[next as usize].clone();
-        self.player.play(
-            Track {
-                id: item.id,
-                title: item.title.clone(),
-                creator: item.creator.clone(),
-                album: self.album_of(item.id),
-                ms: item.duration_ms,
-            },
-            &media_url(&self.server, &item.file),
-        );
+        self.start_at(next as usize, 0, true);
     }
 
-    /// The album a track belongs to, for the platform's controller.
+    /// Where in the queue the player is. Zero when nothing is playing, which
+    /// is also what a report of an empty session should say.
+    fn playing_at(&self) -> usize {
+        let Some(id) = self.player.track().map(|t| t.id) else {
+            return 0;
+        };
+        self.queue.iter().position(|t| t.id == id).unwrap_or(0)
+    }
+
+    /// Put this device's player on `at` in the queue.
     ///
-    /// `Item` is kind-neutral on purpose, so this is the same cached lookup
-    /// the table's column makes rather than a wider row: a screen that wants
-    /// a song-only fact asks for it.
-    fn album_of(&self, id: harken::Id<harken::tables::Media>) -> String {
-        self.peer
-            .as_ref()
-            .map(|p| p.detail_of(id).album)
-            .unwrap_or_default()
+    /// The one place a [`listening::Track`] becomes something that makes a
+    /// sound, so a hand-off and a click on a row land in the same code: both
+    /// are a queue, a place in it, a point in the track and whether it was
+    /// playing.
+    ///
+    /// The seek is issued before the element has read any of the stream. A
+    /// browser queues it against `loadedmetadata` rather than refusing it, so
+    /// a track handed over mid-way starts where it left off — and the worst
+    /// case is a second of the beginning, not a seek that goes nowhere.
+    fn start_at(&mut self, at: usize, position_ms: i64, playing: bool) {
+        let Some(track) = self.queue.get(at).cloned() else {
+            return;
+        };
+        self.player.play(
+            Track {
+                id: track.id,
+                title: track.title.clone(),
+                creator: track.creator.clone(),
+                album: track.album.clone(),
+                ms: track.duration_ms,
+            },
+            &media_url(&self.server, &track.file),
+        );
+        if position_ms > 0 {
+            self.player.seek(position_ms as f64 / 1000.0);
+        }
+        if !playing {
+            self.player.pause();
+        }
+        if track.file.is_empty() {
+            self.note = "nothing to stream — this one has no file".into();
+        }
+    }
+
+    /// Where a transport button goes, and the only place that is decided.
+    ///
+    /// If the sound is on another of this account's devices, the button is a
+    /// *message*: pressing pause here pauses the laptop. Otherwise it is an
+    /// instruction — either this device is the output, or nothing is, and the
+    /// report that follows the tick claims it. That third case is why this is
+    /// not `if outputs_here()`: a session with no output yet is the common one
+    /// at the start of a day, and needing a device picked before any music can
+    /// start is a setup step.
+    fn ask(&mut self, command: listening::Command) -> Task<Message> {
+        if self.listening.elsewhere() {
+            self.listening.ask(command);
+            return Task::none();
+        }
+        self.obey(command)
+    }
+
+    /// Do it here. Reached from [`App::ask`] and from the server, which only
+    /// ever sends a command to the device that is the output.
+    fn obey(&mut self, command: listening::Command) -> Task<Message> {
+        match command {
+            listening::Command::Play => self.player.resume(),
+            listening::Command::Pause => self.player.pause(),
+            listening::Command::Next => self.skip(1),
+            listening::Command::Previous => self.skip(-1),
+            listening::Command::Seek { position_ms } => {
+                self.player.seek(position_ms as f64 / 1000.0)
+            }
+            listening::Command::Start {
+                queue,
+                at,
+                position_ms,
+                playing,
+            } => {
+                self.queue = queue;
+                self.start_at(at, position_ms, playing);
+            }
+        }
+        Task::none()
     }
 
     /// Do the thing, then make the address bar agree with what is on screen.
@@ -1648,6 +1798,11 @@ impl App {
                 }
                 remembered::forget(&self.server);
                 self.peer = None;
+                // A device is a login, so signing out is this device leaving
+                // the session rather than going quiet inside it — the picker
+                // on everything else should stop offering it.
+                self.listening.close();
+                self.devices = None;
                 self.note = "signed out".into();
                 Ok(())
             }
@@ -1784,16 +1939,88 @@ impl App {
                 }
                 made
             }
+            // Play and pause are two verbs rather than one toggle, and the
+            // moment the sound might be on another device that stops being a
+            // detail: "the other one of whatever you are" is not something a
+            // phone can mean about a laptop. So which it is gets decided here,
+            // against whichever of the two is actually making the sound.
             Message::PlayPause => {
-                self.player.toggle();
-                Ok(())
+                let playing = if self.listening.elsewhere() {
+                    self.listening.playing()
+                } else {
+                    self.player.is_playing()
+                };
+                return self.ask(if playing {
+                    listening::Command::Pause
+                } else {
+                    listening::Command::Play
+                });
             }
             Message::Seek(secs) => {
-                self.player.seek(secs as f64);
-                Ok(())
+                return self.ask(listening::Command::Seek {
+                    position_ms: (secs as f64 * 1000.0) as i64,
+                })
             }
             Message::Skip(delta) => {
-                self.skip(delta);
+                return self.ask(if delta > 0 {
+                    listening::Command::Next
+                } else {
+                    listening::Command::Previous
+                })
+            }
+            // The queue is what is on screen, taken now: skipping follows the
+            // list you pressed play in, even after the sidebar moves somewhere
+            // else. It is also what a hand-off carries, which is why the rows
+            // are copied rather than referred to — the device that receives
+            // them may not have that album in its replica yet.
+            Message::PlayItem(id) => {
+                let Some(peer) = &self.peer else {
+                    return Task::none();
+                };
+                self.queue = peer
+                    .rows()
+                    .iter()
+                    .map(|i| listening::Track {
+                        id: i.id,
+                        title: i.title.clone(),
+                        creator: i.creator.clone(),
+                        album: peer.detail_of(i.id).album,
+                        duration_ms: i.duration_ms,
+                        // The path as the log carries it. Each device joins it
+                        // to *its* server, which is what `media_url` is for.
+                        file: i.file.clone(),
+                    })
+                    .collect();
+                let at = self.queue.iter().position(|t| t.id == id).unwrap_or(0);
+                let queue = self.queue.clone();
+                return self.ask(listening::Command::Start {
+                    queue,
+                    at,
+                    position_ms: 0,
+                    playing: true,
+                });
+            }
+            Message::OpenDevices => {
+                // Where the cursor starts is the device that has the sound,
+                // so `<Enter>` straight away changes nothing.
+                let output = self.listening.session().and_then(|s| s.output.clone());
+                let at = output
+                    .and_then(|id| self.listening.devices().iter().position(|d| d.id == id))
+                    .unwrap_or(self.listening.devices().len());
+                self.devices = Some(at);
+                Ok(())
+            }
+            Message::DeviceAt(at) => {
+                self.devices = Some(at);
+                Ok(())
+            }
+            Message::PickDevice(to) => {
+                self.listening.transfer(to);
+                self.devices = None;
+                Ok(())
+            }
+            Message::CloseDevices => {
+                self.devices = None;
                 Ok(())
             }
             // The element runs on its own clock, so the end of a track arrives
@@ -1802,6 +2029,30 @@ impl App {
             Message::Tick => {
                 if self.player.ended() {
                     self.skip(1);
+                }
+                // The listening session: first what this device has been told
+                // to do — the server only ever tells the output — and then
+                // what it is doing.
+                for command in self.listening.poll() {
+                    let _ = self.obey(command);
+                }
+                // Silent unless it is the output. One rule, enforced here
+                // rather than remembered at each button, because losing the
+                // sound is not something this device does: it is told, by a
+                // broadcast, and this is the only place that can notice.
+                if self.listening.elsewhere() && self.player.is_playing() {
+                    self.player.pause();
+                }
+                // A device that has never played anything says nothing, so
+                // opening a second tab does not quietly claim the sound from
+                // the one that is using it.
+                if self.player.track().is_some() {
+                    let at = self.playing_at();
+                    let playing = self.player.is_playing();
+                    let position_ms = (self.player.position() * 1000.0) as i64;
+                    let queue = std::mem::take(&mut self.queue);
+                    self.listening.report(&queue, at, playing, position_ms);
+                    self.queue = queue;
                 }
                 // The back button, and a link somebody was sent. Read rather
                 // than listened for: `popstate` would mean a closure kept
@@ -1830,15 +2081,26 @@ impl App {
                 // already watches for the end of a track collects it.
                 #[cfg(target_arch = "wasm32")]
                 {
-                    match self.player.take_remote() {
-                        Some(Remote::Play) => self.player.resume(),
-                        Some(Remote::Pause) => self.player.pause(),
-                        Some(Remote::Next) => self.skip(1),
-                        Some(Remote::Previous) => self.skip(-1),
-                        Some(Remote::Seek(secs)) => self.player.seek(secs),
-                        None => {}
-                    }
+                    let remote = self.player.take_remote();
                     self.player.announce();
+                    // A media key is a transport button like any other, so it
+                    // goes where they go: to whichever device is making the
+                    // sound. Which is also why the controller this page put on
+                    // the lock screen is still worth having after the sound
+                    // moves — it is a remote for the session, not for the tab.
+                    let command = match remote {
+                        Some(Remote::Play) => Some(listening::Command::Play),
+                        Some(Remote::Pause) => Some(listening::Command::Pause),
+                        Some(Remote::Next) => Some(listening::Command::Next),
+                        Some(Remote::Previous) => Some(listening::Command::Previous),
+                        Some(Remote::Seek(secs)) => Some(listening::Command::Seek {
+                            position_ms: (secs * 1000.0) as i64,
+                        }),
+                        None => None,
+                    };
+                    if let Some(command) = command {
+                        return self.ask(command);
+                    }
                 }
                 Ok(())
             }
@@ -1855,28 +2117,6 @@ impl App {
                         if let Some(at) = at {
                             self.cursors[Pane::Sidebar as usize] = at;
                             self.cursors[Pane::Tracks as usize] = 0;
-                        }
-                        Ok(())
-                    }
-                    Message::PlayItem(id) => {
-                        // The queue is what is on screen, taken now: skipping
-                        // follows the list you pressed play in, even after the
-                        // sidebar moves somewhere else.
-                        self.queue = peer.rows().to_vec();
-                        if let Some(item) = self.queue.iter().find(|i| i.id == id) {
-                            self.player.play(
-                                Track {
-                                    id: item.id,
-                                    title: item.title.clone(),
-                                    creator: item.creator.clone(),
-                                    album: peer.detail_of(item.id).album,
-                                    ms: item.duration_ms,
-                                },
-                                &media_url(&self.server, &item.file),
-                            );
-                            if item.file.is_empty() {
-                                self.note = "nothing to stream — this one has no file".into();
-                            }
                         }
                         Ok(())
                     }
@@ -2012,6 +2252,28 @@ impl App {
                         .center_y(Length::Fill),
                 ),
             });
+        }
+
+        if let Some(at) = self.devices {
+            // Placed by the same rule the row menu is, which is the point of
+            // `fit` being a function: this one is always asked for from the
+            // bottom of the window, so it always opens upwards — and it does
+            // that because of where it was asked from rather than because it
+            // was told to.
+            let rows = self.listening.devices().len() + 1;
+            let origin = Self::fit(
+                self.cursor,
+                self.window,
+                DEVICES_WIDTH,
+                8.0 + 27.0 + 27.0 * rows as f32,
+            );
+            layers = layers
+                .push(
+                    mouse_area(container(text("")).width(Length::Fill).height(Length::Fill))
+                        .on_press(Message::CloseDevices)
+                        .on_right_press(Message::CloseDevices),
+                )
+                .push(pin(self.view_devices(at)).x(origin.x).y(origin.y));
         }
 
         layers.into()
@@ -2550,6 +2812,7 @@ impl App {
                 "a",
                 "which playlists this track is on \u{2014} and make one",
             ),
+            ("d", "which device is making the sound, and move it"),
             ("/", "search this pane; <Enter> accepts, <Esc> drops it"),
             ("n  N", "the next match, the one before"),
             ("{  }", "the previous track, the next one"),
@@ -2602,6 +2865,13 @@ impl App {
                 }
             );
         }
+        // A session socket turned away is its own kind of offline, and it
+        // does not look like the log's: the library keeps syncing and only
+        // the devices go. Saying which is what stops "the picker is empty"
+        // being a question.
+        if let Some(reason) = self.listening.denied() {
+            line = format!("{line}  ·  no listening session: {reason}");
+        }
         if !self.note.is_empty() {
             line = format!("{line}  ·  {}", self.note);
         }
@@ -2631,37 +2901,112 @@ impl App {
     /// The now-playing bar. Pinned to the bottom, and honest about silence:
     /// on a build with no audio device it says so rather than drawing a
     /// transport that does nothing when pressed.
-    fn view_bar(&self) -> Element<'_, Message> {
-        let Some(track) = self.player.track() else {
-            return container(
-                text(if Player::AUDIBLE {
-                    "nothing playing — pick a track"
-                } else {
-                    "nothing playing — pick a track (the desktop build has no audio device; \
-                     the browser one streams)"
-                })
-                .size(12)
-                .style(style::dim),
+    /// What the now-playing bar is drawing, whichever device is making it.
+    ///
+    /// The bar shows the *session*, not this window's player — so a laptop
+    /// watching a phone draws the phone's track, its clock and its state, and
+    /// the transport under it moves the phone. When the sound is here (or
+    /// nowhere yet) it is the local player, because that answer is a frame
+    /// fresher than anything a broadcast could be.
+    fn bar(&self) -> Option<Bar> {
+        if self.listening.elsewhere() {
+            let track = self.listening.now()?;
+            return Some(Bar {
+                title: track.title.clone(),
+                creator: track.creator.clone(),
+                playing: self.listening.playing(),
+                position: self.listening.position_ms() as f64 / 1000.0,
+                duration: track.duration_ms as f64 / 1000.0,
+            });
+        }
+        let track = self.player.track()?;
+        Some(Bar {
+            title: track.title.clone(),
+            creator: track.creator.clone(),
+            playing: self.player.is_playing(),
+            position: self.player.position(),
+            duration: self.player.duration(),
+        })
+    }
+
+    /// Which device has the sound, as a button that opens the picker.
+    ///
+    /// Drawn only where there is a session to draw: a peer with no server, or
+    /// one whose socket has not come up, has no devices to offer and a picker
+    /// with one row in it that says "this one" is a control that does nothing.
+    fn view_output(&self) -> Option<Element<'_, Message>> {
+        if !self.listening.live() {
+            return None;
+        }
+        let session = self.listening.session()?;
+        let here = self.listening.outputs_here();
+        let label = match session.output_device() {
+            Some(_) if here => "this device".to_string(),
+            Some(device) => middle(&device.name, 16),
+            None => "no device".to_string(),
+        };
+        Some(
+            button(
+                row![
+                    icon::devices(here),
+                    text(label).size(12).style(move |theme: &iced::Theme| {
+                        text::Style {
+                            color: Some(if here {
+                                palette::of(theme).primary.base.color
+                            } else {
+                                palette::of(theme).background.base.text.scale_alpha(0.75)
+                            }),
+                        }
+                    }),
+                ]
+                .spacing(5)
+                .align_y(iced::Alignment::Center),
             )
-            .padding([8, 4])
-            .into();
+            .style(button::text)
+            .on_press(Message::OpenDevices)
+            .into(),
+        )
+    }
+
+    fn view_bar(&self) -> Element<'_, Message> {
+        let Some(bar) = self.bar() else {
+            let idle = text(if Player::AUDIBLE {
+                "nothing playing — pick a track"
+            } else {
+                "nothing playing — pick a track (the desktop build has no audio device; \
+                 the browser one streams)"
+            })
+            .size(12)
+            .style(style::dim);
+            let mut line = row![idle].spacing(12).align_y(iced::Alignment::Center);
+            if let Some(output) = self.view_output() {
+                line = line.push(container(text("")).width(Length::Fill));
+                line = line.push(output);
+            }
+            return container(line).padding([8, 4]).into();
         };
 
-        let position = self.player.position();
-        let duration = self.player.duration().max(0.1);
-        // Nothing here takes the cursor: `<Space>`, `{` and `}` do all three,
-        // so a pane for them would be a stop on `<Tab>` that nobody needs.
+        let duration = bar.duration.max(0.1);
+        // Nothing here takes the cursor: `<Space>`, `{`, `}` and `d` do all
+        // four, so a pane for them would be a stop on `<Tab>` that nobody
+        // needs to pass through.
+        //
+        // The transport is enabled whenever there is a session to send it to,
+        // even in a build that cannot make a sound itself — being a remote
+        // control is a use, and `AUDIBLE` only decides whether *this* device
+        // can be the one playing.
+        let workable = Player::AUDIBLE || self.listening.elsewhere();
         let transport = row![
             button(icon::previous())
                 .style(button::text)
                 .on_press(Message::Skip(-1)),
-            button(if self.player.is_playing() {
+            button(if bar.playing {
                 icon::pause()
             } else {
                 icon::play()
             })
             .style(button::text)
-            .on_press_maybe(Player::AUDIBLE.then_some(Message::PlayPause)),
+            .on_press_maybe(workable.then_some(Message::PlayPause)),
             button(icon::next())
                 .style(button::text)
                 .on_press(Message::Skip(1)),
@@ -2669,28 +3014,168 @@ impl App {
         .spacing(4)
         .align_y(iced::Alignment::Center);
 
-        container(
-            row![
-                transport,
-                column![
-                    text(track.title.clone()).size(14),
-                    text(track.creator.clone()).size(12).style(style::dim),
-                ]
-                .spacing(2)
-                .width(Length::Fixed(260.0)),
-                text(clock(position)).size(11).style(style::dim),
-                // Seeking is the element's job in a browser, and there is
-                // nothing to seek without one — so the slider only moves where
-                // a track can actually be moved to.
-                slider(0.0..=duration as f32, position as f32, Message::Seek)
-                    .style(style::seek)
-                    .width(Length::Fill),
-                text(clock(duration)).size(11).style(style::dim),
+        let mut line = row![
+            transport,
+            column![
+                text(bar.title).size(14),
+                text(bar.creator).size(12).style(style::dim),
             ]
-            .spacing(12)
-            .align_y(iced::Alignment::Center),
+            .spacing(2)
+            .width(Length::Fixed(260.0)),
+            text(clock(bar.position)).size(11).style(style::dim),
+            // Seeking is the element's job in a browser, and there is
+            // nothing to seek without one — so the slider only moves where
+            // a track can actually be moved to.
+            slider(0.0..=duration as f32, bar.position as f32, Message::Seek)
+                .style(style::seek)
+                .width(Length::Fill),
+            text(clock(duration)).size(11).style(style::dim),
+        ]
+        .spacing(12)
+        .align_y(iced::Alignment::Center);
+        if let Some(output) = self.view_output() {
+            line = line.push(output);
+        }
+
+        container(line).padding([6, 4]).into()
+    }
+
+    /// Where the sound is, and everywhere it could be.
+    ///
+    /// One row per device of this account, plus a last row that stops it
+    /// everywhere — which is the same shape the playlist picker has, and for
+    /// the same reason: a list whose last row is the other thing you might
+    /// want means `j` reaches it without a second key to learn.
+    ///
+    /// A device that cannot be heard is drawn and not selectable. Hiding it
+    /// would be worse: a laptop that is *in* the session and controlling it
+    /// should be able to see itself listed, and "this one has no audio device"
+    /// is a different answer from "this one is not here".
+    fn view_devices(&self, at: usize) -> Element<'_, Message> {
+        let devices = self.listening.devices();
+        let output = self
+            .listening
+            .session()
+            .and_then(|s| s.output.as_deref())
+            .unwrap_or("");
+        let mut rows = column![].spacing(0);
+        for (i, device) in devices.iter().enumerate() {
+            let on_cursor = at == i;
+            let is_output = device.id == output;
+            let mine = device.id == self.listening.me();
+            let audible = device.audible;
+            let label = if mine {
+                format!("{} (this one)", middle(&device.name, 14))
+            } else {
+                middle(&device.name, 24)
+            };
+            // A tick only where the sound is. The blank one is as tall as the
+            // tick it stands in for, because an empty container has no height
+            // and the rows without a tick would come out shorter than the one
+            // with it — the same trap the table's transport column has.
+            let mark: Element<'_, Message> = if is_output {
+                icon::tick(on_cursor).into()
+            } else {
+                container(text(""))
+                    .width(Length::Fixed(icon::TRANSPORT))
+                    .height(Length::Fixed(icon::TRANSPORT))
+                    .into()
+            };
+            let entry = container(
+                row![
+                    mark,
+                    text(label)
+                        .size(13)
+                        .style(move |theme: &iced::Theme| text::Style {
+                            color: Some(if on_cursor {
+                                palette::of(theme).primary.base.text
+                            } else if !audible {
+                                palette::of(theme).background.base.text.scale_alpha(0.4)
+                            } else {
+                                palette::of(theme).background.base.text
+                            }),
+                        }),
+                ]
+                .spacing(6)
+                .align_y(iced::Alignment::Center),
+            )
+            .width(Length::Fixed(DEVICE_ROW))
+            .padding([5, 10])
+            .style(move |theme: &iced::Theme| container::Style {
+                background: on_cursor
+                    .then(|| iced::Background::Color(palette::of(theme).primary.base.color)),
+                border: iced::Border {
+                    radius: 4.0.into(),
+                    ..iced::Border::default()
+                },
+                ..container::Style::default()
+            });
+            // A row for a device that cannot be heard is not a target: the
+            // server would refuse the transfer anyway, and a control that
+            // looks pressable and is not is worse than one that is plainly
+            // not.
+            let entry: Element<'_, Message> = if audible {
+                mouse_area(entry)
+                    .on_press(Message::DeviceAt(i))
+                    .on_release(Message::PickDevice(Some(device.id.clone())))
+                    .into()
+            } else {
+                entry.into()
+            };
+            rows = rows.push(entry);
+        }
+
+        let last = devices.len();
+        let on_cursor = at == last;
+        rows = rows.push(
+            mouse_area(
+                container(
+                    text("Stop everywhere")
+                        .size(13)
+                        .style(move |theme: &iced::Theme| text::Style {
+                            color: Some(if on_cursor {
+                                palette::of(theme).primary.base.text
+                            } else {
+                                palette::of(theme).background.base.text.scale_alpha(0.7)
+                            }),
+                        }),
+                )
+                .width(Length::Fixed(DEVICE_ROW))
+                .padding([5, 10])
+                .style(move |theme: &iced::Theme| container::Style {
+                    background: on_cursor
+                        .then(|| iced::Background::Color(palette::of(theme).primary.base.color)),
+                    border: iced::Border {
+                        radius: 4.0.into(),
+                        ..iced::Border::default()
+                    },
+                    ..container::Style::default()
+                }),
+            )
+            .on_press(Message::DeviceAt(last))
+            .on_release(Message::PickDevice(None)),
+        );
+
+        container(
+            column![
+                container(text("Playing on").size(11).style(style::dim)).padding([4, 10]),
+                rows,
+            ]
+            .spacing(0),
         )
-        .padding([6, 4])
+        .padding(4)
+        .style(|theme: &iced::Theme| {
+            let palette = palette::of(theme);
+            container::Style {
+                background: Some(iced::Background::Color(palette.background.weak.color)),
+                border: iced::Border {
+                    color: palette.background.strong.color,
+                    width: 1.0,
+                    radius: 6.0.into(),
+                },
+                ..container::Style::default()
+            }
+        })
         .into()
     }
 

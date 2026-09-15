@@ -336,22 +336,19 @@ impl Player {
         }
     }
 
-    pub fn toggle(&mut self) {
-        if self.sink.is_playing() {
-            self.sink.pause();
-        } else {
-            self.sink.resume();
-        }
-    }
-
-    /// Play, and mean it. The operating system's controller says which of the
-    /// two it wants rather than asking for the other one.
-    #[cfg(target_arch = "wasm32")]
+    /// Play, and mean it — and pause, and mean that.
+    ///
+    /// Two verbs and no toggle, because no caller is in a position to toggle.
+    /// The operating system's controller says which of the two it wants; so
+    /// does another of this account's devices, which cannot know from here
+    /// whether this one is playing; and so, now, does the button in this
+    /// window, which asks the *session* what is playing before it decides
+    /// which it means. A toggle here would answer a lock screen showing
+    /// "paused" by pausing a track something else had already resumed.
     pub fn resume(&mut self) {
         self.sink.resume();
     }
 
-    #[cfg(target_arch = "wasm32")]
     pub fn pause(&mut self) {
         self.sink.pause();
     }

@@ -64,6 +64,15 @@ const PREVIOUS: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 
 const NEXT: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
 <path d="M15.5 5H18v14h-2.5zM5 5l9 7-9 7z" fill="#000"/></svg>"##;
 
+/// A speaker, for which device is making the sound.
+///
+/// The cone is filled and the two waves are stroked, which is fine together
+/// because the `svg` style's filter recolors every pixel the file draws — the
+/// same reason nothing in this file names a color it means.
+const SPEAKER: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+<path d="M3.5 9h3.6L11.5 5v14L7.1 15H3.5z" fill="#000"/>
+<path d="M14.6 9.1a4.2 4.2 0 0 1 0 5.8M17.2 6.4a7.9 7.9 0 0 1 0 11.2" fill="none" stroke="#000" stroke-width="1.8" stroke-linecap="round"/></svg>"##;
+
 /// One of the transport buttons, in the theme's own text color.
 ///
 /// `dim` is the pair either side of play/pause: they do the same kind of thing
@@ -160,6 +169,28 @@ pub fn more<'a>(on_cursor: bool) -> Svg<'a> {
                     palette.primary.base.text.scale_alpha(0.8)
                 } else {
                     palette.background.base.text.scale_alpha(0.45)
+                }),
+            }
+        })
+}
+
+/// Where the sound is coming from, in the now-playing bar.
+///
+/// The accent when it is *this* device and plain text when it is another,
+/// which is the one thing the label beside it cannot say at a glance: "this
+/// device" and "Phone" are both just words, and the color is what makes the
+/// common case need no reading.
+pub fn devices<'a>(here: bool) -> Svg<'a> {
+    svg(svg::Handle::from_memory(SPEAKER))
+        .width(TRANSPORT)
+        .height(TRANSPORT)
+        .style(move |theme: &Theme, _| {
+            let palette = crate::palette::of(theme);
+            svg::Style {
+                color: Some(if here {
+                    palette.primary.base.color
+                } else {
+                    palette.background.base.text.scale_alpha(0.75)
                 }),
             }
         })
