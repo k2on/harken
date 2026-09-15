@@ -13,7 +13,7 @@
 //! gets iced's answer. So every widget this program draws is styled here or
 //! at its call site, and "it looked fine" is not evidence — the blue only
 //! showed up once there was gold beside it.
-use iced::widget::{button, slider, text};
+use iced::widget::{button, scrollable, slider, text};
 use iced::{Background, Border, Color, Theme};
 
 use crate::palette;
@@ -84,5 +84,60 @@ pub fn action(theme: &Theme, status: button::Status) -> button::Style {
             ..Border::default()
         },
         ..button::Style::default()
+    }
+}
+
+/// The scrollbars.
+///
+/// Two things were wrong with the default and only one of them was the
+/// palette: it draws a hovered scroller in `primary.strong`, so the bar went
+/// iced's blue when you reached for it — and would have gone *gold* once it
+/// was reading ours, which is no better. Gold means "this is playing, this is
+/// hearted, press this"; a scrollbar is none of those. It is the text color
+/// instead, which is white on a dark theme and near-black on a light one from
+/// the same line.
+pub fn bars(theme: &Theme, status: scrollable::Status) -> scrollable::Style {
+    let palette = palette::of(theme);
+    let rail = |hovered: bool| scrollable::Rail {
+        background: Some(Background::Color(palette.background.weak.color)),
+        border: Border {
+            radius: 2.0.into(),
+            ..Border::default()
+        },
+        scroller: scrollable::Scroller {
+            background: Background::Color(if hovered {
+                palette.background.base.text.scale_alpha(0.85)
+            } else {
+                palette.background.strongest.color
+            }),
+            border: Border {
+                radius: 2.0.into(),
+                ..Border::default()
+            },
+        },
+    };
+    let (v, h) = match status {
+        scrollable::Status::Hovered {
+            is_vertical_scrollbar_hovered,
+            is_horizontal_scrollbar_hovered,
+            ..
+        } => (
+            rail(is_vertical_scrollbar_hovered),
+            rail(is_horizontal_scrollbar_hovered),
+        ),
+        scrollable::Status::Dragged {
+            is_vertical_scrollbar_dragged,
+            is_horizontal_scrollbar_dragged,
+            ..
+        } => (
+            rail(is_vertical_scrollbar_dragged),
+            rail(is_horizontal_scrollbar_dragged),
+        ),
+        _ => (rail(false), rail(false)),
+    };
+    scrollable::Style {
+        vertical_rail: v,
+        horizontal_rail: h,
+        ..scrollable::default(theme, status)
     }
 }

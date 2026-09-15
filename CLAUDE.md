@@ -946,12 +946,23 @@ every row is one line. Four things about it are load-bearing:
   bound inside it: the transport should not stop working because a panel is
   up.
 
-- **Three ways to ask, and the pointer is how two of them place themselves.**
-  The keyboard has `a`; a pointer has three dots at the end of every row and a
-  right click anywhere on it, both opening the same menu — Play, Add to
-  playlist, and the album and artist it belongs to, which are things this
-  window could already do but could not be *asked for about the row you are
-  pointing at*.
+- **Three ways to ask, and they are the same menu.** Three dots at the end of
+  every row, a right click anywhere on it, and `m` — all three send one
+  message and open one panel: Play, Add to playlist, and the album and artist
+  the track belongs to. Every entry is something this window could already do;
+  what the menu adds is asking for it *about a row*, which neither a key nor a
+  click on the row itself could say.
+
+  `RowMenu::entries` is the one definition of what is in it. The view draws
+  those and `<Enter>` runs them, so the two cannot come to disagree about what
+  the third entry is — which is what happens the second time a menu is edited
+  in two places.
+
+  It answers to the keyboard like everything else: `j` and `k` walk it,
+  `<Enter>` runs the entry, `<Esc>` closes it, and a click does the same two
+  things a key does — lands the cursor and runs it — so whichever you used
+  last, the other carries on from there. Asked for with `m` it has no pointer
+  to sit under, so it opens at the top of the list.
 
   Both overlays are layers of one `stack!` over the page, not panels in place
   of the list: the picker is about a row, and something that replaces the rows
@@ -975,6 +986,12 @@ every row is one line. Four things about it are load-bearing:
   however many entries the track earns, against a window size kept in step by
   `window::resize_events`.
 
+- **A scrollbar is not a thing to accent.** iced's default draws a hovered
+  scroller in `primary.strong`, which was blue while it read iced's palette
+  and would have been *gold* once it read ours — and gold here means "this is
+  playing, this is on a playlist, press this". A bar you reached for is none
+  of those. It is `background.base.text`, which is white on a dark theme and
+  near-black on a light one from the same line.
 - **The page's own background is the one thing a style closure cannot reach.**
   With no `Theme` of our own, iced paints the window from *its* Dark, and
   every row that draws no background — which is half of them, since the zebra

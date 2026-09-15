@@ -350,6 +350,10 @@ enum Message {
     OpenPicker,
     /// Move its cursor, by click rather than by `j`.
     PickerAt(usize),
+    /// The same, for the row menu.
+    MenuAt(usize),
+    /// Run the entry it is on.
+    MenuActivate,
     /// Toggle the row it is on — or, on the last row, start naming a new one.
     PickerActivate,
     /// What is being typed into the new-playlist box.
@@ -378,7 +382,39 @@ struct RowMenu {
     /// Where it was opened, in the window. Pinned there rather than centred,
     /// because a menu that appears somewhere else is a menu you have to look
     /// for after asking for it.
-    at: iced::Point,
+    origin: iced::Point,
+    /// Which entry the keyboard is on. A menu you can only reach with the
+    /// pointer is a menu that is missing from half this window's controls —
+    /// everything else here answers to `j` and `k`.
+    at: usize,
+}
+
+impl RowMenu {
+    /// What it offers, in one place: the view draws these and `<Enter>` runs
+    /// them, so the two cannot come to disagree about what the third entry is.
+    ///
+    /// Every one is something this window could already do. What the menu adds
+    /// is asking for it *about a row*, which neither a key nor a click on the
+    /// row itself could say.
+    fn entries(&self) -> Vec<(String, Message)> {
+        let mut out = vec![
+            ("Play".to_string(), Message::PlayItem(self.media)),
+            ("Add to playlist\u{2026}".to_string(), Message::OpenPicker),
+        ];
+        if !self.album.is_empty() {
+            out.push((
+                format!("Go to {}", self.album),
+                Message::Select(Source::Album(self.album.clone())),
+            ));
+        }
+        if !self.artist.is_empty() {
+            out.push((
+                format!("Go to {}", self.artist),
+                Message::Select(Source::Artist(self.artist.clone())),
+            ));
+        }
+        out
+    }
 }
 
 /// The playlist picker, over the track it is for.
@@ -1126,9 +1162,19 @@ impl App {
     /// The only place that knows both halves: `vim` produced the action from
     /// keys, and this is what the action means in a music library.
     fn act(&mut self, action: vim::Action) -> Task<Message> {
-        // The picker is a list over the list, so it takes the motions while it
-        // is open. `<Space>` is deliberately not one of them: the transport
-        // should not stop working because a sheet is up.
+        // Whatever is over the list takes the motions while it is up — the
+        // picker first, because it is the layer above. `<Space>` is
+        // deliberately not one of them in either: the transport should not
+        // stop working because a panel is.
+        if self.menu.is_some() && self.picker.is_none() {
+            match action {
+                vim::Action::Move(motion) => return self.menu_travel(motion),
+                vim::Action::Activate => return self.update(Message::MenuActivate),
+                vim::Action::Cancel => return self.update(Message::CloseMenu),
+                vim::Action::Toggle => return self.update(Message::PlayPause),
+                _ => return Task::none(),
+            }
+        }
         if self.picker.is_some() {
             match action {
                 vim::Action::Move(motion) => return self.picker_travel(motion),
@@ -1174,6 +1220,25 @@ impl App {
                 // question this client had no way to ask after the hearts
                 // went, which is "which lists is this on".
                 'a' => self.update(Message::OpenPicker),
+                // The same menu the dots and a right click open. Asked for by
+                // key it has no pointer to sit under, so it opens at the top
+                // left of the list and is walked with `j` like everything
+                // else — which is the whole of what "keyboard accessible"
+                // means here.
+                'm' => {
+                    let id = self
+                        .peer
+                        .as_ref()
+                        .and_then(|p| p.rows().get(self.at(Pane::Tracks)))
+                        .map(|i| i.id);
+                    match id {
+                        Some(id) => {
+                            self.cursor = iced::Point::new(260.0, 120.0);
+                            self.update(Message::RowMenu(id))
+                        }
+                        None => Task::none(),
+                    }
+                }
                 '}' => self.update(Message::Skip(1)),
                 '{' => self.update(Message::Skip(-1)),
                 _ => Task::none(),
@@ -1300,6 +1365,23 @@ impl App {
     }
 
     /// Open what the cursor is on.
+    /// Move inside the row menu, through the same `Navigate` everything else
+    /// here uses. Four entries at most, so it is the same `List` a hundred
+    /// rows get.
+    fn menu_travel(&mut self, motion: vim::Motion) -> Task<Message> {
+        use vim::Navigate;
+        let Some(menu) = &mut self.menu else {
+            return Task::none();
+        };
+        let shape = vim::List {
+            cells: menu.entries().len(),
+        };
+        if let Some(at) = shape.step(menu.at, motion) {
+            menu.at = at;
+        }
+        Task::none()
+    }
+
     /// Move inside the picker, through the same `Navigate` the panes use.
     ///
     /// A `List` one longer than the playlists, because the row that makes one
@@ -1470,6 +1552,22 @@ impl App {
                 self.cursor = at;
                 Ok(())
             }
+            Message::MenuAt(at) => {
+                if let Some(menu) = &mut self.menu {
+                    menu.at = at.min(menu.entries().len().saturating_sub(1));
+                }
+                Ok(())
+            }
+            Message::MenuActivate => {
+                let picked = self
+                    .menu
+                    .as_ref()
+                    .and_then(|m| m.entries().get(m.at).map(|(_, msg)| msg.clone()));
+                return match picked {
+                    Some(msg) => self.update(msg),
+                    None => Task::none(),
+                };
+            }
             Message::CloseMenu => {
                 self.menu = None;
                 Ok(())
@@ -1490,7 +1588,8 @@ impl App {
                             title: item.title.clone(),
                             album,
                             artist,
-                            at: Self::menu_origin(self.cursor, self.window, entries),
+                            origin: Self::menu_origin(self.cursor, self.window, entries),
+                            at: 0,
                         });
                     }
                 }
@@ -1742,7 +1841,7 @@ impl App {
                         .on_press(Message::CloseMenu)
                         .on_right_press(Message::CloseMenu),
                 )
-                .push(pin(Self::view_menu(menu)).x(menu.at.x).y(menu.at.y));
+                .push(pin(Self::view_menu(menu)).x(menu.origin.x).y(menu.origin.y));
         }
 
         if let Some(picker) = &self.picker {
@@ -1811,50 +1910,68 @@ impl App {
     /// menu is a way to ask for them *about a row you are pointing at*, which
     /// is the one thing the keyboard could not express.
     fn view_menu(menu: &RowMenu) -> Element<'_, Message> {
-        let entry = |label: String, message: Message| {
-            mouse_area(
-                container(text(label).size(13))
-                    .width(Length::Fixed(190.0))
-                    .padding([5, 10]),
-            )
-            .on_press(message)
-        };
-        let mut items = column![
-            // Which track this is about. A menu opened by a right click can
-            // land a row away from where the eye was, and a menu that does not
-            // say what it is for is a menu you close to check.
-            container(text(middle(&menu.title, 26)).size(11).style(style::dim)).padding([4, 10]),
-            entry("Play".into(), Message::PlayItem(menu.media)),
-            entry("Add to playlist\u{2026}".into(), Message::OpenPicker),
-        ]
-        .spacing(0);
-        if !menu.album.is_empty() {
-            items = items.push(entry(
-                format!("Go to {}", menu.album),
-                Message::Select(Source::Album(menu.album.clone())),
-            ));
-        }
-        if !menu.artist.is_empty() {
-            items = items.push(entry(
-                format!("Go to {}", menu.artist),
-                Message::Select(Source::Artist(menu.artist.clone())),
-            ));
-        }
-        container(items)
-            .padding(4)
-            .style(|theme: &iced::Theme| {
-                let palette = palette::of(theme);
-                container::Style {
-                    background: Some(iced::Background::Color(palette.background.weak.color)),
-                    border: iced::Border {
-                        color: palette.background.strong.color,
-                        width: 1.0,
-                        radius: 6.0.into(),
-                    },
-                    ..container::Style::default()
-                }
-            })
-            .into()
+        let rows = menu.entries().into_iter().enumerate().fold(
+            column![].spacing(0),
+            |col, (i, (label, _))| {
+                let on_cursor = menu.at == i;
+                col.push(
+                    mouse_area(
+                        container(text(middle(&label, 26)).size(13).style(
+                            move |theme: &iced::Theme| text::Style {
+                                color: Some(if on_cursor {
+                                    palette::of(theme).primary.base.text
+                                } else {
+                                    palette::of(theme).background.base.text
+                                }),
+                            },
+                        ))
+                        .width(Length::Fixed(190.0))
+                        .padding([5, 10])
+                        .style(move |theme: &iced::Theme| container::Style {
+                            background: on_cursor.then(|| {
+                                iced::Background::Color(palette::of(theme).primary.base.color)
+                            }),
+                            border: iced::Border {
+                                radius: 4.0.into(),
+                                ..iced::Border::default()
+                            },
+                            ..container::Style::default()
+                        }),
+                    )
+                    // Moving onto a row and running it are the same two
+                    // messages a click is: the pointer lands the cursor where
+                    // the keyboard would have walked it, so whichever you used
+                    // last, the other carries on from there.
+                    .on_press(Message::MenuAt(i))
+                    .on_release(Message::MenuActivate),
+                )
+            },
+        );
+        container(
+            column![
+                // Which track this is about. A menu opened by a right click can
+                // land a row away from where the eye was, and a menu that does not
+                // say what it is for is a menu you close to check.
+                container(text(middle(&menu.title, 26)).size(11).style(style::dim))
+                    .padding([4, 10]),
+                rows,
+            ]
+            .spacing(0),
+        )
+        .padding(4)
+        .style(|theme: &iced::Theme| {
+            let palette = palette::of(theme);
+            container::Style {
+                background: Some(iced::Background::Color(palette.background.weak.color)),
+                border: iced::Border {
+                    color: palette.background.strong.color,
+                    width: 1.0,
+                    radius: 6.0.into(),
+                },
+                ..container::Style::default()
+            }
+        })
+        .into()
     }
 
     /// Playlists, then albums, then artists — each read back by the domain, so
@@ -1930,7 +2047,7 @@ impl App {
             );
         }
 
-        container(scrollable(side).id(Self::SIDEBAR))
+        container(scrollable(side).id(Self::SIDEBAR).style(style::bars))
             .width(Length::Fixed(200.0))
             .height(Length::Fill)
             .into()
@@ -2146,7 +2263,12 @@ impl App {
 
         main.push(head)
             .push(rule::horizontal(1))
-            .push(scrollable(rows).id(Self::TRACKS).height(Length::Fill))
+            .push(
+                scrollable(rows)
+                    .id(Self::TRACKS)
+                    .style(style::bars)
+                    .height(Length::Fill),
+            )
             .push(self.view_status(peer))
             .into()
     }
@@ -2226,7 +2348,9 @@ impl App {
                     .size(11)
                     .style(style::dim),
                 rule::horizontal(1),
-                scrollable(rows.push(making)).height(Length::Shrink),
+                scrollable(rows.push(making))
+                    .style(style::bars)
+                    .height(Length::Shrink),
             ]
             .spacing(8),
         )
