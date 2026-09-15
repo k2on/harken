@@ -218,13 +218,6 @@ pub const BACH: &[(&str, &str, &str, i64, &str)] = &[
         "https://upload.wikimedia.org/wikipedia/commons/transcoded/2/27/Bach%2C_BWV_147%2C_10._Jesus_bleibet_meine_Freude.ogg/Bach%2C_BWV_147%2C_10._Jesus_bleibet_meine_Freude.ogg.mp3",
     ),
     (
-        "Sprich Ja zu meinen Taten (BWV 194)",
-        "Johann Sebastian Bach",
-        "BWV 194",
-        53000,
-        "https://upload.wikimedia.org/wikipedia/commons/transcoded/7/7f/Sprich_Ja_zu_meinen_Taten_%28BWV_194%29.mid/Sprich_Ja_zu_meinen_Taten_%28BWV_194%29.mid.mp3",
-    ),
-    (
         "Johann Sebastian Bach - BWV 230 - Lobet den Herrn, alle Heiden (Psalm 117)",
         "Johann Sebastian Bach",
         "BWV 230",
@@ -386,20 +379,6 @@ pub const BACH: &[(&str, &str, &str, i64, &str)] = &[
         "https://upload.wikimedia.org/wikipedia/commons/transcoded/6/63/Bach_Sinfonia_N15_BWV801.mid/Bach_Sinfonia_N15_BWV801.mid.mp3",
     ),
     (
-        "French-suite-5-bourree-BWV 816",
-        "Johann Sebastian Bach",
-        "BWV 816",
-        122000,
-        "https://upload.wikimedia.org/wikipedia/commons/transcoded/f/f8/French-suite-5-bourree-BWV_816.ogg/French-suite-5-bourree-BWV_816.ogg.mp3",
-    ),
-    (
-        "French-suite-5-courante-BWV 816",
-        "Johann Sebastian Bach",
-        "BWV 816",
-        46000,
-        "https://upload.wikimedia.org/wikipedia/commons/transcoded/0/04/French-suite-5-courante-BWV_816.ogg/French-suite-5-courante-BWV_816.ogg.mp3",
-    ),
-    (
         "French-suite-5-gigue-BWV 816",
         "Johann Sebastian Bach",
         "BWV 816",
@@ -454,13 +433,6 @@ pub const BACH: &[(&str, &str, &str, i64, &str)] = &[
         "BWV 903",
         739000,
         "https://upload.wikimedia.org/wikipedia/commons/3/3a/BWV_903_-_Marcelle_Meyer%2C_Klavier.mp3",
-    ),
-    (
-        "Was frag ich nach der Welt (BWV 94-8)",
-        "Johann Sebastian Bach",
-        "BWV 94",
-        40000,
-        "https://upload.wikimedia.org/wikipedia/commons/transcoded/9/92/Was_frag_ich_nach_der_Welt_%28BWV_94-8%29.mid/Was_frag_ich_nach_der_Welt_%28BWV_94-8%29.mid.mp3",
     ),
     (
         "Italian Concerto, BWV. 971 - 1. Without tempo indication",
@@ -841,11 +813,25 @@ pub const BACH: &[(&str, &str, &str, i64, &str)] = &[
         "https://upload.wikimedia.org/wikipedia/commons/transcoded/5/54/PDP-CH_-_Max_Meili_-_Curt_Sachs_-_Meine_Seele_r%C3%BChmt_und_preist_%2C_BWV_189_-_Disc_23B-_Part_2-_Recitative_and_aria_-_Johann_Sebastian_Bach_-_L%27anthologie_sonore-23b-as55-m6-82080.flac/PDP-CH_-_Max_Meili_-_Curt_Sachs_-_Meine_Seele_r%C3%BChmt_und_preist_%2C_BWV_189_-_Disc_23B-_Part_2-_Recitative_and_aria_-_Johann_Sebastian_Bach_-_L%27anthologie_sonore-23b-as55-m6-82080.flac.mp3",
     ),
     (
+        "Sprich Ja zu meinen Taten (BWV 194)",
+        "Johann Sebastian Bach",
+        "Cantatas",
+        53000,
+        "https://upload.wikimedia.org/wikipedia/commons/transcoded/7/7f/Sprich_Ja_zu_meinen_Taten_%28BWV_194%29.mid/Sprich_Ja_zu_meinen_Taten_%28BWV_194%29.mid.mp3",
+    ),
+    (
         "Unser Mund sei voll Lachens, BWV 110",
         "Johann Sebastian Bach",
         "Cantatas",
         1576000,
         "https://upload.wikimedia.org/wikipedia/commons/2/2c/Unser_Mund_sei_voll_Lachens%2C_BWV_110.mp3",
+    ),
+    (
+        "Was frag ich nach der Welt (BWV 94-8)",
+        "Johann Sebastian Bach",
+        "Cantatas",
+        40000,
+        "https://upload.wikimedia.org/wikipedia/commons/transcoded/9/92/Was_frag_ich_nach_der_Welt_%28BWV_94-8%29.mid/Was_frag_ich_nach_der_Welt_%28BWV_94-8%29.mid.mp3",
     ),
     (
         "Cello Suite 1 Prelude (BWV 1007) Played by Chris",
@@ -944,6 +930,20 @@ pub const BACH: &[(&str, &str, &str, i64, &str)] = &[
         "French Suites",
         98000,
         "https://upload.wikimedia.org/wikipedia/commons/transcoded/6/60/French-suite-5-allemande-BWV_816.ogg/French-suite-5-allemande-BWV_816.ogg.mp3",
+    ),
+    (
+        "French-suite-5-bourree-BWV 816",
+        "Johann Sebastian Bach",
+        "French Suites",
+        122000,
+        "https://upload.wikimedia.org/wikipedia/commons/transcoded/f/f8/French-suite-5-bourree-BWV_816.ogg/French-suite-5-bourree-BWV_816.ogg.mp3",
+    ),
+    (
+        "French-suite-5-courante-BWV 816",
+        "Johann Sebastian Bach",
+        "French Suites",
+        46000,
+        "https://upload.wikimedia.org/wikipedia/commons/transcoded/0/04/French-suite-5-courante-BWV_816.ogg/French-suite-5-courante-BWV_816.ogg.mp3",
     ),
     (
         "French-suite-5-gavotte-BWV 816",
