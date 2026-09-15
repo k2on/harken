@@ -945,6 +945,25 @@ every row is one line. Four things about it are load-bearing:
   shape, one cursor, and no second key to learn. `<Space>` is deliberately not
   bound inside it: the transport should not stop working because a panel is
   up.
+
+- **Three ways to ask, and the pointer is how two of them place themselves.**
+  The keyboard has `a`; a pointer has three dots at the end of every row and a
+  right click anywhere on it, both opening the same menu — Play, Add to
+  playlist, and the album and artist it belongs to, which are things this
+  window could already do but could not be *asked for about the row you are
+  pointing at*.
+
+  Both overlays are layers of one `stack!` over the page, not panels in place
+  of the list: the picker is about a row, and something that replaces the rows
+  hides the one it is about. The menu is placed with `pin`, at coordinates the
+  root's `mouse_area(..).on_move` reported — which is why the tracking is on
+  the root and not on the list, since `pin` and the point have to share an
+  origin. It costs a message per mouse move, and the view is rebuilt by the
+  tick twenty times a second anyway; there is no way to put a menu under the
+  pointer in iced without a point, and no other widget reports one.
+
+  Each overlay gets a backdrop that closes it. A menu that only answers to the
+  key that opened it is a menu people click around and then click again.
 - **The two highlights mean different things and are drawn differently.** The
   sidebar's is a *selection* — what the table is showing — so it persists when
   the keyboard is elsewhere. The table's is a *cursor*, only ever "where the

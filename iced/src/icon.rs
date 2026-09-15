@@ -46,6 +46,11 @@ pub const TRANSPORT: f32 = 15.0;
 const TICK: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
 <path d="M9.2 16.6 4.8 12.2l1.6-1.6 2.8 2.8 7.2-7.2 1.6 1.6z" fill="#000"/></svg>"##;
 
+/// Three dots, for the menu a row hides behind them. U+22EE is outside
+/// Latin-1 like everything else here, so it is drawn.
+const MORE: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+<path d="M12 4.2a2.1 2.1 0 1 1 0 4.2 2.1 2.1 0 0 1 0-4.2zm0 5.7a2.1 2.1 0 1 1 0 4.2 2.1 2.1 0 0 1 0-4.2zm0 5.7a2.1 2.1 0 1 1 0 4.2 2.1 2.1 0 0 1 0-4.2z" fill="#000"/></svg>"##;
+
 /// The transport glyphs, as paths in a 24-unit box.
 const PLAY: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
 <path d="M8 5l11 7-11 7z" fill="#000"/></svg>"##;
@@ -135,6 +140,26 @@ pub fn tick<'a>(on_cursor: bool) -> Svg<'a> {
                     palette.primary.base.text
                 } else {
                     palette.primary.base.color
+                }),
+            }
+        })
+}
+
+/// The three dots that open a row's menu.
+///
+/// Drawn faintly: it is on every row, and something on every row that is as
+/// loud as the title is something that competes with a hundred titles.
+pub fn more<'a>(on_cursor: bool) -> Svg<'a> {
+    svg(svg::Handle::from_memory(MORE))
+        .width(TRANSPORT)
+        .height(TRANSPORT)
+        .style(move |theme: &Theme, _| {
+            let palette = crate::palette::of(theme);
+            svg::Style {
+                color: Some(if on_cursor {
+                    palette.primary.base.text.scale_alpha(0.8)
+                } else {
+                    palette.background.base.text.scale_alpha(0.45)
                 }),
             }
         })
