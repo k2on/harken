@@ -206,6 +206,24 @@ jobs:
           # re-materialise for want of one symlink.
           nix build -o "$RUNNER_TEMP/gcroot-maven" ".#apk-debug.mitmCache" || true
 
+      # `cache-nix-action` saves the store by handing the paths to `tar`, and
+      # nix leaves a `<derivation>.lock` in the store for every build it
+      # starts. They are mode 0600 and owned by root, so tar cannot open one,
+      # and tar does not skip what it cannot read — it exits 2, and the action
+      # reports only
+      #
+      #   ##[warning]Failed to save: "/usr/bin/tar" failed with error: ...
+      #   Could not save the new cache.
+      #
+      # as a warning, so the job stays green and the next one starts from an
+      # empty store. A failed build leaves more of them behind than a
+      # successful one, which makes the cache least likely to save exactly
+      # when it is most needed. They are transient locks; nothing outlives the
+      # job that made them.
+      - name: Drop nix's build locks so the store can be tarred
+        if: ${{ !cancelled() }}
+        run: sudo rm -f /nix/store/*.lock
+
       - uses: nix-community/cache-nix-action/save@v7
         if: ${{ !cancelled() }}
         with:

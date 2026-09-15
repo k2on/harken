@@ -6,7 +6,7 @@
       "name": "exo-expo",
       "dependencies": {
         "@expo/ui": "~57.0.16",
-        "@petros/client": "github:k2on/petros-js#abf3cfb125398d3cc0b3c5f275c883f6da280dba",
+        "@petros/client": "github:k2on/petros-js#bbc34318a570f8906afde74a2cfc188fe79426bf",
         "app-icon-badge": "^0.1.2",
         "expo": "~57.0.20",
         "expo-audio": "~57.0.5",
@@ -351,7 +351,7 @@
 
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.31", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.1.0", "@jridgewell/sourcemap-codec": "^1.4.14" } }, "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw=="],
 
-    "@petros/client": ["@petros/client@github:k2on/petros-js#abf3cfb", { "peerDependencies": { "react": ">=18" }, "optionalPeers": ["react"] }, "k2on-petros-js-abf3cfb", "sha512-gup9K04KORYRLFGxSvKMXWyobAtCs2dMCFvFakCSGoxeosCxq0qkRAtcQrz99yBe2qhmtUuzd0vC1fqxSReITA=="],
+    "@petros/client": ["@petros/client@github:k2on/petros-js#bbc3431", { "peerDependencies": { "react": ">=18" }, "optionalPeers": ["react"] }, "k2on-petros-js-bbc3431", "sha512-+vP0XnUZJZrrqhb2hK2hUeRAiEfuFIM8svAwlCir9xaSIe2fi5L08oqCTiwpZHaa2GNGJPGfpGjWQFsxryyM0Q=="],
 
     "@radix-ui/primitive": ["@radix-ui/primitive@1.1.7", "", {}, "sha512-rqWnm76nYT8HoNNqEjpgJ7Pw/DrBj5iBTrmEPo6HTX5+VJyBNOqTdv4g89G63HuR5g0AaENoAcH7Is5fF2kZ8Q=="],
 
