@@ -207,6 +207,10 @@ nix run .#web                                # on a laptop: rebuilt and served o
 where the server is: `http://localhost:8080/?server=http://127.0.0.1:8787`.
 Served by the server there is nothing to tell.
 
+What the sidebar picked is in the address bar — `#album/Water%20Music` — so
+the back button goes back, the forward button goes forward, and a link to an
+album is a link somebody can send.
+
 ## The phone
 
 An Expo app that calls into the same Rust, so it needs a development

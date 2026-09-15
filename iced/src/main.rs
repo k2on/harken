@@ -29,6 +29,7 @@
 mod icon;
 mod palette;
 mod player;
+mod route;
 /// The demo's library. Compiled only into the demo, so the client that
 /// talks to a real server carries none of it.
 #[cfg(feature = "demo")]
@@ -218,6 +219,16 @@ enum Source {
 }
 
 impl Source {
+    /// How the address bar spells it. Names rather than ids: see `route.rs`.
+    fn route(&self) -> route::Route {
+        match self {
+            Source::Library => route::Route::Library,
+            Source::Playlist(_, name) => route::Route::Playlist(name.clone()),
+            Source::Album(name) => route::Route::Album(name.clone()),
+            Source::Artist(name) => route::Route::Artist(name.clone()),
+        }
+    }
+
     /// The heading this source belongs under, or `None` for the one line that
     /// needs no heading. What makes the sidebar a flat list of choices with
     /// headings *derived* rather than interleaved — so a cursor can address
@@ -311,7 +322,7 @@ fn media_url(server: &str, file: &str) -> String {
 /// fragment, so the request goes out for a path that stops mid-filename and
 /// the server answers 404. Everything outside RFC 3986's unreserved set is
 /// escaped, which covers those and every non-ASCII byte.
-fn encode(part: &str, out: &mut String) {
+pub(crate) fn encode(part: &str, out: &mut String) {
     for b in part.bytes() {
         match b {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
@@ -699,6 +710,13 @@ struct App {
     /// other way. Seeded with what `main` asks for and kept in step by
     /// `window::resize_events`.
     window: iced::Size,
+    /// The last fragment this window acted on.
+    ///
+    /// Without it the tick would re-resolve the same route twenty times a
+    /// second — and a route naming an album this peer has not got resolves to
+    /// the library every time, so it would also re-read the list twenty times
+    /// a second for as long as the URL said so.
+    routed: Option<route::Route>,
     /// Where the pointer is, so a menu can open where it was asked for.
     ///
     /// Tracked on the root, so the coordinates and the `pin` that places the
@@ -898,6 +916,19 @@ impl Peer {
     }
 
     /// What the main list is showing, whichever side it came from.
+    /// The source a route names, against what this peer actually has.
+    ///
+    /// A link to a playlist that has since been renamed, or to an album this
+    /// peer has not received yet, lands on the library — which is a page, and
+    /// better than a heading with nothing under it.
+    fn source_of(&self, route: &route::Route) -> Source {
+        self.choices
+            .iter()
+            .find(|c| c.source.route() == *route)
+            .map(|c| c.source.clone())
+            .unwrap_or(Source::Library)
+    }
+
     fn rows(&self) -> &[Item] {
         match self.source {
             Source::Library => &self.items,
@@ -984,6 +1015,7 @@ impl App {
                 help: false,
                 picker: None,
                 menu: None,
+                routed: None,
                 cursor: iced::Point::ORIGIN,
                 window: iced::Size::new(860.0, 600.0),
                 player: Player::new(),
@@ -1009,6 +1041,7 @@ impl App {
                 help: false,
                 picker: None,
                 menu: None,
+                routed: None,
                 cursor: iced::Point::ORIGIN,
                 window: iced::Size::new(860.0, 600.0),
                 player: Player::new(),
@@ -1711,6 +1744,27 @@ impl App {
                 if self.player.ended() {
                     self.skip(1);
                 }
+                // The back button, and a link somebody was sent. Read rather
+                // than listened for: `popstate` would mean a closure kept
+                // alive for the life of the page publishing into a channel,
+                // and this tick already runs for the transport. A route is
+                // only consumed once the sidebar has something to resolve it
+                // against, so a deep link that arrives before the database
+                // has opened is still waiting when it does.
+                let fragment = route::read();
+                let ready = self
+                    .peer
+                    .as_ref()
+                    .is_some_and(|peer| !peer.choices.is_empty());
+                if ready && fragment != self.routed {
+                    self.routed = fragment.clone();
+                    if let (Some(route), Some(peer)) = (fragment, &self.peer) {
+                        let wanted = peer.source_of(&route);
+                        if wanted != peer.source {
+                            return self.update(Message::Select(wanted));
+                        }
+                    }
+                }
                 // A lock-screen button leaves a note rather than calling in,
                 // because its handler runs on the browser's stack and the
                 // state it wants to move is behind this loop. The tick that
@@ -1736,6 +1790,16 @@ impl App {
                     // would carry on from wherever it was and the highlight
                     // would be somewhere the table is not.
                     Message::Select(source) => {
+                        // Record it, unless the address bar is already saying
+                        // it — which is the case when this *came* from the
+                        // address bar, and pushing then would mean two history
+                        // entries for one place and a back button that needs
+                        // pressing twice.
+                        let route = source.route();
+                        if route::read().as_ref() != Some(&route) {
+                            route::push(&route);
+                        }
+                        self.routed = Some(route);
                         let at = peer.choices.iter().position(|c| c.source == source);
                         peer.source = source;
                         peer.reload_shown();

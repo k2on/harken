@@ -48,6 +48,7 @@ iced/                    the desktop and browser client
                          the transport, in the bar and on the playing row
   src/vim.rs             the keyboard: vim's grammar, and the one trait a
                          component implements to get it
+  src/route.rs           what the address bar says, and the back button
   src/player.rs          what is playing — an <audio> element in a browser,
                          and nothing at all on the desktop
   nix/readme.nix         its section of README.md
@@ -1001,6 +1002,41 @@ every row is one line. Four things about it are load-bearing:
   playing, this is on a playlist, press this". A bar you reached for is none
   of those. It is `background.base.text`, which is white on a dark theme and
   near-black on a light one from the same line.
+- **The address bar is a control, and the page had broken it.** A library,
+  then an album, then an artist, and the back button leaves the site — which
+  is the one thing every browser does that a page does not get to opt out of.
+  What the sidebar picked goes in the fragment now: `#album/Water%20Music`,
+  read back on the tick, and a link to one is a link somebody can send.
+
+  Four things decided it:
+
+  - **The fragment, not the query.** `?server=` and `?code=` are already
+    there — how a page is told where its server is, and what a sign-in comes
+    back with — and recording a sidebar click in the query would mean
+    rewriting those on every click. A fragment is also the one part of a URL a
+    static host never has to be told about, which is what Pages serves the
+    demo as.
+  - **A route carries names, not ids.** `Source::Playlist` holds an id and an
+    id is not something a person types. So the URL says the name and the app
+    resolves it against the playlists it has — which also decides what a stale
+    link does: a playlist since renamed lands on the library, which is a page,
+    rather than on a heading with nothing under it.
+  - **Read by polling, not by listening.** Hearing `popstate` means a closure
+    kept alive for the life of the page publishing into a channel iced can
+    subscribe to. The tick already runs twenty times a second for the
+    transport, and reading `location.hash` on it is a string compare that
+    gives the same answer a frame later.
+  - **`pushState`, not `location.hash = …`.** Both change the URL; the second
+    also fires a `hashchange` the poll would read back as somebody pressing
+    the back button. And the push is skipped when the address bar already says
+    it, which is exactly the case where the route *came* from the back
+    button — pushing there would make one place two history entries and the
+    back button need pressing twice.
+
+  `App::routed` is what stops the tick re-resolving the same fragment twenty
+  times a second, and a route is not consumed until the sidebar has something
+  to resolve it against — so a deep link that arrives before the database has
+  opened is still waiting when it does.
 - **The page's own background is the one thing a style closure cannot reach.**
   With no `Theme` of our own, iced paints the window from *its* Dark, and
   every row that draws no background — which is half of them, since the zebra
