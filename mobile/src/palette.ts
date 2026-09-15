@@ -8,11 +8,11 @@
  */
 export const DARK = {
   dark: true,
-  bg: '#0A0A0A',
-  raised: '#141414',
-  card: '#1A1A19',
-  cardHigh: '#242422',
-  border: '#2B2B29',
+  bg: '#050505',
+  raised: '#101010',
+  card: '#161615',
+  cardHigh: '#201F1E',
+  border: '#262624',
   text: '#FFFFFF',
   dim: '#A1A09C',
   faint: '#6B6A66',
@@ -22,7 +22,7 @@ export const DARK = {
   danger: '#E4685C',
   good: '#5FBE88',
   scrim: 'rgba(0,0,0,0.72)',
-  glow: ['#3A2E0E', '#16150F', '#0A0A0A'],
+  glow: ['#3A2E0E', '#141309', '#050505'],
   art: [
     ['#7A5C15', '#201907'],
     ['#8A6B22', '#1B1509'],

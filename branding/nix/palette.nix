@@ -27,15 +27,16 @@
     dark = {
       # The sheet everything sits on, and the three steps up from it.
       #
-      # Not `#000000`: a table of rows on absolute black is a void with text
-      # in it, and the zebra has nowhere to go but a long way up. A tenth of a
-      # step off black still reads as black on any screen and gives the rest
-      # of the ramp somewhere to sit.
-      bg = "#0A0A0A";
-      raised = "#141414";
-      card = "#1A1A19";
-      cardHigh = "#242422";
-      border = "#2B2B29";
+      # Almost black, and not quite `#000000`: the zebra is a wash of the text
+      # color over this, so the base needs somewhere to be washed *from* — on
+      # absolute black the lift is the only direction there is and the table
+      # comes out striped. Two ticks off is enough for that and still reads as
+      # black on any screen.
+      bg = "#050505";
+      raised = "#101010";
+      card = "#161615";
+      cardHigh = "#201F1E";
+      border = "#262624";
       # Text, and the two dimmer ranks of it: an artist, then a hint.
       text = "#FFFFFF";
       dim = "#A1A09C";
@@ -49,7 +50,7 @@
       scrim = "rgba(0,0,0,0.72)";
       # The three stops of the now-playing gradient, top to bottom. The last is
       # `bg`, so the artwork sits in the page rather than on it.
-      glow = [ "#3A2E0E" "#16150F" "#0A0A0A" ];
+      glow = [ "#3A2E0E" "#141309" "#050505" ];
       # Stand-in artwork, as gradients. Nothing in the log carries a cover, so
       # a record's art is derived from its name — and the set is small and all
       # of one family, so twenty of them read as one library.

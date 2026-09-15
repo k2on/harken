@@ -359,6 +359,8 @@ enum Message {
     ClosePicker,
     /// A key nothing on screen wanted. See `subscription`.
     Key(iced::keyboard::Key, iced::keyboard::Modifiers),
+    /// The window changed size. Only the menu cares.
+    Resized(iced::Size),
     /// Pump the transport. Nothing else drives a sans-io client.
     Tick,
 }
@@ -652,6 +654,10 @@ struct App {
     picker: Option<Picker>,
     /// The three dots, or a right click.
     menu: Option<RowMenu>,
+    /// How big the window is, so a menu opened near an edge can open the
+    /// other way. Seeded with what `main` asks for and kept in step by
+    /// `window::resize_events`.
+    window: iced::Size,
     /// Where the pointer is, so a menu can open where it was asked for.
     ///
     /// Tracked on the root, so the coordinates and the `pin` that places the
@@ -938,6 +944,7 @@ impl App {
                 picker: None,
                 menu: None,
                 cursor: iced::Point::ORIGIN,
+                window: iced::Size::new(860.0, 600.0),
                 player: Player::new(),
                 queue: Vec::new(),
                 login: Some(login),
@@ -962,6 +969,7 @@ impl App {
                 picker: None,
                 menu: None,
                 cursor: iced::Point::ORIGIN,
+                window: iced::Size::new(860.0, 600.0),
                 player: Player::new(),
                 queue: Vec::new(),
                 login: remembered::recall(&server),
@@ -1414,6 +1422,11 @@ impl App {
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
+        // An entry was picked: the menu has said everything it had to say.
+        // `OpenPicker` is not here because it reads the menu on its way out.
+        if matches!(message, Message::PlayItem(_) | Message::Select(_)) {
+            self.menu = None;
+        }
         let outcome: Result<(), String> = match message {
             Message::SignIn => return self.start_sign_in(),
             Message::SignedIn(outcome) => {
@@ -1449,6 +1462,10 @@ impl App {
                 };
                 return self.act(action);
             }
+            Message::Resized(size) => {
+                self.window = size;
+                Ok(())
+            }
             Message::Hover(at) => {
                 self.cursor = at;
                 Ok(())
@@ -1458,15 +1475,22 @@ impl App {
                 Ok(())
             }
             Message::RowMenu(id) => {
-                let at = self.cursor;
                 if let Some(peer) = &self.peer {
                     if let Some(item) = peer.rows().iter().find(|i| i.id == id) {
+                        let album = peer.detail_of(id).album;
+                        let artist = item.creator.clone();
+                        // Two entries always, and one more for each of the
+                        // album and the artist when the track has one — which
+                        // is what decides how tall it is, and so which way it
+                        // has room to open.
+                        let entries =
+                            2 + usize::from(!album.is_empty()) + usize::from(!artist.is_empty());
                         self.menu = Some(RowMenu {
                             media: id,
                             title: item.title.clone(),
-                            album: peer.detail_of(id).album,
-                            artist: item.creator.clone(),
-                            at,
+                            album,
+                            artist,
+                            at: Self::menu_origin(self.cursor, self.window, entries),
                         });
                     }
                 }
@@ -1689,7 +1713,21 @@ impl App {
             ]
             .spacing(12),
         )
-        .padding(16);
+        .padding(16)
+        // The window's own background is the one thing `palette::of` in a
+        // style closure cannot reach: with no theme of our own, iced paints
+        // the page from *its* Dark, and every row that draws no background
+        // shows it through. So the page is painted here, and the near-black
+        // in `branding/` is what you actually see.
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .style(|theme: &iced::Theme| container::Style {
+            background: Some(iced::Background::Color(
+                palette::of(theme).background.base.color,
+            )),
+            text_color: Some(palette::of(theme).background.base.text),
+            ..container::Style::default()
+        });
 
         // Everything above the page is a layer of one stack, and the pointer
         // is tracked on the root so that `pin` below shares its origin.
@@ -1731,6 +1769,40 @@ impl App {
         }
 
         layers.into()
+    }
+
+    /// Where to pin a menu asked for at `cursor`.
+    ///
+    /// A menu opened near the bottom of the window would otherwise run off it
+    /// — and `pin` clips rather than scrolls, so the entries nearest the edge
+    /// would simply not be there. Down and to the right when there is room,
+    /// and back the other way when there is not, which is what every menu on
+    /// every desktop does and nobody notices until it does not.
+    ///
+    /// The size is computed rather than measured: iced lays out after `view`
+    /// and this has to decide before it. Both numbers are the panel's own —
+    /// `MENU_WIDTH` is what `view_menu` sets, and the height is its padding,
+    /// its title line and `entries` rows of text.
+    fn menu_origin(cursor: iced::Point, window: iced::Size, entries: usize) -> iced::Point {
+        const MENU_WIDTH: f32 = 198.0;
+        const TITLE: f32 = 27.0;
+        const ENTRY: f32 = 27.0;
+        const PADDING: f32 = 8.0;
+        let height = PADDING + TITLE + ENTRY * entries as f32;
+        // A margin, so a menu that just fits does not sit flush against the
+        // glass.
+        let edge = 8.0;
+        let x = if cursor.x + MENU_WIDTH + edge > window.width {
+            (cursor.x - MENU_WIDTH).max(edge)
+        } else {
+            cursor.x
+        };
+        let y = if cursor.y + height + edge > window.height {
+            (cursor.y - height).max(edge)
+        } else {
+            cursor.y
+        };
+        iced::Point::new(x, y)
     }
 
     /// A row's menu: what to do with the track it was opened on.
@@ -2374,6 +2446,7 @@ impl App {
     fn subscription(&self) -> Subscription<Message> {
         Subscription::batch([
             iced::time::every(Duration::from_millis(50)).map(|_| Message::Tick),
+            iced::window::resize_events().map(|(_, size)| Message::Resized(size)),
             iced::keyboard::listen().map(|event| match event {
                 iced::keyboard::Event::KeyPressed { key, modifiers, .. } => {
                     Message::Key(key, modifiers)

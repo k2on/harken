@@ -21,7 +21,7 @@ const fn rgb(r: u8, g: u8, b: u8) -> Color {
 
 /// Black, white text, gold.
 pub const DARK: Palette = Palette {
-    background: rgb(0x0A, 0x0A, 0x0A),
+    background: rgb(0x05, 0x05, 0x05),
     text: rgb(0xFF, 0xFF, 0xFF),
     primary: rgb(0xE9, 0xBB, 0x45),
     success: rgb(0x5F, 0xBE, 0x88),

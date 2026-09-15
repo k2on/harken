@@ -962,8 +962,27 @@ every row is one line. Four things about it are load-bearing:
   tick twenty times a second anyway; there is no way to put a menu under the
   pointer in iced without a point, and no other widget reports one.
 
-  Each overlay gets a backdrop that closes it. A menu that only answers to the
-  key that opened it is a menu people click around and then click again.
+  Each overlay gets a backdrop that closes it, and picking an entry closes it
+  too. A menu that only answers to the key that opened it is a menu people
+  click around and then click again; one that stays up after it has been
+  answered is one you dismiss twice.
+
+  **The menu opens away from whichever edge it is against.** `pin` clips
+  rather than scrolls, so a menu asked for near the bottom of the window would
+  simply not have its last entries. Which way it has room is arithmetic and
+  not a measurement — iced lays out after `view` and this decides before it —
+  so `menu_origin` computes the panel's height from its padding, its title and
+  however many entries the track earns, against a window size kept in step by
+  `window::resize_events`.
+
+- **The page's own background is the one thing a style closure cannot reach.**
+  With no `Theme` of our own, iced paints the window from *its* Dark, and
+  every row that draws no background — which is half of them, since the zebra
+  is a wash over whatever is behind — shows that through. So the root
+  container paints itself from `palette::of(theme)`, and the near-black in
+  `branding/` is what is actually on screen. This is what "iced's own widget
+  defaults keep iced's colors" costs in practice, and it is worth knowing that
+  the *page* is one of them.
 - **The two highlights mean different things and are drawn differently.** The
   sidebar's is a *selection* — what the table is showing — so it persists when
   the keyboard is elsewhere. The table's is a *cursor*, only ever "where the

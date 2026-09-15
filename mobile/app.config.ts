@@ -44,7 +44,7 @@ const config: ExpoConfig = {
     adaptiveIcon: {
       // The adaptive icon's own background layer is drawn from
               // `branding/`; this is what shows through around it.
-              backgroundColor: '#0A0A0A',
+              backgroundColor: '#050505',
       // 1024px for the development build, because the banner is drawn at
       // that size; see the plugin.
       foregroundImage: dev
@@ -63,7 +63,7 @@ const config: ExpoConfig = {
     'expo-router',
     [
       'expo-splash-screen',
-      { backgroundColor: '#0A0A0A', image: './assets/images/splash-icon.png', imageWidth: 96 },
+      { backgroundColor: '#050505', image: './assets/images/splash-icon.png', imageWidth: 96 },
     ],
     ['expo-build-properties', { android: { usePrecompiledHeaders: true } }],
     [
