@@ -72,8 +72,8 @@
           //! was and answers with ours. So the rule that makes dark mode work
           //! is unchanged — nothing writes a color down, it asks — and what
           //! it asks is this file rather than iced's own.
-          use iced::theme::Palette;
           use iced::theme::palette::Extended;
+          use iced::theme::Palette;
           use iced::{Color, Theme};
           use std::sync::OnceLock;
 

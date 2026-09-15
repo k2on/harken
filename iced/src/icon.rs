@@ -76,7 +76,7 @@ fn transport<'a>(shape: &'static [u8], dim: bool) -> Svg<'a> {
         .width(TRANSPORT)
         .height(TRANSPORT)
         .style(move |theme: &Theme, _| {
-            let text = theme.extended_palette().background.base.text;
+            let text = crate::palette::of(theme).background.base.text;
             svg::Style {
                 color: Some(if dim { text.scale_alpha(0.6) } else { text }),
             }
@@ -119,7 +119,7 @@ pub fn heart<'a>(filled: bool, on_cursor: bool) -> Svg<'a> {
     .width(SIZE)
     .height(SIZE)
     .style(move |theme: &Theme, _| {
-        let palette = theme.extended_palette();
+        let palette = crate::palette::of(theme);
         svg::Style {
             color: Some(match (filled, on_cursor) {
                 // On the cursor's row everything is drawn in the one

@@ -33,6 +33,7 @@ mod player;
 /// talks to a real server carries none of it.
 #[cfg(feature = "demo")]
 mod seed;
+mod style;
 mod vim;
 
 use std::time::Duration;
@@ -500,7 +501,12 @@ fn row_style(theme: &iced::Theme, on_cursor: bool, focused: bool, odd: bool) -> 
             palette.background.strong.color
         })
     } else if odd {
-        Some(palette.background.weak.color)
+        // A wash of the text color rather than `background.weak`: from a base
+        // this dark iced's generated step is the only direction it can go and
+        // it goes a long way, which reads as a striped table rather than as a
+        // list you can follow across. Alpha, so the same number is a lift on
+        // a dark theme and a shade on a light one.
+        Some(palette.background.base.text.scale_alpha(0.045))
     } else {
         None
     };
@@ -1677,7 +1683,7 @@ impl App {
             text(peer.source.title().to_string()).size(22),
             text(format!("{} tracks", peer.rows().len()))
                 .size(12)
-                .style(text::secondary),
+                .style(style::dim),
         ]
         .spacing(12)
         .align_y(iced::Alignment::Center)]
@@ -1691,6 +1697,7 @@ impl App {
             let actions = row![
                 if signed_out {
                     button("sign in again")
+                        .style(style::action)
                         .on_press_maybe((!self.signing_in).then_some(Message::SignIn))
                 } else {
                     button(if peer.link.is_some() {
@@ -1698,6 +1705,7 @@ impl App {
                     } else {
                         "go online"
                     })
+                    .style(style::action)
                     .on_press(Message::ToggleLink)
                 },
                 button("sign out")
@@ -1752,7 +1760,7 @@ impl App {
             col.push(
                 row![
                     text(*keys).size(13).width(Length::Fixed(110.0)),
-                    text(*what).size(13).style(text::secondary),
+                    text(*what).size(13).style(style::dim),
                 ]
                 .spacing(12),
             )
@@ -1807,10 +1815,7 @@ impl App {
             Pane::Tracks => "tracks",
         };
         row![
-            text(line)
-                .size(12)
-                .style(text::secondary)
-                .width(Length::Fill),
+            text(line).size(12).style(style::dim).width(Length::Fill),
             // A search shows a caret, so a half-typed query does not look
             // like a finished one that matched nothing.
             text(match self.keys.mode() {
@@ -1819,7 +1824,7 @@ impl App {
             })
             .size(12)
             .style(text::primary),
-            text(mode).size(12).style(text::secondary),
+            text(mode).size(12).style(style::dim),
         ]
         .spacing(12)
         .into()
@@ -1838,7 +1843,7 @@ impl App {
                      the browser one streams)"
                 })
                 .size(12)
-                .style(text::secondary),
+                .style(style::dim),
             )
             .padding([8, 4])
             .into();
@@ -1871,16 +1876,18 @@ impl App {
                 transport,
                 column![
                     text(track.title.clone()).size(14),
-                    text(track.creator.clone()).size(12).style(text::secondary),
+                    text(track.creator.clone()).size(12).style(style::dim),
                 ]
                 .spacing(2)
                 .width(Length::Fixed(260.0)),
-                text(clock(position)).size(11).style(text::secondary),
+                text(clock(position)).size(11).style(style::dim),
                 // Seeking is the element's job in a browser, and there is
                 // nothing to seek without one — so the slider only moves where
                 // a track can actually be moved to.
-                slider(0.0..=duration as f32, position as f32, Message::Seek).width(Length::Fill),
-                text(clock(duration)).size(11).style(text::secondary),
+                slider(0.0..=duration as f32, position as f32, Message::Seek)
+                    .style(style::seek)
+                    .width(Length::Fill),
+                text(clock(duration)).size(11).style(style::dim),
             ]
             .spacing(12)
             .align_y(iced::Alignment::Center),
@@ -1899,8 +1906,10 @@ impl App {
             column![
                 text("harken").size(26),
                 text(format!("a peer of {}", self.server)).size(13),
-                button(label).on_press_maybe((!self.signing_in).then_some(Message::SignIn)),
-                text(self.note.clone()).size(13).style(text::secondary),
+                button(label)
+                    .style(style::action)
+                    .on_press_maybe((!self.signing_in).then_some(Message::SignIn)),
+                text(self.note.clone()).size(13).style(style::dim),
             ]
             .spacing(16),
         )

@@ -1474,6 +1474,14 @@ first. The engine's own decisions are in `../petros/docs/decisions.md`.
     glyph, Apache 2.0, unmodified, with its licence beside it — the same
     rule the demo's recordings follow: take it on the terms offered, and say
     so where it can be seen.
+  - **A generated Rust file has to come out of nix already formatted.**
+    `check-fmt` runs over the whole workspace and does not care that nobody
+    typed `palette.rs` — rustfmt orders `theme::palette::Extended` before
+    `theme::Palette`, and emitting the other order fails the check on a file
+    the fix for is in `branding/nix/`. It hides, too: running `cargo fmt`
+    locally rewrites the file, so the next `--check` passes against something
+    nix would not have written. Generate it, *then* `cargo fmt --all --check`
+    without writing first.
   - **The rasters are not checked files.** `files` compares strings and a PNG
     is bytes, so `nix run .#icons` writes them into `mobile/assets/images/`
     the way `nix run .#mutators` writes the module. The favicon is SVG, so it

@@ -26,15 +26,20 @@
   config.perSystem.branding.palette = {
     dark = {
       # The sheet everything sits on, and the three steps up from it.
-      bg = "#000000";
-      raised = "#0B0B0A";
-      card = "#141311";
-      cardHigh = "#201E1A";
-      border = "#282622";
+      #
+      # Not `#000000`: a table of rows on absolute black is a void with text
+      # in it, and the zebra has nowhere to go but a long way up. A tenth of a
+      # step off black still reads as black on any screen and gives the rest
+      # of the ramp somewhere to sit.
+      bg = "#0A0A0A";
+      raised = "#141414";
+      card = "#1A1A19";
+      cardHigh = "#242422";
+      border = "#2B2B29";
       # Text, and the two dimmer ranks of it: an artist, then a hint.
       text = "#FFFFFF";
-      dim = "#A3A099";
-      faint = "#6B6862";
+      dim = "#A1A09C";
+      faint = "#6B6A66";
       # The gold: what is playing, what is hearted, what to press.
       accent = "#E9BB45";
       accentSoft = "#2A2210";
@@ -44,7 +49,7 @@
       scrim = "rgba(0,0,0,0.72)";
       # The three stops of the now-playing gradient, top to bottom. The last is
       # `bg`, so the artwork sits in the page rather than on it.
-      glow = [ "#3A2E0E" "#14120C" "#000000" ];
+      glow = [ "#3A2E0E" "#16150F" "#0A0A0A" ];
       # Stand-in artwork, as gradients. Nothing in the log carries a cover, so
       # a record's art is derived from its name — and the set is small and all
       # of one family, so twenty of them read as one library.

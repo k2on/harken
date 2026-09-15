@@ -10,8 +10,8 @@
 //! was and answers with ours. So the rule that makes dark mode work
 //! is unchanged — nothing writes a color down, it asks — and what
 //! it asks is this file rather than iced's own.
-use iced::theme::Palette;
 use iced::theme::palette::Extended;
+use iced::theme::Palette;
 use iced::{Color, Theme};
 use std::sync::OnceLock;
 
@@ -21,7 +21,7 @@ const fn rgb(r: u8, g: u8, b: u8) -> Color {
 
 /// Black, white text, gold.
 pub const DARK: Palette = Palette {
-    background: rgb(0x00, 0x00, 0x00),
+    background: rgb(0x0A, 0x0A, 0x0A),
     text: rgb(0xFF, 0xFF, 0xFF),
     primary: rgb(0xE9, 0xBB, 0x45),
     success: rgb(0x5F, 0xBE, 0x88),
