@@ -969,6 +969,34 @@ and an output device (`rodio`, so `cpal`, so ALSA) plus an HTTP reader to feed
 them, and it is worth doing when the desktop client has a media store to stream
 from — which it does not yet.
 
+**The page says what is playing, and the platform draws it — in a browser,
+and nowhere else.** The tab's title becomes `Title — Artist`, and
+`navigator.mediaSession` gets the same thing as metadata, which is what puts
+a track on Windows' controller beside the clock, on a macOS Now Playing tile
+and on an Android lock screen instead of the bare site name. All of it is
+`cfg(target_arch = "wasm32")` down to the `Remote` type itself, for the same
+reason `AUDIBLE` is false on the desktop: there is no media session there and
+no tab to title, so a no-op that pretends otherwise would be one more thing
+to read past. Three things about how it is wired:
+
+- **It is a snippet, not web-sys.** `MediaSession` is behind
+  `web_sys_unstable_apis`, which is a `RUSTFLAGS` that every build of the
+  crate would have to agree on — the nix one, the devshell's, and whatever
+  else compiles it. `#[wasm_bindgen(inline_js = …)]` in `iced/src/player.rs`
+  travels in the module instead, and nothing outside that file knows it is
+  there.
+- **A lock-screen button leaves a note.** Its handler runs on the browser's
+  stack and the state it wants to move is behind iced's update loop, so the
+  snippet keeps one pending instruction and the 50ms tick — the one already
+  watching for the end of a track — collects it. Last one wins, which is
+  what two presses in a row meant.
+- **`play` and `pause` are not one toggle.** The operating system says which
+  it means: a controller showing "paused" sends `play`, and answering that
+  with a toggle pauses a track something else had already resumed. Same for
+  the announcement itself, which is made from the tick rather than from each
+  button: the element pauses itself when a stream stalls or runs out, and a
+  controller still saying "playing" for it is worse than one a frame behind.
+
 The demo's library is classical recordings from Wikimedia Commons, by way of
 the mp3 transcode Commons generates for every audio file: a browser plays mp3
 everywhere, and Vorbis in an `.ogg` does not play in Safari at all. The URL

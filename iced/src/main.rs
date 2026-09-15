@@ -43,6 +43,10 @@ use iced::widget::{
 use iced::{Element, Length, Subscription, Task};
 use petros::{AutoCtx, Changes, Client};
 use player::{Player, Track};
+// The tab's title and the platform's media controller are the browser's, the
+// way the `<audio>` element is; the desktop build has neither.
+#[cfg(target_arch = "wasm32")]
+use player::Remote;
 
 /// A library item's id. The message carries what it identifies, so a playlist's
 /// id cannot be dropped into one of these by mistake.
@@ -1256,10 +1260,23 @@ impl App {
                 id: item.id,
                 title: item.title.clone(),
                 creator: item.creator.clone(),
+                album: self.album_of(item.id),
                 ms: item.duration_ms,
             },
             &media_url(&self.server, &item.file),
         );
+    }
+
+    /// The album a track belongs to, for the platform's controller.
+    ///
+    /// `Item` is kind-neutral on purpose, so this is the same cached lookup
+    /// the table's column makes rather than a wider row: a screen that wants
+    /// a song-only fact asks for it.
+    fn album_of(&self, id: harken::Id<harken::tables::Media>) -> String {
+        self.peer
+            .as_ref()
+            .map(|p| p.detail_of(id).album)
+            .unwrap_or_default()
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
@@ -1319,6 +1336,22 @@ impl App {
                 if self.player.ended() {
                     self.skip(1);
                 }
+                // A lock-screen button leaves a note rather than calling in,
+                // because its handler runs on the browser's stack and the
+                // state it wants to move is behind this loop. The tick that
+                // already watches for the end of a track collects it.
+                #[cfg(target_arch = "wasm32")]
+                {
+                    match self.player.take_remote() {
+                        Some(Remote::Play) => self.player.resume(),
+                        Some(Remote::Pause) => self.player.pause(),
+                        Some(Remote::Next) => self.skip(1),
+                        Some(Remote::Previous) => self.skip(-1),
+                        Some(Remote::Seek(secs)) => self.player.seek(secs),
+                        None => {}
+                    }
+                    self.player.announce();
+                }
                 Ok(())
             }
             other => match &mut self.peer {
@@ -1348,6 +1381,7 @@ impl App {
                                     id: item.id,
                                     title: item.title.clone(),
                                     creator: item.creator.clone(),
+                                    album: peer.detail_of(item.id).album,
                                     ms: item.duration_ms,
                                 },
                                 &media_url(&self.server, &item.file),
