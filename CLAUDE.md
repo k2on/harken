@@ -66,6 +66,8 @@ mobile/                  the phone client; src/ is UI and a socket, nothing else
                          in this directory a colour is written down
   src/ui/icon.tsx        every glyph, as an SF Symbol, a Material Symbol, and a
                          character to fall back to (see below)
+  src/ui/debug.tsx       every number the peer holds, on the phone being wrong —
+                         and the one screen that can re-point it
   src/ui/                the rest of the screen: the chips, the row, the bar,
                          and the player sheet
   nix/readme.nix         its section of README.md
@@ -846,6 +848,20 @@ against one of them.
   an empty library over a full database. It reads exactly like "it saves
   nothing", which is a horrible bug to be told about and an easy one to write.
   `@petros/client` puts it in the session's `scratch` for this reason.
+- **The session outlives every screen, so where it is dialling can differ from
+  where the screen thinks it is.** `session()` in `@petros/client` is a
+  module-level singleton keyed by the actor — deliberately, because that is
+  what keeps the database, the socket and the pending queue alive across a
+  remount. The consequence is that a peer opened against one address goes on
+  dialling it, and a screen rendered with another shows the second. It reads
+  as "offline" with no explanation, and it is the one thing the pill cannot
+  tell you: `denied` means the server refused, and a socket that never opened
+  is not refused by anybody. `src/ui/debug.tsx` prints both, side by side, and
+  marks them when they differ. It is also the only caller of `setServer` —
+  which existed on the peer for a long time with no screen behind it, so a
+  phone that remembered an address it can no longer reach had no way back.
+  The connect screen is not that way out: it is skipped once a login is
+  remembered, which is the whole point of remembering one.
 - **The URL a sign-in comes back on is also a route, and it has to exist.**
   `harken://auth?code=…` is two things at once: the answer
   `openAuthSessionAsync` is watching for, and a deep link the OS hands to the

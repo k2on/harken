@@ -46,6 +46,7 @@ const GLYPHS = {
   offline: { ios: 'wifi.slash', android: 'cloud_off', text: '•' },
   signOut: { ios: 'rectangle.portrait.and.arrow.right', android: 'logout', text: '⇥' },
   playing: { ios: 'waveform', android: 'graphic_eq', text: '♪' },
+  debug: { ios: 'ladybug', android: 'bug_report', text: '?' },
 } as const satisfies Record<string, Glyph>;
 
 export type IconName = keyof typeof GLYPHS;

@@ -27,6 +27,7 @@ import { sourceTitle, usePeer, type Peer } from '@/peer';
 import { usePlayer, type Track } from '@/player';
 import { radius, space, useTheme, type Theme } from '@/theme';
 import { Browse } from '@/ui/browse';
+import { Debug } from '@/ui/debug';
 import { Icon } from '@/ui/icon';
 import { MiniPlayer } from '@/ui/miniplayer';
 import { NowPlaying } from '@/ui/nowplaying';
@@ -58,6 +59,7 @@ function Signed(props: { server: string; login: Login; online: boolean }) {
   const player = usePlayer();
 
   const [open, setOpen] = useState(false);
+  const [debug, setDebug] = useState(false);
   const [scrub, setScrub] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -165,6 +167,7 @@ function Signed(props: { server: string; login: Login; online: boolean }) {
         busy={busy}
         onSignIn={again}
         onSignOut={leave}
+        onDebug={() => setDebug(true)}
       />
 
       <Browse
@@ -210,6 +213,18 @@ function Signed(props: { server: string; login: Login; online: boolean }) {
         onOpen={() => setOpen(true)}
       />
 
+      {debug ? (
+        <Debug
+          peer={peer}
+          login={login}
+          server={server}
+          theme={theme}
+          onClose={() => setDebug(false)}
+          top={insets.top}
+          bottom={insets.bottom}
+        />
+      ) : null}
+
       {open && player.track ? (
         <NowPlaying
           player={player}
@@ -237,6 +252,7 @@ function Header({
   busy,
   onSignIn,
   onSignOut,
+  onDebug,
 }: {
   peer: Peer;
   theme: Theme;
@@ -245,6 +261,7 @@ function Header({
   busy: boolean;
   onSignIn: () => void;
   onSignOut: () => void;
+  onDebug: () => void;
 }) {
   const s = styles(theme);
   // Turned away by the server — an expired token, a revoked session. The
@@ -281,6 +298,12 @@ function Header({
           <Text style={[s.pillText, (denied || peer.online) && s.pillTextOn]}>
             {denied ? (busy ? 'signing in…' : 'sign in again') : peer.online ? 'online' : 'offline'}
           </Text>
+        </Pressable>
+
+        {/* Beside the pill rather than buried, because the readings behind it
+            are what the pill is refusing to explain. */}
+        <Pressable onPress={onDebug} style={s.round} accessibilityLabel="debug">
+          <Icon name="debug" size={18} tint={theme.dim} />
         </Pressable>
 
         <Pressable onPress={onSignOut} style={s.round} accessibilityLabel="sign out">

@@ -126,13 +126,18 @@ export type Peer = Shelf & {
   setOnPlaylist: (id: string, on: boolean) => void;
   mutate: <K extends Verb>(kind: K, ...args: ArgsFor<K>) => void;
   toggleLink: () => void;
+  /** Try the socket now, rather than waiting out the backoff. */
+  reconnect: () => void;
   /** Point it somewhere else, or nowhere, without leaving the screen. */
   setServer: (next: string | null) => void;
 };
 
 /** Where this peer's database lives. One file per user, so two people on
- *  one device are two peers, exactly as two logins are on the desktop. */
-function databasePath(user: string): string {
+ *  one device are two peers, exactly as two logins are on the desktop.
+ *
+ *  Exported because the debug overlay shows it: "the phone is empty" and "the
+ *  phone is looking at a different file" are the same screen. */
+export function databasePath(user: string): string {
   const dir = Paths.document.uri.replace(/^file:\/\//, '').replace(/\/$/, '');
   return `${dir}/harken-${user.replace(/[^a-zA-Z0-9._-]/g, '_')}.db`;
 }
@@ -325,6 +330,7 @@ export function usePeer(login: Login, server: string | null): Peer {
       mutate: <K extends Verb>(kind: K, ...args: ArgsFor<K>) =>
         peer.run((c) => c.mutate(kind, JSON.stringify(args[0] ?? {}))),
       toggleLink: peer.toggleLink,
+      reconnect: peer.reconnect,
       setServer: peer.setServer,
     }),
     [peer, shelf, playlist, source, setSource],
