@@ -12,14 +12,12 @@
       # `serve`'s Home Assistant bridge did exactly that — `ureq`, `serde` and
       # `serde_json` were all already vendored for something else.
       #
-      # One round: the lock moved and the old hash is already in the store, so
-      # nix substituted the *stale* vendor directory instead of rebuilding it
-      # and the failure was the lockfile consistency check rather than a hash
-      # mismatch — which prints no `got:` to copy. A hash nothing can have
-      # forces the fetch, and the next run prints the real one. Written out
-      # rather than as `lib.fakeHash` so that a wrong guess about what
-      # `perSystem` is handed cannot cost the round this is spending.
-      cargoVendorHash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+      # And when it moves, nix may not *ask*: the old hash names a path already
+      # in the store, so it substitutes the stale vendor directory and the
+      # failure is nixpkgs' lockfile consistency check, which prints the diff
+      # and no `got:`. Putting a hash nothing can have here is what forces the
+      # fetch and gets the real one printed.
+      cargoVendorHash = "sha256-kO2gyBF8/T9uiQymtfSW2F/Mr3HAEAc44P22GGXaNuo=";
       mutators.crate = "harken";
       # Beside the domain rather than at the root, because it describes what is
       # in `functions.rs`. `nix flake check` holds every build to it.
