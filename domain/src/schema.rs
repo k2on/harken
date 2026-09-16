@@ -87,6 +87,11 @@ petros_schema::row! {
         /// limitation and the reason to key this by the pair if it ever bites.
         creator: String,
         tracks: i64,
+        /// The cover, as `media.file` spells one: a path relative to the media
+        /// root, or a whole URL. Empty when nobody has set one, which is the
+        /// normal case — a client draws a square derived from the name then,
+        /// and the derived one is a fallback rather than the answer.
+        art: String,
     };
 
     /// What is true of a track as a *song*, for a client drawing those columns.
@@ -124,6 +129,9 @@ petros_schema::row! {
     Artist => {
         name: String,
         tracks: i64,
+        /// The picture, on the same terms as [`Album::art`]. Empty when nobody
+        /// has set one.
+        art: String,
     };
 
     /// A playlist. "Favorites" is one of these and nothing more — which

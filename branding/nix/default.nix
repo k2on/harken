@@ -28,6 +28,14 @@
         "    danger: rgb(${rgb t.danger}),"
       ];
 
+      # The six stand-in gradients, as pairs of stops. `iced::art` picks one
+      # by hashing a name; the phone picks the same one out of the same six in
+      # `mobile/src/palette.ts`, which is what makes an album the same square
+      # on a laptop and on a phone.
+      icedArt = t: lib.concatMapStringsSep "\n"
+        (a: "    [rgb(${rgb (builtins.elemAt a 0)}), rgb(${rgb (builtins.elemAt a 1)})],")
+        t.art;
+
       quoted = xs: lib.concatMapStringsSep ", " (x: "'${x}'") xs;
       pair = xs: "[${quoted xs}]";
 
@@ -91,6 +99,25 @@
           pub const LIGHT: Palette = Palette {
           ${icedPalette p.light}
           };
+
+          /// Stand-in artwork, as the two stops of a gradient.
+          ///
+          /// Nothing in the log carries a cover, and nothing should: `media`
+          /// has a title, a creator, a length and the name of a file, and a
+          /// picture would be a column every kind pays for so that one kind
+          /// can have one. So a record's art is *derived* from its name, in
+          /// [`crate::art`] — deterministically, so the same album is the same
+          /// square on every device, which is most of what a cover does in a
+          /// list.
+          pub const DARK_ART: [[Color; 2]; 6] = [
+          ${icedArt p.dark}
+          ];
+
+          /// …and against white, where the pair has to stay dark enough that
+          /// the note drawn on it reads.
+          pub const LIGHT_ART: [[Color; 2]; 6] = [
+          ${icedArt p.light}
+          ];
 
           /// Ours, for whichever of the two iced picked.
           ///

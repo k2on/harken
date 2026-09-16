@@ -1150,6 +1150,45 @@ recordings of one work are two performers, not two albums.
 
 ## The sidebar browses; the now-playing bar plays, in a browser
 
+**The sidebar is a fixed four lines now, and the browsing is pages.** It used
+to be one line per album and one per artist under headings, which is readable
+at the twenty a demo has and is a second scrolling list at two hundred — you
+scroll the sidebar to find the thing you scroll. So `Music` holds Songs,
+Albums and Artists, `Playlists` holds the lists somebody made, and the two
+indexes are *pages*: a grid of cards, each opening the record it stands for.
+
+Four things follow, and each is a decision:
+
+- **The index pages are the first `vim::Grid` this program has had.** CLAUDE.md
+  has said for a while that `Grid` was kept and tested without a caller,
+  because a hook with one implementation is not a hook. A page laid out in
+  rows of cards is what `h` and `l` mean something on, and a `List` there would
+  *refuse* them and hand the cursor to the sidebar halfway along a shelf.
+- **How many cards fit is arithmetic, not a measurement.** `App::columns`
+  divides the same width by the same card that `view_cards` does, from the
+  same window size, for the reason `menu_origin` does: iced lays out after
+  `view` and the keyboard has to know where `l` lands before that. A grid
+  drawn four across and walked as though it were five puts the cursor on a
+  card nobody can see, and it reads as the keymap skipping rows at random —
+  which is why the geometry is four constants in one place.
+- **`<Enter>` opens a card and plays a row, with no mode to be in.** What the
+  cursor is on decides: `card_under_cursor` answers `None` on every page that
+  is a list, so one key means the obvious thing in both places.
+- **A route resolves against the lists rather than the sidebar.** `source_of`
+  used to find the `Choice` whose route matched, and no sidebar line carries
+  an album any more — so `#album/Water%20Music` is checked against `albums`
+  directly. The rule that a name this peer has not got lands on the library is
+  unchanged.
+
+An album page and an artist page open with a header — the square, what it is,
+the name, and the numbers true of the whole of it — above the table they
+already had. A record is not only a list of tracks, and a page that opens on
+the first row of a table says nothing about the record it is of. The artist
+header counts *albums*, because that is the fact that differs there; an album
+header would be saying "1". Lengths there are `2 hr 30 min` rather than
+`m:ss`, because Messiah in `m:ss` is `150:37` and nobody reads that as a
+length — `clock` is still what a row uses.
+
 The client is a library with a sidebar: playlists, then albums, then artists.
 Which of those a row belongs to is not a column on the library list — `album`
 lives on the `song` side table precisely so that `media` stays kind-neutral —
@@ -1611,6 +1650,65 @@ tracks are in harken's queue and not the speaker's. Asking for one should be a
 fresh hand-off rather than a `media_previous_track`, and nothing does that
 yet. And none of this has been run against a real Home Assistant from here —
 the rules are tested, the six service calls are not.
+
+## A cover is a row, because an album is not one
+
+`artwork` is a table of its own, keyed by `(subject, name)` where `subject` is
+`'album'` or `'artist'`. That shape is forced rather than chosen: an album is a
+string on `song` and an artist is `media.creator`, so neither is a row for a
+picture to hang on. On `song` a cover would be repeated once per track and two
+tracks of one album could disagree about it; on `media` it would be a column
+every kind pays for so that one kind can have a picture, which is the argument
+that kept artwork out of the log in the first place.
+
+**`file` is spelt exactly as `media.file` is** — a path under the media root or
+a whole URL — because a client already knows how to turn one of those into
+something it can fetch, and a second rule for pictures would be a second thing
+to get wrong.
+
+**`set_artwork` is last-write-wins, which is the opposite of every other verb
+here.** `add_song` and `create_playlist` both let the *first* entry win,
+because adding the same thing twice is a mistake and the log is where the first
+answer lives. A cover is not that: replacing one is the whole point, and
+somebody who picks a better picture means the newer one. The log being totally
+ordered is what makes "newer" a fact rather than a race — every peer replaying
+reaches the same last write — so this is one `put` over a row keyed by the
+pair, and `INSERT OR REPLACE` does the rest. Clearing a cover is `file` empty
+rather than a `remove_artwork` beside it: a row with nothing in it and no row
+at all are the same answer to `albums()`.
+
+No `SCHEMA_VERSION` bump. A new table is `CREATE TABLE IF NOT EXISTS` and the
+engine only rebuilds when an existing table's *shape* moves.
+
+**What draws it, and what does not yet.** `albums()` and `artists()` carry
+`art`, and the phone can hand a URL straight to an `Image`. The desktop cannot:
+`iced::widget::image` takes bytes or a path and there is no URL widget, so a
+cover there means an HTTP fetch, a cache and a `Task` per image — a dependency
+this workspace does not have and a `cargoVendorHash` to move for it. So the
+desktop draws the derived square below and ignores `art` for now, which is
+stated here rather than discovered.
+
+## The square when there is no cover
+
+`iced/src/art.rs` derives one from the name, which is most of what a cover is
+doing in a list and the part that survives having no picture. It is the
+*fallback* now rather than the answer.
+
+**The two clients must agree, and the hash is where that is won or lost.** The
+six gradients are generated into `iced/src/palette.rs` and
+`mobile/src/palette.ts` from one description, so that half cannot drift. The
+other half is which of the six a name picks, and the phone's is FNV-1a over
+`charCodeAt` — UTF-16 code units. `art.rs` walks `encode_utf16()` for exactly
+that reason, and `wrapping_mul` because `Math.imul` wraps where Rust would
+panic in debug.
+
+The test pins it, and the case that matters is the one nothing in the library
+has: every name here is in the Basic Multilingual Plane, where one `char` is
+one code unit and the two walks are the same function — so "Für Elise" would
+not catch `chars()`. U+1F3B5 would: `0x442e75ca` walked as UTF-16 and
+`0xb154da50` walked as chars. Pinning it now is cheaper than finding out when
+somebody names a playlist with an emoji and one device draws a different
+square.
 
 ## The media directory is a peer, and a rescan is free
 

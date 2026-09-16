@@ -111,3 +111,38 @@ CREATE TABLE IF NOT EXISTS playlist_item (
     user_id     TEXT NOT NULL,
     PRIMARY KEY (playlist_id, media_id)
 );
+
+-- A cover, for something that is not a row.
+--
+-- An album is not a table here and an artist is not either: an album is a
+-- string on `song` and an artist is `media.creator`, which is what keeps the
+-- library kind-neutral and what makes the grouping four queries rather than
+-- four tables. So a picture of one has nowhere to hang. On `song` it would be
+-- repeated once per track and two tracks of one album could disagree about
+-- their own cover; on `media` it would be a column every kind pays for so that
+-- one kind can have a picture, which is the argument that kept artwork out of
+-- the log in the first place.
+--
+-- Keyed by the pair, like `playlist_item`: the pair is what a cover belongs
+-- to, and the key is what makes replacing one a `put` rather than a search.
+CREATE TABLE IF NOT EXISTS artwork (
+    -- What the picture is of: 'album' or 'artist'.
+    --
+    -- Not a `media.kind`. That one names the *side table* carrying the rest of
+    -- a row, and neither of these has a row at all — this says which namespace
+    -- `name` is a name in, because "Water Music" the album and a performer of
+    -- the same name are two different pictures.
+    subject  TEXT NOT NULL,
+    -- The album's name or the artist's, exactly as the tracks spell it. Names
+    -- rather than ids for the reason the sidebar's routes carry names: there
+    -- is no id to carry, because there is no row.
+    name     TEXT NOT NULL,
+    -- Where the image is, spelt exactly as `media.file` is: a path relative to
+    -- the media root, or a whole URL. The bytes are not the log's business and
+    -- a client joins the path to its own server, which is the rule that
+    -- already exists rather than a second one for pictures.
+    file     TEXT NOT NULL,
+    added_ms BIGINT NOT NULL,
+    user_id  TEXT NOT NULL,
+    PRIMARY KEY (subject, name)
+);

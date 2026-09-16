@@ -26,6 +26,7 @@
 //! The engine does not know which of these it is running in. What differs is
 //! two lines: where the database lives, and which transport carries the bytes.
 
+mod art;
 mod icon;
 mod listening;
 mod palette;
@@ -214,6 +215,15 @@ enum Source {
     /// Everything, in library order. The only one served by the maintained
     /// view rather than by a query — see `Peer::reload_shown`.
     Library,
+    /// Every album, and everyone who made something: the two index pages.
+    ///
+    /// These used to be *headings* over a sidebar row per album and per
+    /// artist, which is fine for the twenty a demo has and wrong for a library
+    /// — a sidebar that grows with the collection is a sidebar you scroll to
+    /// find the thing you scroll. They are pages now, and the sidebar is the
+    /// four fixed places plus whatever lists you made.
+    Albums,
+    Artists,
     Playlist(harken::Id<harken::tables::Playlist>, String),
     Album(String),
     Artist(String),
@@ -224,6 +234,8 @@ impl Source {
     fn route(&self) -> route::Route {
         match self {
             Source::Library => route::Route::Library,
+            Source::Albums => route::Route::Albums,
+            Source::Artists => route::Route::Artists,
             Source::Playlist(_, name) => route::Route::Playlist(name.clone()),
             Source::Album(name) => route::Route::Album(name.clone()),
             Source::Artist(name) => route::Route::Artist(name.clone()),
@@ -236,16 +248,20 @@ impl Source {
     /// line N without counting past decoration.
     fn heading(&self) -> Option<&'static str> {
         match self {
-            Source::Library => None,
+            Source::Library | Source::Albums | Source::Artists => Some("Music"),
             Source::Playlist(..) => Some("Playlists"),
-            Source::Album(_) => Some("Albums"),
-            Source::Artist(_) => Some("Artists"),
+            // Reached from a page rather than from the sidebar, so there is no
+            // line to put a heading over. `Choice::heading` is only ever asked
+            // about a line the sidebar actually draws.
+            Source::Album(_) | Source::Artist(_) => None,
         }
     }
 
     fn title(&self) -> &str {
         match self {
-            Source::Library => "Library",
+            Source::Library => "Songs",
+            Source::Albums => "Albums",
+            Source::Artists => "Artists",
             Source::Playlist(_, name) | Source::Album(name) | Source::Artist(name) => name,
         }
     }
@@ -674,6 +690,48 @@ fn clock(secs: f64) -> String {
     format!("{}:{:02}", secs / 60, secs % 60)
 }
 
+/// How long a whole record runs, in the units people say it in.
+///
+/// `clock` above is `m:ss` because that is how one piece is written down; a
+/// two-and-a-half-hour oratorio in `m:ss` is `150:37`, which nobody reads as a
+/// length. So a header says "2 hr 30 min" and a row still says "4:21".
+fn spell(ms: i64) -> String {
+    let minutes = ms / 60_000;
+    match (minutes / 60, minutes % 60) {
+        (0, m) => format!("{m} min"),
+        (h, 0) => format!("{h} hr"),
+        (h, m) => format!("{h} hr {m} min"),
+    }
+}
+
+/// `1 track`, `2 tracks`. English, and only for the two words this uses.
+fn plural(n: i64, word: &str) -> String {
+    if n == 1 {
+        word.to_string()
+    } else {
+        format!("{word}s")
+    }
+}
+
+/// One cell of an index page.
+///
+/// Built from an `Album` or an `Artist` at the point of drawing rather than
+/// being a third thing the domain returns: what a card needs is a name, a line
+/// under it, a number and somewhere to go, and those are the same four for
+/// both — which is why there is one grid and not two.
+struct Card {
+    /// What the square is derived from. The name, for both, so the square an
+    /// album has on this page is the square it has on the phone.
+    seed: String,
+    title: String,
+    /// The line under the title, or empty to fall back to the tally.
+    under: String,
+    tally: i64,
+    open: Source,
+    /// A person is a circle and a record is a square.
+    round: bool,
+}
+
 /// A database, a socket, and what is maintained over them. Exists once
 /// somebody is signed in, because the database is theirs.
 struct Peer {
@@ -715,6 +773,15 @@ struct Peer {
     /// drawn. Headings are derived from it while drawing rather than stored in
     /// it, so "line 9" means the same thing to the keyboard and to the eye.
     choices: Vec<Choice>,
+    /// The two index pages' contents, read when the library changes.
+    ///
+    /// They used to be sidebar rows and are lists in their own right now. Held
+    /// rather than re-queried per frame for the reason the sidebar is: `view`
+    /// takes `&self`, and a grid of two hundred albums is not a thing to
+    /// rebuild sixty times a second. They are also what `source_of` resolves a
+    /// `#album/…` link against, now that no sidebar line carries one.
+    albums: Vec<harken::Album>,
+    artists: Vec<harken::Artist>,
     pending: usize,
 }
 
@@ -835,6 +902,8 @@ impl Peer {
             shown: Vec::new(),
             details: std::collections::HashMap::new(),
             choices: Vec::new(),
+            albums: Vec::new(),
+            artists: Vec::new(),
             items: Vec::new(),
             pending: 0,
         };
@@ -935,27 +1004,35 @@ impl Peer {
             .map(|t| (t.media_id, t))
             .collect();
 
-        let mut choices = vec![Choice {
-            source: Source::Library,
-            label: "Library".into(),
-            count: Some(self.items.len() as i64),
-        }];
+        // Music, then the lists somebody made. The sidebar is a fixed height
+        // now: it was one line per album and one per artist, which is readable
+        // at twenty albums and is a second scrolling list at two hundred.
+        // Where those went is a page, which is what the first three lines are.
+        let mut choices = vec![
+            Choice {
+                source: Source::Library,
+                label: "Songs".into(),
+                count: Some(self.items.len() as i64),
+            },
+            Choice {
+                source: Source::Albums,
+                label: "Albums".into(),
+                count: Some(albums.len() as i64),
+            },
+            Choice {
+                source: Source::Artists,
+                label: "Artists".into(),
+                count: Some(artists.len() as i64),
+            },
+        ];
         choices.extend(playlists.into_iter().map(|p| Choice {
             source: Source::Playlist(p.id, p.name.clone()),
             label: p.name,
             count: None,
         }));
-        choices.extend(albums.into_iter().map(|a| Choice {
-            source: Source::Album(a.name.clone()),
-            label: a.name,
-            count: Some(a.tracks),
-        }));
-        choices.extend(artists.into_iter().map(|a| Choice {
-            source: Source::Artist(a.name.clone()),
-            label: a.name,
-            count: Some(a.tracks),
-        }));
         self.choices = choices;
+        self.albums = albums;
+        self.artists = artists;
     }
 
     /// What is true of a track as a song, or nothing if its kind has none.
@@ -982,6 +1059,13 @@ impl Peer {
     fn reload_shown(&mut self) {
         self.shown = match self.source.clone() {
             Source::Library => return,
+            // An index page draws `albums`/`artists`, not a list of tracks.
+            // Cleared rather than left alone so that `rows()` cannot hand the
+            // transport the previous page's queue.
+            Source::Albums | Source::Artists => {
+                self.shown.clear();
+                return;
+            }
             Source::Playlist(id, _) => harken::playlist(&mut self.client.store(), id),
             Source::Album(name) => harken::album(&mut self.client.store(), self.playlist, name),
             Source::Artist(name) => harken::artist(&mut self.client.store(), self.playlist, name),
@@ -996,6 +1080,25 @@ impl Peer {
     /// peer has not received yet, lands on the library — which is a page, and
     /// better than a heading with nothing under it.
     fn source_of(&self, route: &route::Route) -> Source {
+        // An album and an artist are no longer sidebar lines, so the lists
+        // they *are* have to be what a link resolves against. Same rule as
+        // before — a name this peer does not have lands on the library, which
+        // is a page rather than a heading with nothing under it.
+        match route {
+            route::Route::Album(name) => {
+                return match self.albums.iter().any(|a| a.name == *name) {
+                    true => Source::Album(name.clone()),
+                    false => Source::Library,
+                }
+            }
+            route::Route::Artist(name) => {
+                return match self.artists.iter().any(|a| a.name == *name) {
+                    true => Source::Artist(name.clone()),
+                    false => Source::Library,
+                }
+            }
+            _ => {}
+        }
         self.choices
             .iter()
             .find(|c| c.source.route() == *route)
@@ -1008,6 +1111,15 @@ impl Peer {
             Source::Library => &self.items,
             _ => &self.shown,
         }
+    }
+
+    /// Every album this artist made something on.
+    ///
+    /// Derived from the list already read rather than from a query of its own:
+    /// `Album::creator` is whoever made its first track, which is the same
+    /// fact an artist page is selecting on.
+    fn albums_by(&self, artist: &str) -> Vec<&harken::Album> {
+        self.albums.iter().filter(|a| a.creator == artist).collect()
     }
 
     /// Move messages between the client and the wire. While offline the outbox
@@ -1237,6 +1349,17 @@ impl App {
         self.login = Some(login);
     }
 
+    /// The index pages' geometry, shared by the view that draws the cards and
+    /// the arithmetic that decides where `l` lands.
+    ///
+    /// Written once because the two have to agree: a grid drawn four across
+    /// and walked as though it were five puts the cursor on a card nobody can
+    /// see, and it would look like the keymap skipping rows at random.
+    const SIDEBAR_WIDTH: f32 = 200.0;
+    const PAGE_PADDING: f32 = 16.0;
+    const CARD: f32 = 132.0;
+    const CARD_GAP: f32 = 16.0;
+
     // The two scrollables the cursor has to keep itself inside of.
     const SIDEBAR: &'static str = "sidebar";
     const TRACKS: &'static str = "tracks";
@@ -1265,10 +1388,36 @@ impl App {
             Pane::Sidebar => Box::new(vim::List {
                 cells: peer.map_or(0, |p| p.choices.len()),
             }),
-            Pane::Tracks => Box::new(vim::List {
-                cells: peer.map_or(0, |p| p.rows().len()),
-            }),
+            // The index pages are a grid, and the first caller `vim::Grid` has
+            // ever had: `h` and `l` mean something on a page laid out in rows
+            // of cards, and a `List` would refuse them and hand the cursor to
+            // the sidebar halfway along a shelf. Everything else is a list.
+            Pane::Tracks => match peer.map(|p| (&p.source, p)) {
+                Some((Source::Albums, p)) => Box::new(vim::Grid {
+                    cells: p.albums.len(),
+                    columns: self.columns(),
+                }),
+                Some((Source::Artists, p)) => Box::new(vim::Grid {
+                    cells: p.artists.len(),
+                    columns: self.columns(),
+                }),
+                _ => Box::new(vim::List {
+                    cells: peer.map_or(0, |p| p.rows().len()),
+                }),
+            },
         }
+    }
+
+    /// How many cards fit across an index page.
+    ///
+    /// Arithmetic rather than a measurement, for the reason `menu_origin` is:
+    /// iced lays out after `view` and the keyboard has to know where `l` lands
+    /// before that. So this is the same division the view does, from the same
+    /// window size — and the two agreeing is what keeps the cursor under the
+    /// card it is drawn on.
+    fn columns(&self) -> usize {
+        let room = (self.window.width - Self::SIDEBAR_WIDTH - Self::PAGE_PADDING * 2.0).max(0.0);
+        (((room + Self::CARD_GAP) / (Self::CARD + Self::CARD_GAP)) as usize).max(1)
     }
 
     /// The text `/` searches, for whichever pane has the cursor.
@@ -1279,12 +1428,22 @@ impl App {
         match pane {
             Pane::Sidebar => peer.choices.iter().map(|c| c.label.clone()).collect(),
             // Both halves of the row, so `/bach` finds a Bach track whether the
-            // word is in the title or the composer.
-            Pane::Tracks => peer
-                .rows()
-                .iter()
-                .map(|i| format!("{} {}", i.title, i.creator))
-                .collect(),
+            // word is in the title or the composer — and on an index page the
+            // cards, because `/` should search what is on screen rather than
+            // what used to be.
+            Pane::Tracks => match peer.source {
+                Source::Albums => peer
+                    .albums
+                    .iter()
+                    .map(|a| format!("{} {}", a.name, a.creator))
+                    .collect(),
+                Source::Artists => peer.artists.iter().map(|a| a.name.clone()).collect(),
+                _ => peer
+                    .rows()
+                    .iter()
+                    .map(|i| format!("{} {}", i.title, i.creator))
+                    .collect(),
+            },
         }
     }
 
@@ -1643,7 +1802,13 @@ impl App {
                 self.pane = Pane::Tracks;
                 self.reveal()
             }
+            // On an index page the cursor is on a card, and a card is a place
+            // rather than a track: `<Enter>` opens it, which is the same thing
+            // clicking it does.
             Pane::Tracks => {
+                if let Some(source) = self.card_under_cursor(at) {
+                    return self.update(Message::Select(source));
+                }
                 let id = self
                     .peer
                     .as_ref()
@@ -1654,6 +1819,19 @@ impl App {
                 }
                 Task::none()
             }
+        }
+    }
+
+    /// The album or artist card at this position, if the page has cards.
+    ///
+    /// `None` on every other page, which is what lets one `<Enter>` mean "open
+    /// this" here and "play this" everywhere else without a mode.
+    fn card_under_cursor(&self, at: usize) -> Option<Source> {
+        let peer = self.peer.as_ref()?;
+        match peer.source {
+            Source::Albums => peer.albums.get(at).map(|a| Source::Album(a.name.clone())),
+            Source::Artists => peer.artists.get(at).map(|a| Source::Artist(a.name.clone())),
+            _ => None,
         }
     }
 
@@ -2202,7 +2380,7 @@ impl App {
                 row![
                     self.view_sidebar(peer),
                     rule::vertical(1),
-                    self.view_list(peer),
+                    self.view_page(peer),
                 ]
                 .spacing(16)
                 .height(Length::Fill),
@@ -2489,7 +2667,7 @@ impl App {
         }
 
         container(scrollable(side).id(Self::SIDEBAR).style(style::bars))
-            .width(Length::Fixed(200.0))
+            .width(Length::Fixed(Self::SIDEBAR_WIDTH))
             .height(Length::Fill)
             .into()
     }
@@ -2500,6 +2678,223 @@ impl App {
     /// found, and this reads it. The one thing the demo drops is signing in,
     /// because it has no accounts and no server to sign in to — compiled out
     /// rather than deleted, since the real client's is the only way in.
+    /// Which page the sidebar's selection is, which is four shapes now rather
+    /// than one.
+    ///
+    /// The table was the whole of the right-hand side while every source was a
+    /// list of tracks. An album is not only a list of tracks, though — it is a
+    /// *thing*, with a cover and a performer and a length — and a page that
+    /// opens on the first row of a table says none of that. So a record gets a
+    /// header above its table, and the two indexes get a grid of cards, and a
+    /// playlist and the library stay exactly what they were.
+    fn view_page(&self, peer: &'_ Peer) -> Element<'_, Message> {
+        match &peer.source {
+            Source::Albums => self.view_cards(
+                peer.albums
+                    .iter()
+                    .map(|a| Card {
+                        seed: a.name.clone(),
+                        title: a.name.clone(),
+                        under: a.creator.clone(),
+                        tally: a.tracks,
+                        open: Source::Album(a.name.clone()),
+                        round: false,
+                    })
+                    .collect(),
+                "No albums yet.",
+            ),
+            Source::Artists => self.view_cards(
+                peer.artists
+                    .iter()
+                    .map(|a| Card {
+                        seed: a.name.clone(),
+                        title: a.name.clone(),
+                        under: String::new(),
+                        tally: a.tracks,
+                        open: Source::Artist(a.name.clone()),
+                        // A person is a circle and a record is a square, which
+                        // is the one thing every music app agrees about and
+                        // the only thing telling the two grids apart at a
+                        // glance.
+                        round: true,
+                    })
+                    .collect(),
+                "Nobody yet.",
+            ),
+            Source::Album(name) => {
+                let album = peer.albums.iter().find(|a| a.name == *name);
+                let header = self.view_record(
+                    name,
+                    album.map(|a| a.creator.as_str()).unwrap_or_default(),
+                    "Album",
+                    peer.rows(),
+                    None,
+                );
+                column![header, self.view_list(peer)]
+                    .spacing(0)
+                    .width(Length::Fill)
+                    .into()
+            }
+            Source::Artist(name) => {
+                let by = peer.albums_by(name);
+                let header = self.view_record(name, "", "Artist", peer.rows(), Some(by.len()));
+                column![header, self.view_list(peer)]
+                    .spacing(0)
+                    .width(Length::Fill)
+                    .into()
+            }
+            _ => self.view_list(peer),
+        }
+    }
+
+    /// One index page: a grid of cards, and the cursor on one of them.
+    ///
+    /// Laid out as rows of `columns()` rather than by a wrapping widget,
+    /// because the keyboard has to agree about where `l` lands and iced lays
+    /// out after `view` — the same reason `menu_origin` does arithmetic. So
+    /// both halves divide the same width by the same card, once, from
+    /// `App::columns`.
+    fn view_cards(&self, cards: Vec<Card>, empty: &'static str) -> Element<'_, Message> {
+        if cards.is_empty() {
+            return container(
+                text(empty)
+                    .size(13)
+                    .style(|theme: &iced::Theme| text::Style {
+                        color: Some(palette::of(theme).background.base.text.scale_alpha(0.5)),
+                    }),
+            )
+            .padding(Self::PAGE_PADDING)
+            .into();
+        }
+        let focused = self.pane == Pane::Tracks;
+        let cursor = focused.then_some(self.at(Pane::Tracks));
+        let columns = self.columns();
+
+        let mut page = column![].spacing(Self::CARD_GAP);
+        for (r, chunk) in cards.chunks(columns).enumerate() {
+            let mut line = row![].spacing(Self::CARD_GAP);
+            for (c, card) in chunk.iter().enumerate() {
+                let at = r * columns + c;
+                line = line.push(self.view_card(card, Some(at) == cursor));
+            }
+            page = page.push(line);
+        }
+        container(scrollable(container(page).padding(Self::PAGE_PADDING)).id(Self::TRACKS))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+    }
+
+    /// One card: the square, the name, and what is under it.
+    fn view_card(&self, card: &Card, on_cursor: bool) -> Element<'_, Message> {
+        let corner = if card.round { Self::CARD / 2.0 } else { 6.0 };
+        let under = if card.under.is_empty() {
+            format!("{} {}", card.tally, plural(card.tally, "track"))
+        } else {
+            card.under.clone()
+        };
+        mouse_area(
+            container(
+                column![
+                    art::square::<Message>(&card.seed, Self::CARD, corner),
+                    text(card.title.clone())
+                        .size(13)
+                        .wrapping(text::Wrapping::None)
+                        .style(move |theme: &iced::Theme| text::Style {
+                            color: Some(if on_cursor {
+                                palette::of(theme).primary.base.color
+                            } else {
+                                palette::of(theme).background.base.text
+                            }),
+                        }),
+                    text(under)
+                        .size(11)
+                        .style(|theme: &iced::Theme| text::Style {
+                            color: Some(palette::of(theme).background.base.text.scale_alpha(0.5)),
+                        }),
+                ]
+                .spacing(4)
+                .width(Length::Fixed(Self::CARD)),
+            )
+            // The cursor is the *title* going gold rather than a filled
+            // rectangle. A card is mostly picture, and a fill behind one is a
+            // border around an image — it reads as a selected file, not as
+            // where the next `l` goes.
+            .padding(0),
+        )
+        .on_press(Message::Select(card.open.clone()))
+        .into()
+    }
+
+    /// The header an album or an artist page opens with.
+    ///
+    /// The big square, what it is, its name, and the two or three numbers that
+    /// are true of the whole of it. `albums` is `Some` on an artist page,
+    /// because "nine albums" is the fact that differs there — an album page
+    /// would be saying "1".
+    fn view_record(
+        &self,
+        name: &str,
+        under: &str,
+        kind: &'static str,
+        rows: &[Item],
+        albums: Option<usize>,
+    ) -> Element<'_, Message> {
+        let tracks = rows.len() as i64;
+        let ms: i64 = rows.iter().map(|i| i.duration_ms).sum();
+        let mut facts = match albums {
+            Some(n) => format!("{n} {}", plural(n as i64, "album")),
+            None => String::new(),
+        };
+        if !facts.is_empty() {
+            facts.push_str("  ·  ");
+        }
+        facts.push_str(&format!("{tracks} {}", plural(tracks, "track")));
+        if ms > 0 {
+            facts.push_str("  ·  ");
+            facts.push_str(&spell(ms));
+        }
+
+        let round = albums.is_some();
+        let side = 116.0;
+        container(
+            row![
+                art::square::<Message>(name, side, if round { side / 2.0 } else { 8.0 }),
+                column![
+                    text(kind)
+                        .size(10)
+                        .style(|theme: &iced::Theme| text::Style {
+                            color: Some(palette::of(theme).background.base.text.scale_alpha(0.5)),
+                        }),
+                    text(name.to_string())
+                        .size(26)
+                        .wrapping(text::Wrapping::None),
+                    text(under.to_string())
+                        .size(13)
+                        .style(|theme: &iced::Theme| text::Style {
+                            color: Some(palette::of(theme).primary.base.color),
+                        }),
+                    text(facts)
+                        .size(11)
+                        .style(|theme: &iced::Theme| text::Style {
+                            color: Some(palette::of(theme).background.base.text.scale_alpha(0.5)),
+                        }),
+                ]
+                .spacing(4),
+            ]
+            .spacing(16)
+            .align_y(iced::Alignment::Center),
+        )
+        .padding(iced::Padding {
+            top: Self::PAGE_PADDING,
+            right: Self::PAGE_PADDING,
+            bottom: Self::PAGE_PADDING,
+            left: 0.0,
+        })
+        .width(Length::Fill)
+        .into()
+    }
+
     fn view_list(&self, peer: &'_ Peer) -> Element<'_, Message> {
         let playing = self.player.track().map(|t| t.id);
         let sounding = self.player.is_playing();

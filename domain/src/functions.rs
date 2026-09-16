@@ -39,7 +39,7 @@ use petros_schema::prelude::*;
 #[cfg(feature = "foreign")]
 use crate::Peer;
 
-use crate::schema::tables::{Media, Playlist, PlaylistItem, Song};
+use crate::schema::tables::{Artwork, Media, Playlist, PlaylistItem, Song};
 
 // Only the queries below use these, and a query is not built for the sandbox.
 #[cfg(feature = "storage")]
@@ -132,6 +132,54 @@ pub fn add_song(
         // The slowest marking anybody writes is around 20 and the fastest
         // around 300; outside that it is not a tempo.
         bpm: if (20..=300).contains(&bpm) { bpm } else { 0 },
+    })?;
+    Ok(())
+}
+
+/// Give an album or an artist a cover.
+///
+/// `subject` is `"album"` or `"artist"` and `name` is what the tracks call it.
+/// `file` is spelt exactly as `media.file` is — a path under the media root,
+/// or a whole URL — because a client already knows how to turn one of those
+/// into something it can fetch, and a second rule for pictures would be a
+/// second thing to get wrong.
+///
+/// **Last write wins, which is the opposite of every other verb here.**
+/// `add_song` and `create_playlist` both let the *first* entry win, because
+/// adding the same song twice is a mistake and the log is where the first
+/// answer lives. A cover is not that: replacing one is the whole point, and a
+/// person who picks a better picture means the newer one. The log being
+/// totally ordered is what makes "newer" a fact rather than a race — every
+/// peer replaying reaches the same last write — so this is one `put` over a
+/// row keyed by the pair, and the key does the work.
+///
+/// Clearing one is `file` empty, rather than a `remove_artwork` beside this:
+/// the row staying with nothing in it and the row not existing are the same
+/// answer to `albums()`, and one verb is one thing to get right.
+#[mutation]
+pub fn set_artwork(
+    db: &mut Db,
+    ctx: &Ctx,
+    added_ms: Now,
+    subject: String,
+    name: String,
+    file: String,
+) -> Result {
+    // Refused rather than ignored: a third subject would be a picture nothing
+    // ever reads, stored forever, and the caller would never hear about it.
+    if subject != "album" && subject != "artist" {
+        return Err("artwork is of an album or an artist".into());
+    }
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        return Err("artwork needs something to be of".into());
+    }
+    db.put(&Artwork {
+        subject,
+        name,
+        file: file.trim().to_string(),
+        added_ms,
+        user_id: ctx.user.id.clone(),
     })?;
     Ok(())
 }
@@ -450,9 +498,11 @@ pub fn albums(db: &mut Db) -> Result<Vec<crate::schema::Album>> {
             .or_insert_with(|| (media.creator.clone(), 0));
         entry.1 += 1;
     }
+    let mut art = covers(db, "album");
     Ok(by_name
         .into_iter()
         .map(|(name, (creator, tracks))| crate::schema::Album {
+            art: art.remove(&name).unwrap_or_default(),
             name,
             creator,
             tracks,
@@ -467,10 +517,28 @@ pub fn artists(db: &mut Db) -> Result<Vec<crate::schema::Artist>> {
     for media in db.select(Media::all()) {
         *by_name.entry(media.creator).or_insert(0) += 1;
     }
+    let mut art = covers(db, "artist");
     Ok(by_name
         .into_iter()
-        .map(|(name, tracks)| crate::schema::Artist { name, tracks })
+        .map(|(name, tracks)| crate::schema::Artist {
+            art: art.remove(&name).unwrap_or_default(),
+            name,
+            tracks,
+        })
         .collect())
+}
+
+/// Every cover of one subject, by the name it belongs to.
+///
+/// One read for the whole list rather than one per album: a library with two
+/// hundred albums would otherwise be two hundred point lookups to draw a
+/// sidebar, and the rows are small.
+#[cfg(feature = "storage")]
+fn covers(db: &mut impl Store, subject: &str) -> BTreeMap<String, String> {
+    db.select(Artwork::all().filter(Artwork::subject.eq(subject.to_string())))
+        .into_iter()
+        .map(|a| (a.name, a.file))
+        .collect()
 }
 
 /// Every track that is on an album, and which one.

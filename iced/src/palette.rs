@@ -40,6 +40,35 @@ pub const LIGHT: Palette = Palette {
     danger: rgb(0xFF, 0x3B, 0x30),
 };
 
+/// Stand-in artwork, as the two stops of a gradient.
+///
+/// Nothing in the log carries a cover, and nothing should: `media`
+/// has a title, a creator, a length and the name of a file, and a
+/// picture would be a column every kind pays for so that one kind
+/// can have one. So a record's art is *derived* from its name, in
+/// [`crate::art`] — deterministically, so the same album is the same
+/// square on every device, which is most of what a cover does in a
+/// list.
+pub const DARK_ART: [[Color; 2]; 6] = [
+    [rgb(0x7A, 0x5C, 0x15), rgb(0x20, 0x19, 0x07)],
+    [rgb(0x8A, 0x6B, 0x22), rgb(0x1B, 0x15, 0x09)],
+    [rgb(0x6B, 0x5A, 0x2A), rgb(0x17, 0x14, 0x0B)],
+    [rgb(0x8F, 0x73, 0x27), rgb(0x22, 0x1B, 0x09)],
+    [rgb(0x5E, 0x4A, 0x18), rgb(0x14, 0x10, 0x07)],
+    [rgb(0xA0, 0x81, 0x37), rgb(0x26, 0x1E, 0x08)],
+];
+
+/// …and against white, where the pair has to stay dark enough that
+/// the note drawn on it reads.
+pub const LIGHT_ART: [[Color; 2]; 6] = [
+    [rgb(0xE8, 0xD1, 0x9A), rgb(0xC9, 0xA8, 0x5F)],
+    [rgb(0xEF, 0xDC, 0xAE), rgb(0xD2, 0xB3, 0x70)],
+    [rgb(0xE2, 0xD2, 0xAC), rgb(0xBF, 0xA6, 0x71)],
+    [rgb(0xF0, 0xDF, 0xA8), rgb(0xCB, 0xAA, 0x5C)],
+    [rgb(0xE6, 0xD0, 0xA0), rgb(0xC3, 0xA0, 0x5A)],
+    [rgb(0xF3, 0xE6, 0xBE), rgb(0xD6, 0xB8, 0x77)],
+];
+
 /// Ours, for whichever of the two iced picked.
 ///
 /// Generated once each rather than per widget per frame: `Extended`

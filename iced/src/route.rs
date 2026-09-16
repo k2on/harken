@@ -30,6 +30,11 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Route {
     Library,
+    /// The index pages: every album, and everyone who made something. They
+    /// carry no name because they *are* the whole list, which is also why they
+    /// are the two fragments with no `/` in them.
+    Albums,
+    Artists,
     Playlist(String),
     Album(String),
     Artist(String),
@@ -46,6 +51,8 @@ impl Route {
     pub fn fragment(&self) -> String {
         let (kind, name) = match self {
             Route::Library => return "#library".to_string(),
+            Route::Albums => return "#albums".to_string(),
+            Route::Artists => return "#artists".to_string(),
             Route::Playlist(name) => ("playlist", name),
             Route::Album(name) => ("album", name),
             Route::Artist(name) => ("artist", name),
@@ -61,7 +68,15 @@ impl Route {
         let body = fragment.trim_start_matches('#');
         let (kind, name) = match body.split_once('/') {
             Some(pair) => pair,
-            None => return Route::Library,
+            // The three that are a whole page rather than a page *about*
+            // something, so there is no name after a slash to read.
+            None => {
+                return match body {
+                    "albums" => Route::Albums,
+                    "artists" => Route::Artists,
+                    _ => Route::Library,
+                }
+            }
         };
         let name = decode(name);
         match kind {
