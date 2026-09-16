@@ -74,23 +74,33 @@ jobs:
         with:
           path: site
 
-      # **The reason this job has been building cold every single time.**
+      # **A run whose build fails cannot save its store, and says so as a
+      # warning.**
       #
       # `cache-nix-action` saves the store by handing the paths to `tar`, and
-      # nix leaves a `<derivation>.lock` in the store for every build it
-      # starts. They are mode 0600 and owned by root, so tar cannot open one —
-      # and tar does not skip what it cannot read, it exits 2:
+      # nix holds a `<derivation>.lock` in the store for a build in progress.
+      # It is mode 0600 and owned by root, so tar cannot open one — and tar
+      # does not skip what it cannot read, it exits 2:
       #
       #   tar: /nix/store/…-harken-cargo-vendor.lock: Cannot open: Permission denied
       #   tar: /nix/store/…-wasm-bindgen-cli-0.2.128.lock: Cannot open: Permission denied
       #   tar: Exiting with failure status due to previous errors
       #   ##[warning]Cache save failed.
       #
-      # A *warning*, so the job stays green and nothing says the cache is not
-      # being written. `android.yml` has carried this step since it hit the
-      # same thing; this job never got it, so every run since has rebuilt the
-      # toolchain and `wasm-bindgen-cli` from source. They are transient locks
-      # and nothing outlives the job that made them.
+      # Which run this bites is the part worth knowing. A build that *finishes*
+      # releases its locks, so a green run saves fine and this step is a no-op
+      # for it — run 56 did, without the step existing. A build that **fails**
+      # leaves the lock of whatever it died in the middle of, and that is
+      # precisely the run whose store is worth keeping: the next push is
+      # usually the fix, and without the save it rebuilds from nothing
+      # everything the failed run had already built. Run 55 died on a vendor
+      # hash and left the two locks above; run 56 then found no cache at all
+      # and spent 5m40s where run 58 spends 3m33s.
+      #
+      # It fails as a *warning*, so the job's own conclusion says nothing about
+      # it, and on a run that is already red there is no reason to look.
+      # `android.yml` has carried this step since it hit the same thing. They
+      # are transient locks and nothing outlives the job that made them.
       # Root the layers worth caching, or the gc below throws them away — the
       # same reason `android.yml` has this step, and the same failure: the one
       # root a build leaves is `result`, whose closure is the published page
