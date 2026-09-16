@@ -1712,6 +1712,17 @@ Three things that are each a decision:
   not go through `update`, so a cover that starts loading when it comes into
   view is a cover that is never there when you look at it. `want` is
   idempotent, which is what makes that affordable.
+- **The ask follows the library, not the wire, and getting that wrong showed
+  nothing at all.** The first version asked when a sync *arrived*, which is a
+  different question and was wrong in both directions: the demo has no server,
+  so nothing ever arrived and not one cover was ever fetched; and a real
+  client's first library comes out of opening its own database, before any
+  sync lands. `Peer::art_gen` is bumped whenever `reload_sidebar` rebuilds the
+  two lists and `App` compares it against what it last asked for — so the
+  trigger is the data changing, which is the thing that actually decides
+  whether there is a new cover to want. It costs one integer compare per
+  frame, where calling `want_covers` outright would walk every album and
+  artist twenty times a second.
 - **What is cached beyond the session is bytes, never handles.** A `Handle`
   holds decoded pixels and forty albums of those is tens of megabytes. The map
   is the session's; the disk is the machine's.

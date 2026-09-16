@@ -796,6 +796,14 @@ struct Peer {
     /// `#album/…` link against, now that no sidebar line carries one.
     albums: Vec<harken::Album>,
     artists: Vec<harken::Artist>,
+    /// Bumped whenever the two lists above are rebuilt.
+    ///
+    /// The App watches it to know when to ask for covers. It used to ask when
+    /// the *wire* brought something, which is not the same question and was
+    /// wrong in both directions: the demo has no server, so nothing ever
+    /// arrived and no cover was ever fetched; and a real client's first
+    /// library comes from opening the database, before any sync lands.
+    art_gen: u64,
     pending: usize,
 }
 
@@ -861,6 +869,8 @@ struct App {
     /// Cache API in a tab. Empty until something asks, which is what makes an
     /// album with no artwork cost nothing.
     covers: covers::Covers,
+    /// The `Peer::art_gen` the covers were last asked for.
+    art_seen: u64,
     /// The device picker, when it is up. `at` walks it like every other
     /// overlay; the last row is "nowhere".
     devices: Option<usize>,
@@ -922,6 +932,7 @@ impl Peer {
             choices: Vec::new(),
             albums: Vec::new(),
             artists: Vec::new(),
+            art_gen: 0,
             items: Vec::new(),
             pending: 0,
         };
@@ -1051,6 +1062,7 @@ impl Peer {
         self.choices = choices;
         self.albums = albums;
         self.artists = artists;
+        self.art_gen = self.art_gen.wrapping_add(1);
     }
 
     /// What is true of a track as a song, or nothing if its kind has none.
@@ -1227,6 +1239,7 @@ impl App {
                 queue: Vec::new(),
                 listening: listening::Remote::new(),
                 covers: covers::Covers::default(),
+                art_seen: 0,
                 devices: None,
                 login: Some(login),
                 server: String::new(),
@@ -1257,6 +1270,7 @@ impl App {
                 queue: Vec::new(),
                 listening: listening::Remote::new(),
                 covers: covers::Covers::default(),
+                art_seen: 0,
                 devices: None,
                 login: remembered::recall(&server),
                 server,
@@ -1994,7 +2008,24 @@ impl App {
     fn update(&mut self, message: Message) -> Task<Message> {
         let task = self.step(message);
         self.sync_route();
-        task
+        // Covers follow the *lists*, not the wire. `want_covers` is idempotent
+        // but it walks every album and artist to find that out, and this runs
+        // twenty times a second — so a generation the sidebar bumps decides,
+        // and the usual answer is that nothing happened.
+        Task::batch([task, self.want_covers_if_moved()])
+    }
+
+    /// Ask for covers when the library has been rebuilt since the last ask.
+    fn want_covers_if_moved(&mut self) -> Task<Message> {
+        let gen = match &self.peer {
+            Some(peer) => peer.art_gen,
+            None => return Task::none(),
+        };
+        if gen == self.art_seen {
+            return Task::none();
+        }
+        self.art_seen = gen;
+        self.want_covers()
     }
 
     /// Where the address bar is made to agree. Nothing else writes it.
@@ -2430,13 +2461,6 @@ impl App {
             // list moves only when something arrives from the server.
             if arrived {
                 peer.refresh();
-            }
-            // Only when the library moved. `want_covers` is idempotent but it
-            // walks every album and every artist to find that out, and the
-            // tick runs twenty times a second — so the cheap call is the one
-            // that is not made.
-            if arrived {
-                return self.want_covers();
             }
         }
         Task::none()
