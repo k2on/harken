@@ -22,7 +22,7 @@
 //!   would do nothing and there would be a device to pick before any music
 //!   could start, which is a setup step for the common case.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use harken::listening::{Command, Device, DeviceId, Hear, Session, Track};
 use tokio::sync::mpsc::UnboundedSender;
@@ -34,12 +34,18 @@ pub type Wire = UnboundedSender<Hear>;
 struct Room {
     session: Session,
     wires: HashMap<DeviceId, Wire>,
+    /// Which of those are *standing*: here because the house is, rather than
+    /// because somebody is looking at a screen. See [`Desk::stand`].
+    standing: HashSet<DeviceId>,
 }
 
 /// Every account's session. One of these per server, behind a mutex.
 #[derive(Default)]
 pub struct Desk {
     rooms: HashMap<String, Room>,
+    /// Told the account whenever a room opens, so whatever stands in every
+    /// room can stand in the new one.
+    watchers: Vec<UnboundedSender<String>>,
 }
 
 impl Desk {
@@ -55,15 +61,49 @@ impl Desk {
     /// output survives a reconnect, and a laptop that blinked does not hand
     /// the music to somebody else.
     pub fn join(&mut self, user: &str, device: Device, wire: Wire) {
+        let fresh = !self.rooms.contains_key(user);
         let room = self.rooms.entry(user.to_string()).or_insert_with(|| Room {
             session: Session::default(),
             wires: HashMap::new(),
+            standing: HashSet::new(),
         });
-        room.wires.insert(device.id.clone(), wire);
-        room.session.devices.retain(|d| d.id != device.id);
-        room.session.devices.push(device);
-        room.session.devices.sort_by(|a, b| a.name.cmp(&b.name));
-        room.broadcast();
+        room.standing.remove(&device.id);
+        room.add(device, wire);
+        if fresh {
+            // After the room exists, so that whatever answers this can stand
+            // in it straight away. A closed watcher is one that has gone.
+            self.watchers.retain(|w| w.send(user.to_string()).is_ok());
+        }
+    }
+
+    /// A device that is here because the *house* is: a speaker, offered to
+    /// every account that is listening.
+    ///
+    /// Two things make it different from a client, and both follow from that.
+    /// It does not open a room — a speaker is in the session when somebody is
+    /// listening, not the other way round — and it does not keep one alive, so
+    /// the last person leaving still takes the queue with them. Without the
+    /// second, a bridge standing in every room would mean no room was ever
+    /// empty and a phone opened tomorrow would resume an afternoon nobody
+    /// remembers.
+    pub fn stand(&mut self, user: &str, device: Device, wire: Wire) {
+        let Some(room) = self.rooms.get_mut(user) else {
+            return;
+        };
+        room.standing.insert(device.id.clone());
+        room.add(device, wire);
+    }
+
+    /// Be told the account whenever a room opens. The accounts already
+    /// listening come back at once, so a watcher registered late is not a
+    /// watcher that missed them.
+    pub fn watch(&mut self, tx: UnboundedSender<String>) {
+        for user in self.rooms.keys() {
+            if tx.send(user.clone()).is_err() {
+                return;
+            }
+        }
+        self.watchers.push(tx);
     }
 
     /// A device goes. If it was the output, nothing is playing anywhere —
@@ -74,15 +114,18 @@ impl Desk {
             return;
         };
         room.wires.remove(device);
+        room.standing.remove(device);
         room.session.devices.retain(|d| d.id != device);
         if room.session.outputs(device) {
             room.session.output = None;
             room.session.playing = false;
         }
-        if room.wires.is_empty() {
-            // Nobody is listening and nothing is playing. Keeping the queue
-            // would mean a phone opened tomorrow resumes an afternoon nobody
-            // remembers — and the log is where things are kept.
+        // Counted on the *clients*: a speaker standing in the room is not
+        // somebody listening, and a room kept alive by one would keep its
+        // queue for ever. Keeping the queue would mean a phone opened tomorrow
+        // resumes an afternoon nobody remembers — and the log is where things
+        // are kept.
+        if room.wires.keys().all(|id| room.standing.contains(id)) {
             self.rooms.remove(user);
             return;
         }
@@ -189,6 +232,18 @@ impl Desk {
     /// How many accounts are listening.
     pub fn rooms(&self) -> usize {
         self.rooms.len()
+    }
+}
+
+impl Room {
+    /// Put a device in, replacing one of the same id — a reconnect, or a
+    /// speaker being offered to a room it is already in.
+    fn add(&mut self, device: Device, wire: Wire) {
+        self.wires.insert(device.id.clone(), wire);
+        self.session.devices.retain(|d| d.id != device.id);
+        self.session.devices.push(device);
+        self.session.devices.sort_by(|a, b| a.name.cmp(&b.name));
+        self.broadcast();
     }
 }
 
@@ -597,6 +652,108 @@ mod tests {
         desk.leave("alice", "laptop");
         assert!(desk.session("alice").is_none());
         assert_eq!(desk.rooms(), 0);
+    }
+
+    /// A speaker is offered to whoever is listening, and is not somebody
+    /// listening.
+    ///
+    /// Both halves matter. Without the first a speaker would belong to one
+    /// account, which is not what a speaker in a kitchen is; without the
+    /// second a bridge standing in every room would mean no room was ever
+    /// empty, and the queue a person left behind would still be there
+    /// tomorrow.
+    #[test]
+    fn a_standing_device_is_offered_to_a_room_and_does_not_keep_it_open() {
+        let mut desk = Desk::new();
+        let (watch, mut opened) = unbounded_channel::<String>();
+        desk.watch(watch);
+
+        let mut phone = join(&mut desk, "alice", "phone", true);
+        assert_eq!(
+            opened.try_recv().ok(),
+            Some("alice".to_string()),
+            "a room opened"
+        );
+
+        let (speaker, _kitchen) = {
+            let (tx, rx) = unbounded_channel();
+            desk.stand("alice", device("kitchen", true), tx);
+            (rx, ())
+        };
+        let seen = latest(&mut phone);
+        assert_eq!(seen.devices.len(), 2, "the phone can see the speaker");
+        let _ = speaker;
+
+        // The person leaves. The speaker is still standing there and the room
+        // goes anyway, because a speaker is not somebody listening.
+        desk.leave("alice", "phone");
+        assert!(desk.session("alice").is_none());
+        assert_eq!(desk.rooms(), 0);
+    }
+
+    /// …and a standing device cannot open one, because a speaker is in the
+    /// session when somebody is listening rather than the other way round.
+    #[test]
+    fn a_standing_device_does_not_open_a_room() {
+        let mut desk = Desk::new();
+        let (tx, _rx) = unbounded_channel();
+        desk.stand("alice", device("kitchen", true), tx);
+        assert!(desk.session("alice").is_none());
+        assert_eq!(desk.rooms(), 0);
+    }
+
+    /// A watcher registered after the fact is told about the rooms that are
+    /// already open, so a bridge that started late is not a bridge that
+    /// missed everyone.
+    #[test]
+    fn a_watcher_hears_about_the_rooms_that_are_already_open() {
+        let mut desk = Desk::new();
+        let _alice = join(&mut desk, "alice", "phone", true);
+        let _bob = join(&mut desk, "bob", "phone", true);
+
+        let (tx, mut rx) = unbounded_channel::<String>();
+        desk.watch(tx);
+        let mut told = Vec::new();
+        while let Ok(user) = rx.try_recv() {
+            told.push(user);
+        }
+        told.sort();
+        assert_eq!(told, ["alice", "bob"]);
+
+        // …and about the next one.
+        let _carol = join(&mut desk, "carol", "phone", true);
+        assert_eq!(rx.try_recv().ok(), Some("carol".to_string()));
+    }
+
+    /// A speaker can be the output like anything else, and the account that
+    /// left still stops it — the sound belongs to the session, not to the
+    /// hardware.
+    #[test]
+    fn a_standing_device_can_be_the_output() {
+        let mut desk = Desk::new();
+        let mut phone = join(&mut desk, "alice", "phone", true);
+        let (tx, mut speaker) = unbounded_channel();
+        desk.stand("alice", device("kitchen", true), tx);
+        desk.report("alice", "phone", vec![track("Air")], 0, true, 1_000);
+        drain(&mut phone);
+        drain(&mut speaker);
+
+        desk.transfer("alice", Some("kitchen".into()));
+        assert_eq!(
+            desk.session("alice").unwrap().output.as_deref(),
+            Some("kitchen")
+        );
+        assert!(drain(&mut speaker).iter().any(|m| matches!(
+            m,
+            Hear::Do {
+                command: Command::Start { .. }
+            }
+        )));
+
+        // The person goes. The speaker is still there and the session is not:
+        // a room with nobody in it is not a room.
+        desk.leave("alice", "phone");
+        assert!(desk.session("alice").is_none());
     }
 
     /// A reloaded tab is the same device, so it does not appear twice and does

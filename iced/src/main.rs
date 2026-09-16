@@ -305,15 +305,11 @@ impl Pane {
 /// wrong path with `index.html` and a 200 — so the element is handed HTML and
 /// reports only that the resource is "not suitable".
 fn media_url(server: &str, file: &str) -> String {
-    if file.is_empty() || file.starts_with("http://") || file.starts_with("https://") {
-        return file.to_string();
-    }
-    let mut url = format!("{}/media", server.trim_end_matches('/'));
-    for part in file.split('/') {
-        url.push('/');
-        encode(part, &mut url);
-    }
-    url
+    // The rule is the domain's, because `file`'s meaning is: a path every
+    // device joins to its own server. Three things do it now — this, the
+    // phone, and a speaker with no client at all — so it is written where the
+    // column is described rather than here.
+    harken::listening::url(server, file)
 }
 
 /// Percent-encode one path segment.

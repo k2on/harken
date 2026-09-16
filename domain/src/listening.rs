@@ -180,6 +180,47 @@ pub enum Hear {
     Do { command: Command },
 }
 
+/// Where a [`Track::file`] is, from where a server is.
+///
+/// The column has always been a *path*, and every device joins it to its own
+/// server — which is what makes a hand-off work between a phone on the LAN and
+/// a speaker that only knows an address on it. An absolute URL is already an
+/// answer and passes through, because the demo's library is Wikimedia links.
+///
+/// Here rather than in a client because there are three of them now — the
+/// browser, the phone, and a speaker that has no client at all — and the rule
+/// is the domain's: it is about what `file` means.
+pub fn url(base: &str, file: &str) -> String {
+    if file.is_empty() || file.starts_with("http://") || file.starts_with("https://") {
+        return file.to_string();
+    }
+    let mut out = format!("{}/media", base.trim_end_matches('/'));
+    for part in file.split('/') {
+        out.push('/');
+        encode_segment(part, &mut out);
+    }
+    out
+}
+
+/// Percent-encode one path segment.
+///
+/// Real libraries are full of spaces, ampersands and the occasional `#`, and a
+/// `#` is the one that is silently destructive: everything after it is a
+/// fragment, so the request goes out for a path that stops mid-filename and
+/// the server answers 404 — or worse, a single-page fallback answers 200 with
+/// HTML. Everything outside RFC 3986's unreserved set is escaped, which covers
+/// those and every non-ASCII byte.
+fn encode_segment(part: &str, out: &mut String) {
+    for b in part.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+}
+
 /// A frame, as it travels: JSON, in a text message.
 ///
 /// Here rather than at each end because the encoding is part of the protocol,
@@ -255,6 +296,33 @@ mod tests {
         let text = encode(&state);
         assert_eq!(decode::<Hear>(&text), Some(state));
         assert_eq!(decode::<Hear>("{}"), None, "not a frame this peer knows");
+    }
+
+    /// A path becomes a URL against whichever server is asking, and a URL is
+    /// already an answer.
+    #[test]
+    fn a_file_is_joined_to_the_server_that_is_asking() {
+        assert_eq!(
+            url("http://10.0.0.2:8787", "music/Bach/air.flac"),
+            "http://10.0.0.2:8787/media/music/Bach/air.flac"
+        );
+        assert_eq!(
+            url("https://harken.example.com/", "music/a.mp3"),
+            "https://harken.example.com/media/music/a.mp3",
+            "a trailing slash is not a second one"
+        );
+        // The characters a real library is full of, and the one that is
+        // silently destructive.
+        assert_eq!(
+            url("http://h", "music/Boléro & co/no #1.mp3"),
+            "http://h/media/music/Bol%C3%A9ro%20%26%20co/no%20%231.mp3"
+        );
+        // Already an answer, and not this server's to give.
+        assert_eq!(
+            url("http://h", "https://upload.wikimedia.org/x.mp3"),
+            "https://upload.wikimedia.org/x.mp3"
+        );
+        assert_eq!(url("http://h", ""), "", "nothing to stream is not a URL");
     }
 
     /// The one derived fact, and the one that decides whether a client makes a

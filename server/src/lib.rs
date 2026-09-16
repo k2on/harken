@@ -10,5 +10,6 @@
 //! Everything else the server does is wiring: mounting a handler, reading an
 //! environment variable, printing a line. That stays in `main.rs`.
 
+pub mod assistant;
 pub mod library;
 pub mod listening;
