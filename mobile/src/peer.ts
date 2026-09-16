@@ -28,9 +28,12 @@ import {
   PatchOp,
   type Album,
   type Artist,
+  type Composer,
   type Item,
   type PeerLike,
   type Playlist,
+  type Recording,
+  type Work,
 } from 'harken-native';
 
 import { before, install, watch } from './mutators';
@@ -63,7 +66,21 @@ export type Source =
   | { kind: 'library' }
   | { kind: 'playlist'; id: PlaylistId; name: string }
   | { kind: 'album'; name: string }
-  | { kind: 'artist'; name: string };
+  | { kind: 'artist'; name: string }
+  /**
+   * The three classical pages. `works` is one composer's, `work` is one
+   * work's recordings, and `recording` is the only one of the three that is a
+   * list of tracks — the other two are lists of something else, which is why
+   * the shelf carries `works` and `recordings` beside `shown`.
+   *
+   * `work` and `recording` carry a derived *key* rather than a name, because
+   * that is what identifies them: see `work_key` in the domain. It is still
+   * readable — `johann-sebastian-bach/bwv-988` — and `name` beside it is what
+   * the header draws.
+   */
+  | { kind: 'works'; name: string }
+  | { kind: 'work'; id: string; name: string }
+  | { kind: 'recording'; id: string; name: string };
 
 export function sourceTitle(source: Source): string {
   return source.kind === 'library' ? 'Library' : source.name;
@@ -88,6 +105,20 @@ type Shelf = {
   playlists: Playlist[];
   albums: Album[];
   artists: Artist[];
+  /**
+   * Everyone this library has a *work* by, which is not `artists`: that one is
+   * every `media.creator` for every kind and this is exactly the people some
+   * work is by. Empty for a library of pop and podcasts, and the shelf then
+   * draws no Composers section — the rule the desktop sidebar follows.
+   */
+  composers: Composer[];
+  /**
+   * What the current page shows when it is not a list of tracks: one
+   * composer's works, or one work's recordings. Beside `shown` and read at the
+   * same moment, for the same reason.
+   */
+  works: Work[];
+  recordings: Recording[];
   /** Which album each track is on, joined in memory while drawing.
    *
    *  A map beside the list rather than a field on `Item`, because `album`
@@ -105,6 +136,9 @@ const EMPTY: Shelf = {
   playlists: [],
   albums: [],
   artists: [],
+  composers: [],
+  works: [],
+  recordings: [],
   albumOf: {},
 };
 
@@ -266,7 +300,38 @@ export function usePeer(login: Login, server: string | null): Peer {
             ? client.playlist(where.id)
             : where.kind === 'album'
               ? client.album(kept.playlist, where.name)
-              : client.artist(kept.playlist, where.name);
+              : where.kind === 'artist'
+                ? client.artist(kept.playlist, where.name)
+                : where.kind === 'recording'
+                  ? // The one list in the domain ordered by the *work* rather
+                    // than by the release: a compilation puts the Moonlight's
+                    // first movement at track nine, and a page about the
+                    // sonata has to put it first.
+                    client.recording(kept.playlist, where.id)
+                  : // `works` and `work` are lists of something that is not a
+                    // track, so they draw from the two below and this is empty
+                    // rather than stale.
+                    [];
+
+      // A work page is reached by key, which is what makes a link to one
+      // work — so the work's own row is read by key too, rather than looked
+      // for in `works`, which holds one *composer's* list and is empty on a
+      // page nobody walked to. The desktop made exactly this mistake first.
+      const works =
+        where.kind === 'works'
+          ? client.works(where.name)
+          : where.kind === 'work'
+            ? client.work(where.id)
+            : [];
+      const recordings =
+        where.kind === 'work'
+          ? client.recordings(where.id)
+          : where.kind === 'recording'
+            ? // The work's key is everything before the `@` — see
+              // `recording_key` — which is what lets this page find its own
+              // row from the id alone.
+              client.recordings(where.id.split('@')[0] ?? '')
+            : [];
 
       return {
         items,
@@ -276,6 +341,9 @@ export function usePeer(login: Login, server: string | null): Peer {
         playlists,
         albums: client.albums(),
         artists: client.artists(),
+        composers: client.composers(),
+        works,
+        recordings,
         albumOf,
       };
     },
@@ -375,4 +443,4 @@ export function usePeer(login: Login, server: string | null): Peer {
 
 /** The four kinds of id this file hands back out, for a screen that wants to
  *  say what it is holding. */
-export type { Album, Artist, Item, MediaId, Playlist, PlaylistId };
+export type { Album, Artist, Composer, Item, MediaId, Playlist, PlaylistId, Recording, Work };

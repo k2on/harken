@@ -78,8 +78,11 @@ mobile/                  the phone client; src/ is UI and a socket, nothing else
                          player and the tab bar, over one `Stack`
   src/app/(app)/home.tsx     …blank, and saying why
   src/app/(app)/search.tsx   …the library, filtered, locally
-  src/app/(app)/library.tsx  …playlists, albums, artists
-  src/app/(app)/list.tsx     …and the one page all four of those open
+  src/app/(app)/library.tsx  …playlists, albums, artists, composers — each
+                         section drawn only when it has rows behind it
+  src/app/(app)/browse.tsx   …a composer's works, and a work's recordings:
+                         the two pages that are not lists of tracks
+  src/app/(app)/list.tsx     …and the one page everything else opens
   src/peer.ts            the database, the maintained library, and what a
                          screen may ask of either
   src/player.tsx         what is playing — `expo-audio`, the queue, the
@@ -2043,6 +2046,10 @@ into pages.
   unconditional because it is the library. `the_sidebar_only_offers_what_there_is`
   asserts both halves, and an empty library comes out as Songs and the
   Favorites playlist every peer makes on its first run.
+
+  **The phone follows the same rule**, as a `show` on each `Section` in
+  `library.tsx` — and it is the same rule rather than a second one because the
+  question it answers is the domain's: `composers()` is empty or it is not.
 - **A work's recordings are rows, not cards.** Every recording of one work has
   the same title and the same picture, so a grid of them is a grid of identical
   squares; what tells them apart is text — who played it, when, on what terms.

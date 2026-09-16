@@ -1,15 +1,21 @@
 /**
- * Your Library: playlists, albums, artists.
+ * Your Library: playlists, albums, artists, composers.
  *
- * Three sections of one scroll rather than three tabs, because they are three
- * answers to one question — "what have I got" — and the lists are short enough
- * to see at once. The order is the desktop sidebar's, from the same four
- * queries, because the folding lives in the domain: a client that grouped the
- * library itself would group it differently, and the two would disagree about
- * what an album is the first time one met a track with two artists.
+ * Sections of one scroll rather than tabs, because they are answers to one
+ * question — "what have I got" — and the lists are short enough to see at
+ * once. The order is the desktop sidebar's, from the same queries, because the
+ * folding lives in the domain: a client that grouped the library itself would
+ * group it differently, and the two would disagree about what an album is the
+ * first time one met a track with two artists.
  *
  * Every row here is a *page*, so tapping one pushes. Playing is what the pages
  * are for.
+ *
+ * **A section is drawn only when it has rows.** That is what lets one schema
+ * serve every genre: a library of pop has no works, so it has no Composers
+ * section, and a library of podcasts has no Albums either. The desktop
+ * sidebar follows the same rule, and an empty section is an answer to a
+ * question the library cannot answer.
  */
 
 import { useState } from 'react';
@@ -100,7 +106,7 @@ export default function Library() {
         ))}
       </Section>
 
-      <Section theme={theme} label="Albums">
+      <Section theme={theme} label="Albums" show={peer.albums.length > 0}>
         {peer.albums.map((album) => (
           <Row
             key={album.name}
@@ -117,7 +123,7 @@ export default function Library() {
         ))}
       </Section>
 
-      <Section theme={theme} label="Artists">
+      <Section theme={theme} label="Artists" show={peer.artists.length > 0}>
         {peer.artists.map((artist) => (
           <Row
             key={artist.name}
@@ -132,20 +138,55 @@ export default function Library() {
           />
         ))}
       </Section>
+
+      {/* Whose music this is, as opposed to who played it — which is what
+          `Artists` above answers. A work is by somebody and a recording is by
+          somebody else, and for three hundred years of music those are
+          different people. */}
+      <Section theme={theme} label="Composers" show={peer.composers.length > 0}>
+        {peer.composers.map((composer) => (
+          <Row
+            key={composer.name}
+            theme={theme}
+            icon="artist"
+            round
+            name={composer.name}
+            under={[
+              lifespan(composer.born, composer.died),
+              `${composer.works} ${composer.works === 1 ? 'work' : 'works'}`,
+            ]
+              .filter(Boolean)
+              .join(' · ')}
+            onPress={() =>
+              router.push({ pathname: '/browse', params: { kind: 'works', name: composer.name } })
+            }
+          />
+        ))}
+      </Section>
     </ScrollView>
   );
+}
+
+/** "1685–1750", or nothing at all when nobody has said. */
+function lifespan(born: number, died: number): string {
+  if (born === 0 && died === 0) return '';
+  return `${born || ''}–${died || ''}`;
 }
 
 function Section({
   theme,
   label,
+  show = true,
   children,
 }: {
   theme: Theme;
   label: string;
+  /** Drawn only when there is something under it. See the note at the top. */
+  show?: boolean;
   children: React.ReactNode;
 }) {
   const s = styles(theme);
+  if (!show) return null;
   return (
     <View style={s.section}>
       <Text style={s.sectionLabel}>{label}</Text>

@@ -40,6 +40,12 @@ export default function List() {
     }
     if (params.kind === 'album') return { kind: 'album', name };
     if (params.kind === 'artist') return { kind: 'artist', name };
+    // One performance, in the order the work goes. The id is the derived key
+    // `recording_key` made; the name is who played it, which is the only thing
+    // that tells two recordings of one work apart.
+    if (params.kind === 'recording' && params.id) {
+      return { kind: 'recording', id: params.id, name };
+    }
     return { kind: 'library' };
   }, [params.kind, params.id, params.name]);
 
@@ -125,6 +131,12 @@ const KIND: Record<Source['kind'], string> = {
   playlist: 'Playlist',
   album: 'Album',
   artist: 'Artist',
+  // `browse.tsx` draws the first two; they are here because `Source` is one
+  // type and a `Record` over it has to be total — which is what caught this
+  // file the moment the three were added.
+  works: 'Composer',
+  work: 'Work',
+  recording: 'Recording',
 };
 
 const styles = (t: Theme) =>
