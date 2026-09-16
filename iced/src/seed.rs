@@ -2308,6 +2308,109 @@ pub const MESSIAH: &[Seed] = &[
     },
 ];
 
+/// One picture, for an album or for a person.
+pub struct Art {
+    /// `"album"` or `"artist"`, spelt as `set_artwork` spells it.
+    pub subject: &'static str,
+    /// The name the tracks use. Artwork is keyed by name because neither an
+    /// album nor an artist is a row with an id to point at.
+    pub name: &'static str,
+    /// A Commons thumbnail, at 960px where the original is bigger. An absolute
+    /// URL, exactly as the recordings are — `media.file` and `artwork.file`
+    /// are the same kind of string and the client joins them the same way.
+    pub file: &'static str,
+}
+
+/// What a record and a person look like.
+///
+/// Nothing in the log carries a cover — `media` has a title, a creator, a
+/// length and a file — so these are `artwork` rows, keyed by the *name* the
+/// tracks use, and they arrive through `set_artwork` like any other mutation.
+/// The demo is the only place they are authored; a real library gets them from
+/// whoever runs it.
+///
+/// **Public domain, the same rule the recordings follow**, and chosen to be
+/// *of the work* rather than decorative: a painting of the occasion a suite was
+/// written for, the autograph of the piece, a first title page. A composer gets
+/// the portrait everyone knows him by.
+///
+/// **Most albums deliberately have none.** Commons has no usable image of the
+/// Goldberg title page or the Brandenburg dedication under a name a search
+/// finds, and inventing one — or hanging Bach's portrait on all four of his
+/// records, which would put four identical faces in one grid — would be worse
+/// than the square `art.rs` derives from the name. So eight of the twelve fall
+/// back to that, which is also the only way to see in the demo that the
+/// fallback is there.
+pub const ART: &[Art] = &[
+    // Haussmann's portrait, 1746
+    Art {
+        subject: "artist",
+        name: "Johann Sebastian Bach",
+        file: "https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Johann_Sebastian_Bach_1746.jpg/960px-Johann_Sebastian_Bach_1746.jpg",
+    },
+    // Balthasar Denner's portrait
+    Art {
+        subject: "artist",
+        name: "George Frideric Handel",
+        file: "https://upload.wikimedia.org/wikipedia/commons/thumb/f/fa/George_Frideric_Handel_by_Balthasar_Denner.jpg/960px-George_Frideric_Handel_by_Balthasar_Denner.jpg",
+    },
+    // Stieler's portrait, 1820
+    Art {
+        subject: "artist",
+        name: "Ludwig van Beethoven",
+        file: "https://upload.wikimedia.org/wikipedia/commons/thumb/6/6e/Joseph_Karl_Stieler%27s_Beethoven_mit_dem_Manuskript_der_Missa_solemnis.jpg/960px-Joseph_Karl_Stieler%27s_Beethoven_mit_dem_Manuskript_der_Missa_solemnis.jpg",
+    },
+    // Bisson's photograph, 1849
+    Art {
+        subject: "artist",
+        name: "Frédéric Chopin",
+        file: "https://upload.wikimedia.org/wikipedia/commons/thumb/3/36/Fr%C3%A9d%C3%A9ric_Chopin_by_Bisson%2C_1849.png/960px-Fr%C3%A9d%C3%A9ric_Chopin_by_Bisson%2C_1849.png",
+    },
+    // Rieder's portrait
+    Art {
+        subject: "artist",
+        name: "Franz Schubert",
+        file: "https://upload.wikimedia.org/wikipedia/commons/thumb/0/0d/Franz_Schubert_by_Wilhelm_August_Rieder_1875.jpg/960px-Franz_Schubert_by_Wilhelm_August_Rieder_1875.jpg",
+    },
+    // a photograph
+    Art {
+        subject: "artist",
+        name: "Johannes Brahms",
+        file: "https://upload.wikimedia.org/wikipedia/commons/thumb/1/15/JohannesBrahms.jpg/960px-JohannesBrahms.jpg",
+    },
+    // Nadar's photograph, c. 1908
+    Art {
+        subject: "artist",
+        name: "Claude Debussy",
+        file: "https://upload.wikimedia.org/wikipedia/commons/thumb/f/f9/Claude_Debussy_ca_1908%2C_foto_av_F%C3%A9lix_Nadar.jpg/960px-Claude_Debussy_ca_1908%2C_foto_av_F%C3%A9lix_Nadar.jpg",
+    },
+    // Hamman's painting of George I on the Thames — the occasion
+    // the suite was written for
+    Art {
+        subject: "album",
+        name: "Water Music",
+        file: "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a4/GeorgIvonGro%C3%9FbritannienGeorgFriedrichHaendelHamman.jpg/960px-GeorgIvonGro%C3%9FbritannienGeorgFriedrichHaendelHamman.jpg",
+    },
+    // the Für Elise autograph draft, Beethoven-Haus Bonn, 1810
+    Art {
+        subject: "album",
+        name: "Bagatelles",
+        file: "https://upload.wikimedia.org/wikipedia/commons/thumb/7/7e/F%C3%BCr_Elise_-_Beethoven-Haus_Bonn_Draft_%28BH_116%2C_1810%29_-_page_1.png/960px-F%C3%BCr_Elise_-_Beethoven-Haus_Bonn_Draft_%28BH_116%2C_1810%29_-_page_1.png",
+    },
+    // the Ballade No. 1 manuscript
+    Art {
+        subject: "album",
+        name: "Ballades",
+        file: "https://upload.wikimedia.org/wikipedia/commons/9/96/Chopin_Ballade_1.png",
+    },
+    // the title page
+    Art {
+        subject: "album",
+        name: "Messiah",
+        file: "https://upload.wikimedia.org/wikipedia/commons/7/71/Messiah-titlepage.jpg",
+    },
+];
+
 pub fn seed(peer: &mut Peer) {
     if !peer.items.is_empty() {
         return;
@@ -2547,6 +2650,17 @@ pub fn seed(peer: &mut Peer) {
                 format!("{} ({})", s.performer, s.licence)
             },
             s.bpm,
+        ));
+    }
+    // The pictures, after the tracks. `set_artwork` is keyed by a name, and a
+    // name is only worth anything once there is something called it — nothing
+    // enforces that, because the row would be perfectly valid either way, but
+    // a cover authored before its album is a cover nobody can see a reason for.
+    for a in ART {
+        let _ = peer.client.mutate(mutators::set_artwork(
+            a.subject.into(),
+            a.name.into(),
+            a.file.into(),
         ));
     }
     peer.refresh();
