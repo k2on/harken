@@ -31,6 +31,17 @@ serde_json.workspace = true
 # neither had: the artwork in the log is a JPEG or a PNG behind a URL, and
 # without it there is no widget that can put one on screen.
 iced = { workspace = true, features = ["smol", "svg", "image", "advanced"] }
+# Decoding a cover, on the thread that fetched it.
+#
+# Not for drawing — iced does that — but for doing it *early*. `Handle::from_bytes`
+# defers the decode to whichever frame first draws the image, which is a 1.2
+# megapixel JPEG decoded inside a frame and 4.8 MB of RGBA in the atlas for
+# something 132 pixels wide. This decodes and shrinks it where the fetch already
+# is, and iced gets pixels it can upload.
+#
+# Already in the tree: iced's own `image` feature is what puts it in `Cargo.lock`,
+# so this adds a dependency line and no crate.
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 # Fetching a cover, on a thread of its own.
 #
 # Blocking, and the same client the server's Home Assistant bridge uses, for

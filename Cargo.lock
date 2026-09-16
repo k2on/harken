@@ -1840,6 +1840,7 @@ dependencies = [
  "console_error_panic_hook",
  "harken",
  "iced",
+ "image",
  "js-sys",
  "petros",
  "petros-auth",
