@@ -246,35 +246,6 @@ impl Keys {
 /// axis for, which the caller may read as "this belongs to whatever contains
 /// me"; it clamps instead when the axis exists and the cursor is already at the
 /// end of it.
-pub trait Navigate {
-    /// How many cells the cursor can be on.
-    fn cells(&self) -> usize;
-
-    /// Where `motion` lands, starting from `from`.
-    fn step(&self, from: usize, motion: Motion) -> Option<usize>;
-
-    /// How far down its scrollable cell `at` sits: 0 at the top, 1 at the
-    /// bottom.
-    ///
-    /// Here rather than at the call site because it is the same question as
-    /// [`step`](Navigate::step) — "where is this cell?" — and the caller has
-    /// already said it does not know. It used to be `at / (cells - 1)` in
-    /// `App::reveal`, which is right for a column and wrong for a grid: the
-    /// first card of the last row of forty-in-six would scroll to 92% of the
-    /// way down instead of to the end, because six cells share one row and
-    /// only rows can be scrolled past.
-    ///
-    /// The default is the single-column answer, so a new shape that is one
-    /// gets it for free and a shape that is not has to say so.
-    fn progress(&self, at: usize) -> f32 {
-        let cells = self.cells();
-        if cells < 2 {
-            return 0.0;
-        }
-        (at as f32 / (cells - 1) as f32).clamp(0.0, 1.0)
-    }
-}
-
 /// Clamp a cell number to a shape that has `cells` of them.
 fn clamp(at: usize, cells: usize) -> usize {
     at.min(cells.saturating_sub(1))
@@ -314,100 +285,57 @@ fn nth(n: usize, cells: usize) -> usize {
     clamp(n.saturating_sub(1), cells)
 }
 
-/// One column, top to bottom. `h` and `l` are always refused: a list has no
-/// horizontal axis at all, so those keys are free to mean something to
-/// whatever holds it.
-#[derive(Debug, Clone, Copy)]
-pub struct List {
-    pub cells: usize,
-}
-
-impl Navigate for List {
-    fn cells(&self) -> usize {
-        self.cells
-    }
-
-    fn step(&self, from: usize, motion: Motion) -> Option<usize> {
-        match motion {
-            Motion::Down(n) => along(from, Way::On(n), self.cells),
-            Motion::Up(n) => along(from, Way::Back(n), self.cells),
-            Motion::Left(_) | Motion::Right(_) => None,
-            Motion::First => Some(0),
-            Motion::Last => Some(clamp(usize::MAX, self.cells)),
-            Motion::To(n) => Some(nth(n, self.cells)),
-        }
-    }
-}
-
-/// One row, left to right. The mirror of [`List`]: `j` and `k` are refused.
+/// Where the cursor can be, and how the cells are arranged: `columns` wide,
+/// filled left to right and then down, so cell `n` is at row `n / columns` and
+/// column `n % columns`.
 ///
-/// See the note on [`Grid`]: nothing in this window is laid out sideways
-/// either, since the now-playing bar stopped taking the cursor.
-#[allow(dead_code)]
-#[derive(Debug, Clone, Copy)]
-pub struct Row {
-    pub cells: usize,
-}
-
-impl Navigate for Row {
-    fn cells(&self) -> usize {
-        self.cells
-    }
-
-    fn step(&self, from: usize, motion: Motion) -> Option<usize> {
-        match motion {
-            Motion::Right(n) => along(from, Way::On(n), self.cells),
-            Motion::Left(n) => along(from, Way::Back(n), self.cells),
-            Motion::Down(_) | Motion::Up(_) => None,
-            Motion::First => Some(0),
-            Motion::Last => Some(clamp(usize::MAX, self.cells)),
-            Motion::To(n) => Some(nth(n, self.cells)),
-        }
-    }
-}
-
-/// `columns` wide, filled left to right and then down — so cell `n` is at row
-/// `n / columns` and column `n % columns`.
+/// **There is one shape, because a list and a row were special cases of it.**
+/// There used to be three — a `List` that refused `h` and `l`, a `Row` that
+/// refused `j` and `k`, and this — behind a `Navigate` trait so that a caller
+/// could hold whichever it had. All three were the same arithmetic:
+/// [`Grid::column`] is a grid one wide, where every cell is on the left edge
+/// and the right edge at once, so both horizontal motions refuse without a
+/// line of code saying so; [`Grid::row`] is a grid one tall, and the vertical
+/// pair go the same way. Deleting the other two deleted the trait with them,
+/// and a `Box<dyn Navigate>` per keypress with it.
 ///
-/// What the album and artist index pages are. It had no caller for a long
-/// time and was kept because a hook with one implementation is not a hook:
-/// [`List`] alone could not tell you whether [`Navigate`] was a general shape
-/// or a description of the track list.
-///
-/// A grid is the shape that shows what the rule in [`along`] is for. It has
-/// both axes, so unlike a `List` it does not refuse `h` outright — but it
-/// still refuses it *at column zero*, which is what lets `h` walk out of a
-/// shelf of albums and back into the sidebar. It used to clamp there instead,
-/// and the result was a page the keyboard could enter and never leave.
+/// So a caller says how its view is laid out and nothing else. The rule in
+/// [`along`] does the rest.
 #[derive(Debug, Clone, Copy)]
 pub struct Grid {
     pub cells: usize,
     pub columns: usize,
 }
 
-impl Navigate for Grid {
-    fn cells(&self) -> usize {
-        self.cells
+impl Grid {
+    /// One column, top to bottom — a list. The sidebar, the track table, the
+    /// row menu, the playlist picker, the device picker.
+    pub fn column(cells: usize) -> Grid {
+        Grid { cells, columns: 1 }
     }
 
-    /// By row, because a row is what a grid scrolls past.
-    fn progress(&self, at: usize) -> f32 {
-        let columns = self.columns.max(1);
-        let rows = self.cells.div_ceil(columns);
-        if rows < 2 {
-            return 0.0;
+    /// One row, left to right. Nothing in this window is laid out sideways
+    /// since the now-playing bar stopped taking the cursor; it is here because
+    /// it costs a line and is the other degenerate case.
+    #[allow(dead_code)]
+    pub fn row(cells: usize) -> Grid {
+        Grid {
+            cells,
+            columns: cells.max(1),
         }
-        ((at / columns) as f32 / (rows - 1) as f32).clamp(0.0, 1.0)
     }
 
-    fn step(&self, from: usize, motion: Motion) -> Option<usize> {
+    /// Where `motion` lands, starting from `from`, or `None` when there is
+    /// nothing that way — which is what the caller reads as "then it belongs
+    /// to whichever pane is that way".
+    pub fn step(&self, from: usize, motion: Motion) -> Option<usize> {
         let columns = self.columns.max(1);
         let (row, column) = (from / columns, from % columns);
         // How many rows have anything in them, and how many cells this row has
         // — a short last row means a column can exist on one row and not the
         // next, and both edges have to be asked about the row they are on.
         let rows = self.cells.div_ceil(columns);
-        let here = (self.cells - row * columns).min(columns);
+        let here = (self.cells.saturating_sub(row * columns)).min(columns);
         match motion {
             // Down and up keep the column, which is what makes a grid feel
             // like a grid: the cursor travels in a straight line rather than
@@ -425,6 +353,22 @@ impl Navigate for Grid {
             Motion::Last => (self.cells > 0).then(|| self.cells - 1),
             Motion::To(n) => (self.cells > 0).then(|| nth(n, self.cells)),
         }
+    }
+
+    /// How far down its scrollable cell `at` sits: 0 at the top, 1 at the
+    /// bottom.
+    ///
+    /// By *row*, because a row is what a grid scrolls past. It used to be
+    /// `at / (cells - 1)` at the call site, which is the same answer for one
+    /// column and wrong for six: the first card of the last row of forty-in-six
+    /// scrolled to 92% of the way down instead of to the end.
+    pub fn progress(&self, at: usize) -> f32 {
+        let columns = self.columns.max(1);
+        let rows = self.cells.div_ceil(columns);
+        if rows < 2 {
+            return 0.0;
+        }
+        ((at / columns) as f32 / (rows - 1) as f32).clamp(0.0, 1.0)
     }
 }
 
@@ -511,7 +455,7 @@ mod tests {
     /// when the cursor is *already* at that edge.
     #[test]
     fn a_step_is_refused_only_at_the_edge_it_would_leave() {
-        let list = List { cells: 5 };
+        let list = Grid::column(5);
         assert_eq!(list.step(0, Motion::Down(2)), Some(2));
         // Three from the end with a count of nine: there was somewhere to go,
         // so it goes as far as it can rather than refusing.
@@ -526,26 +470,38 @@ mod tests {
         assert_eq!(list.step(2, Motion::First), Some(0));
         assert_eq!(list.step(2, Motion::Last), Some(4));
         assert_eq!(list.step(0, Motion::To(3)), Some(2), "cells count from one");
-        // A list has no horizontal axis at all, so `h` and `l` are refused
-        // wherever the cursor is — which is what frees them to mean "the pane
-        // that way".
-        assert_eq!(list.step(2, Motion::Left(1)), None);
-        assert_eq!(list.step(2, Motion::Right(1)), None);
     }
 
+    /// One column is a list, and it never had to be told to refuse `h` and
+    /// `l`: every cell in it is on the left edge and the right edge at once,
+    /// so the rule refuses both without a line of code about lists.
+    ///
+    /// This is what collapsed three shapes into one, so it is worth an
+    /// assertion rather than a comment.
     #[test]
-    fn a_row_is_a_list_on_its_side() {
-        let row = Row { cells: 3 };
+    fn one_column_refuses_the_horizontal_everywhere() {
+        let list = Grid::column(5);
+        for at in 0..5 {
+            assert_eq!(list.step(at, Motion::Left(1)), None, "cell {at}");
+            assert_eq!(list.step(at, Motion::Right(1)), None, "cell {at}");
+        }
+    }
+
+    /// …and one row is the same fact turned ninety degrees.
+    #[test]
+    fn one_row_refuses_the_vertical_everywhere() {
+        let row = Grid::row(3);
         assert_eq!(row.step(0, Motion::Right(2)), Some(2));
         assert_eq!(row.step(2, Motion::Right(1)), None, "nothing past the end");
         assert_eq!(row.step(0, Motion::Left(1)), None);
-        assert_eq!(row.step(0, Motion::Down(1)), None);
-        assert_eq!(row.step(0, Motion::Up(1)), None);
+        for at in 0..3 {
+            assert_eq!(row.step(at, Motion::Down(1)), None, "cell {at}");
+            assert_eq!(row.step(at, Motion::Up(1)), None, "cell {at}");
+        }
     }
 
-    /// A grid has both axes, so it answers `h` in the middle of a row — and
-    /// refuses it at column zero, which is how the cursor gets back out to the
-    /// sidebar. That one difference is the whole pane mechanism.
+    /// A grid with both axes answers `h` in the middle of a row and refuses it
+    /// at column zero, which is how the cursor gets back out to the sidebar.
     #[test]
     fn a_grid_answers_in_the_middle_and_refuses_at_its_edges() {
         //  0 1 2
@@ -595,7 +551,7 @@ mod tests {
         assert_eq!(grid.progress(6), 1.0, "the last row starts at the end");
         // The single-column default, which a grid had been borrowing: cell 6
         // of 8 is 86% of the way down a list and the end of this grid.
-        assert_eq!(List { cells: 8 }.progress(6), 6.0 / 7.0);
+        assert_eq!(Grid::column(8).progress(6), 6.0 / 7.0);
         // One row is no scroll at all, rather than a division by zero.
         assert_eq!(
             Grid {
@@ -609,12 +565,16 @@ mod tests {
 
     /// Nothing to point at is not somewhere to point: an empty shape refuses
     /// every motion rather than answering `Some(0)` for a cell it has not got.
+    ///
+    /// `List` used to answer `Some(0)` to `First` and `Last` when it was
+    /// empty, and `Grid` refused — one of the small disagreements that came
+    /// free of having three shapes. There is one answer now.
     #[test]
     fn an_empty_shape_has_nowhere_to_go() {
         for shape in [
-            &List { cells: 0 } as &dyn Navigate,
-            &Row { cells: 0 },
-            &Grid {
+            Grid::column(0),
+            Grid::row(0),
+            Grid {
                 cells: 0,
                 columns: 3,
             },
@@ -624,9 +584,13 @@ mod tests {
                 Motion::Up(1),
                 Motion::Left(1),
                 Motion::Right(1),
+                Motion::First,
+                Motion::Last,
+                Motion::To(1),
             ] {
                 assert_eq!(shape.step(0, m), None, "{m:?} on an empty shape");
             }
+            assert_eq!(shape.progress(0), 0.0);
         }
     }
 }

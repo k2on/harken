@@ -995,7 +995,7 @@ every row is one line. Four things about it are load-bearing:
 
   What replaced the heart is `a`, which is the same question the phone's sheet
   asks: every playlist, each ticked or not, and a last row that makes one. It
-  is one `vim::List` a row longer than the playlists, so `j` walks onto the
+  is one `vim::Grid::column` a cell longer than the playlists, so `j` walks onto the
   new-playlist row like anything else and `<Enter>` there starts naming — one
   shape, one cursor, and no second key to learn. `<Space>` is deliberately not
   bound inside it: the transport should not stop working because a panel is
@@ -1162,8 +1162,8 @@ Four things follow, and each is a decision:
 - **The index pages are the first `vim::Grid` caller** this program has had.
   CLAUDE.md said for a while that `Grid` was kept and tested without one,
   because a hook with one implementation is not a hook. A page laid out in
-  rows of cards is what `h` and `l` mean something on, and a `List` there would
-  *refuse* them and hand the cursor to the sidebar halfway along a shelf.
+  rows of cards is what `h` and `l` mean something on, and one column there
+  would refuse them and hand the cursor to the sidebar halfway along a shelf.
 - **How many cards fit is arithmetic, not a measurement.** `App::columns`
   divides the same width by the same card that `view_cards` does, from the
   same window size, for the reason `menu_origin` does: iced lays out after
@@ -1879,10 +1879,9 @@ others and mixing them is what makes keyboard code untestable:
 - **`Keys` turns presses into an `Action`.** It knows `5j` is five downs and
   `gg` is the top, and nothing about what is on screen. Tested by pressing
   letters at it.
-- **`Navigate` turns a `Motion` into a new cursor.** This is the hook: a
-  component says how many cells it has and where a motion lands, and gets
-  counts, `gg`, `G` and `{count}G` for free without ever seeing a key.
-  `List`, `Row` and `Grid` are the three shapes.
+- **`Grid` turns a `Motion` into a new cursor.** A component says how its view
+  is laid out — how many cells, how many columns — and gets counts, `gg`, `G`
+  and `{count}G` for free without ever seeing a key.
 - **`main.rs` does the rest** — which pane holds the cursor, what `Activate`
   means, what `/` matches against. None of that generalises, so none of it is
   in `vim.rs`.
@@ -1912,12 +1911,23 @@ for ever. One rule fixes it with no special case — a grid still answers `h` in
 the middle of a row and refuses it at column zero, which is exactly the
 boundary the sidebar is on the other side of.
 
-A list keeps refusing `h` and `l` wherever the cursor is, and that is the same
-rule rather than an exception: a list has no horizontal axis, so every column
-is its edge. The bar is the `Row`: `h` and `l` walk the transport, and `k` is
-what leaves it.
+**There is one shape, because a list and a row were special cases of it.**
+There used to be three — a `List` that refused `h` and `l`, a `Row` that
+refused `j` and `k`, and a `Grid` — behind a `Navigate` trait so a caller could
+hold whichever it had. All three were the same arithmetic. `Grid::column` is a
+grid one wide, where every cell is on the left edge and the right edge at
+once, so both horizontal motions refuse without a line of code saying "this
+one is a list"; `Grid::row` is a grid one tall and the vertical pair go the
+same way. Deleting the other two deleted the trait with them, and a
+`Box<dyn Navigate>` per keypress with it — thirty-six lines net, and one fewer
+place for two shapes to disagree.
 
-**`Navigate::progress` is the other half of "the shape knows".** Keeping the
+They did disagree, in a small way that came free of being separate: an empty
+`List` answered `Some(0)` to `gg` and `G` while an empty `Grid` refused. There
+is one answer now, and the empty-shape test asserts it for all three ways of
+writing a shape.
+
+**`Grid::progress` is the other half of "the shape knows".** Keeping the
 cursor on screen was `at / (cells - 1)` in `App::reveal`, which is right for a
 column and wrong for a grid — six cells share one row and only rows can be
 scrolled past, so the first card of the last row of forty-in-six scrolled to

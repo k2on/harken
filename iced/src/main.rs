@@ -1402,28 +1402,26 @@ impl App {
     /// The only place the application says "this one is a list and that one is
     /// a row". Everything else — counts, `gg`, whether `h` leaves the pane —
     /// falls out of the shape.
-    fn shape(&self, pane: Pane) -> Box<dyn vim::Navigate> {
+    fn shape(&self, pane: Pane) -> vim::Grid {
         let peer = self.peer.as_ref();
         match pane {
-            Pane::Sidebar => Box::new(vim::List {
-                cells: peer.map_or(0, |p| p.choices.len()),
-            }),
-            // The index pages are a grid, and the first caller `vim::Grid` has
-            // ever had: `h` and `l` mean something on a page laid out in rows
-            // of cards, and a `List` would refuse them and hand the cursor to
-            // the sidebar halfway along a shelf. Everything else is a list.
+            Pane::Sidebar => vim::Grid::column(peer.map_or(0, |p| p.choices.len())),
+            // The only pane that is ever more than one column: an index page
+            // is laid out in rows of cards, and saying so is the whole of what
+            // the keyboard needs to be told. `Grid::column` below is a list,
+            // and refuses `h` and `l` because every cell in one column is on
+            // both of its horizontal edges — not because anything here says
+            // "this one is a list".
             Pane::Tracks => match peer.map(|p| (&p.source, p)) {
-                Some((Source::Albums, p)) => Box::new(vim::Grid {
+                Some((Source::Albums, p)) => vim::Grid {
                     cells: p.albums.len(),
                     columns: self.columns(),
-                }),
-                Some((Source::Artists, p)) => Box::new(vim::Grid {
+                },
+                Some((Source::Artists, p)) => vim::Grid {
                     cells: p.artists.len(),
                     columns: self.columns(),
-                }),
-                _ => Box::new(vim::List {
-                    cells: peer.map_or(0, |p| p.rows().len()),
-                }),
+                },
+                _ => vim::Grid::column(peer.map_or(0, |p| p.rows().len())),
             },
         }
     }
@@ -1690,37 +1688,31 @@ impl App {
         self.land(pane, next)
     }
 
-    /// Open what the cursor is on.
-    /// Move inside the row menu, through the same `Navigate` everything else
-    /// here uses. Four entries at most, so it is the same `List` a hundred
+    /// Move inside the row menu, through the same shape everything else here
+    /// uses. Four entries at most, so it is the same one-column grid a hundred
     /// rows get.
     fn menu_travel(&mut self, motion: vim::Motion) -> Task<Message> {
-        use vim::Navigate;
         let Some(menu) = &mut self.menu else {
             return Task::none();
         };
-        let shape = vim::List {
-            cells: menu.entries().len(),
-        };
+        let shape = vim::Grid::column(menu.entries().len());
         if let Some(at) = shape.step(menu.at, motion) {
             menu.at = at;
         }
         Task::none()
     }
 
-    /// Move inside the picker, through the same `Navigate` the panes use.
+    /// Move inside the picker, through the same shape the panes use.
     ///
-    /// A `List` one longer than the playlists, because the row that makes one
-    /// is a row: `j` walks onto it like anything else and `<Enter>` there
-    /// starts naming. One shape, one cursor, nothing extra to learn.
+    /// One column, one cell longer than the playlists, because the row that
+    /// makes a new one is a row: `j` walks onto it like anything else and
+    /// `<Enter>` there starts naming. One shape, one cursor, nothing extra to
+    /// learn.
     fn picker_travel(&mut self, motion: vim::Motion) -> Task<Message> {
-        use vim::Navigate;
         let Some(picker) = &mut self.picker else {
             return Task::none();
         };
-        let shape = vim::List {
-            cells: picker.lists.len() + 1,
-        };
+        let shape = vim::Grid::column(picker.lists.len() + 1);
         if let Some(at) = shape.step(picker.at, motion) {
             picker.at = at;
         }
@@ -1734,12 +1726,11 @@ impl App {
     /// the last row is "stop everywhere" — the same shape the playlist picker
     /// has, so `j` reaches it without a second key to learn.
     fn devices_travel(&mut self, motion: vim::Motion) -> Task<Message> {
-        use vim::Navigate;
         let Some(at) = self.devices else {
             return Task::none();
         };
         let cells = self.listening.devices().len() + 1;
-        if let Some(next) = (vim::List { cells }).step(at, motion) {
+        if let Some(next) = vim::Grid::column(cells).step(at, motion) {
             self.devices = Some(next);
         }
         Task::none()
@@ -1811,6 +1802,7 @@ impl App {
         Task::none()
     }
 
+    /// Open what the cursor is on.
     fn activate(&mut self) -> Task<Message> {
         let at = self.at(self.pane);
         match self.pane {
