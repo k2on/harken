@@ -104,7 +104,7 @@ mobile/                  the phone client; src/ is UI and a socket, nothing else
 branding/                what the program looks like, once
   trumpet.svg            the mark: Pictogrammers' MDI glyph, vendored, Apache 2.0
   LICENSE.trumpet        …and its licence, kept beside it
-  nix/palette.nix        the colors — black, white, gold — and nothing else
+  nix/palette.nix        the colors — AppKit's greys and the gold — and nothing else
   nix/icon.nix           the angle, the centring, the ground, and every raster
   nix/default.nix        …written out as `palette.rs` and `palette.ts`
   nix/readme.nix         its section of README.md
@@ -2062,6 +2062,48 @@ first. The engine's own decisions are in `../petros/docs/decisions.md`.
   cannot, because `onAccent` has to be legible *on* it and nothing is legible
   on bright gold. That asymmetry is the only one, and it is in the branding so
   that it stays the only one.
+- **The greys are AppKit's, because the program this looks like is Music.app.**
+  Every neutral in `branding/nix/palette.nix` is now a named macOS system
+  color rather than one chosen here — `controlBackgroundColor` for the track
+  list, `underPageBackgroundColor` for the sidebar, `windowBackgroundColor`
+  for the toolbar, `unemphasizedSelectedContentBackgroundColor` for a
+  selection that has lost the keyboard, and the three ranks of `labelColor`
+  for the three ranks of text. Each is written beside its value so the next
+  person can check it against Apple instead of against taste.
+
+  What is *not* Apple's is the accent, and that is the point of taking the
+  rest: `controlAccentColor` is the system tint, which on a stock Mac is blue
+  and which Music.app fills its selected row and playing indicator with — and
+  that slot is the gold. Making the neutrals somebody else's decision is what
+  leaves the gold as the only thing in the window that is ours.
+
+  Three things worth knowing:
+
+  - **Some of these are alphas, and a generated palette cannot hand a client
+    a rule.** `labelColor` is white at 85%, `separatorColor` white at 10%;
+    what is in the file is each of them flattened over the plane it is
+    actually drawn on. So `text` on dark is `#DDDDDD` rather than `#FFFFFF`,
+    which is what a track title in Music.app really is, and `border` is one
+    value where AppKit gets a different one per plane.
+  - **The zebra lands on macOS's alternating row by arithmetic.** `row_style`
+    draws the odd row as `text` at 4.5% over `background`, which on this pair
+    is `#272727` dark and `#F5F5F5` light — against AppKit's own
+    `alternatingContentBackgroundColors`, about `#252525` and `#F4F5F5`.
+    Nobody tuned that. It falls out of using Apple's plane and Apple's label
+    together, and it is the tell that the two are quoted right.
+  - **The phone gets macOS's greys, not iOS's, and they are not the same
+    family.** iOS's page is `#000000` and its greys are cool (`#1C1C1E`,
+    `#2C2C2E`); AppKit's page is `#1E1E1E` and its greys are neutral. One
+    description for two clients means one of them is quoting the other
+    platform's system colors, and this is the direction that was asked for.
+
+  The app icon did **not** follow. Its ground is a gradient from `#1C1811`,
+  and `#1C1811` to `#1E1E1E` is two shades of one dark with no visible fade,
+  where `#1C1811` to `#050505` is the warm-to-black it was drawn as — so
+  `branding/nix/icon.nix` names its own `night` now. A launcher composites an
+  icon against a wallpaper rather than against the track list, so it never had
+  to agree with the window; it agreed by accident, and that is what ended.
+
 - **One description of what the program looks like, and it is not in either
   client.** The desktop asked iced for its Light and Dark and the phone kept
   its own tables, so "the gold" was two golds that were equal only while

@@ -35,6 +35,19 @@
       # mark is smaller there or a launcher nobody tested on cuts off the bell.
       safeScale = "8.646";
 
+      # The icon's ground, which used to end at `p.dark.bg` and now does not.
+      #
+      # A gradient needs somewhere to go. `#1C1811` to `#050505` is a warm
+      # near-black fading to black and you can see it; `#1C1811` to AppKit's
+      # `#1E1E1E` is two shades of the same dark and the gradient disappears —
+      # which is the whole thing an icon has that a flat rectangle does not.
+      # The two were one color while the window's background was a near-black
+      # chosen here, and they stopped being one when the window took Music's.
+      # A launcher composites this against a wallpaper anyway, not against the
+      # track list, so it never had to agree with the window in the first
+      # place; it agreed by accident, and that is what ended.
+      night = { from = "#1C1811"; to = "#050505"; };
+
       mark = { fill, at ? scale }: ''
         <g transform="translate(${toString centre.x} ${toString centre.y}) rotate(${angle}) scale(${at}) translate(-12 -12)"><path fill="${fill}" d="${glyph}"/></g>'';
 
@@ -62,13 +75,12 @@
 
       sheets = {
         # The app icon: the mark on its ground, one per theme.
-        icon-dark = svg (ground { from = "#1C1811"; to = p.dark.bg; }
-          + mark { fill = p.dark.accent; });
+        icon-dark = svg (ground night + mark { fill = p.dark.accent; });
         icon-light = svg (ground { from = p.light.bg; to = "#EFEADD"; }
           + mark { fill = p.light.accent; });
         # Android's adaptive icon is two layers, and the foreground is cropped.
         adaptive-foreground = svg (mark { fill = p.dark.accent; at = safeScale; });
-        adaptive-background = svg (ground { from = "#1C1811"; to = p.dark.bg; });
+        adaptive-background = svg (ground night);
         # …and a monochrome layer, which the launcher tints itself.
         adaptive-monochrome = svg (mark { fill = "#FFFFFF"; at = safeScale; });
         # The splash has no ground: Expo paints one behind it.
