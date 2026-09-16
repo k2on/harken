@@ -138,6 +138,13 @@
     {
       packages = {
         harken-web = mkWeb { pname = "harken-web"; features = ""; };
+        # Exposed so CI can gc-root it, which is the only reason: it is built
+        # from source against a vendored lockfile of its own, and a store that
+        # loses it rebuilds the whole thing. `android.yml` roots its layers by
+        # name for exactly this, and a `nix store gc --max` with nothing rooted
+        # keeps only `result` — whose closure is the page, not the tools that
+        # made it.
+        inherit wasm-bindgen-cli;
         # The standalone demo: no server, no sign-in, a seeded library. What
         # GitHub Pages serves. A separate build rather than a runtime flag, so
         # the real client cannot be put in this state by accident.

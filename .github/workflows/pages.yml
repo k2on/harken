@@ -31,6 +31,10 @@ permissions:
   contents: read
   pages: write
   id-token: write
+  # …and `actions: write`, which is what lets the purge below delete anything.
+  # Without it the purge logs "Failed to delete the cache" and the old ones
+  # accumulate against a quota this repository has no room to spare.
+  actions: write
 
 jobs:
   build:
@@ -38,10 +42,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: DeterminateSystems/nix-installer-action@main
+      # The run id is in the key because a GitHub cache key is immutable:
+      # whoever writes it first owns it until it expires. Without it the first
+      # run for a given lockfile owns that key forever — so a run cancelled
+      # thirty seconds in writes an empty store under it and every run after
+      # that "restores" nothing and cannot replace it. `android.yml` learned
+      # this the same way and the shape here is its shape: a key per run, made
+      # reusable by the prefixes, preferring the newest run with this lockfile
+      # and falling back to any run at all.
       - uses: nix-community/cache-nix-action/restore@v7
+        id: nix-store-cache
         with:
-          primary-key: pages-${{ runner.os }}-${{ hashFiles('flake.lock', 'Cargo.lock') }}
-          restore-prefixes-first-match: pages-${{ runner.os }}-
+          primary-key: pages-${{ runner.os }}-${{ hashFiles('flake.lock', 'Cargo.lock') }}-${{ github.run_id }}
+          restore-prefixes-first-match: |
+            pages-${{ runner.os }}-${{ hashFiles('flake.lock', 'Cargo.lock') }}-
+            pages-${{ runner.os }}-
 
       - name: Build the demo
         run: nix build .#harken-demo --print-build-logs
@@ -59,11 +74,57 @@ jobs:
         with:
           path: site
 
+      # **The reason this job has been building cold every single time.**
+      #
+      # `cache-nix-action` saves the store by handing the paths to `tar`, and
+      # nix leaves a `<derivation>.lock` in the store for every build it
+      # starts. They are mode 0600 and owned by root, so tar cannot open one —
+      # and tar does not skip what it cannot read, it exits 2:
+      #
+      #   tar: /nix/store/…-harken-cargo-vendor.lock: Cannot open: Permission denied
+      #   tar: /nix/store/…-wasm-bindgen-cli-0.2.128.lock: Cannot open: Permission denied
+      #   tar: Exiting with failure status due to previous errors
+      #   ##[warning]Cache save failed.
+      #
+      # A *warning*, so the job stays green and nothing says the cache is not
+      # being written. `android.yml` has carried this step since it hit the
+      # same thing; this job never got it, so every run since has rebuilt the
+      # toolchain and `wasm-bindgen-cli` from source. They are transient locks
+      # and nothing outlives the job that made them.
+      # Root the layers worth caching, or the gc below throws them away — the
+      # same reason `android.yml` has this step, and the same failure: the one
+      # root a build leaves is `result`, whose closure is the published page
+      # and contains no Rust at all. The cap has not bitten yet because the
+      # store comes out under it; the day it does, an unrooted store is
+      # collected down to the site and the cache saved is worth nothing.
+      - name: Keep the layers worth caching
+        if: ${{ !cancelled() }}
+        run: |
+          for a in rust-toolchain cargo-vendor wasm-bindgen-cli harken-demo; do
+            nix build -o "$RUNNER_TEMP/gcroot-$a" ".#$a" || true
+          done
+
+      - name: Drop nix's build locks so the store can be tarred
+        if: ${{ !cancelled() }}
+        run: sudo rm -f /nix/store/*.lock
+
+      # `!cancelled()` rather than `always()`, for the reason the key has a run
+      # id in it: a killed run's store is whatever it managed in the seconds it
+      # had, and saving that is how a key gets squatted.
+      #
+      # `purge` keeps exactly one of these. Two workflows share this
+      # repository's 10 GB cache quota and `android` alone saves about 8.5 GB
+      # of it, so a second `pages-` cache lying around is the difference
+      # between both fitting and both being evicted.
       - uses: nix-community/cache-nix-action/save@v7
-        if: always()
+        if: ${{ !cancelled() }}
         with:
-          primary-key: pages-${{ runner.os }}-${{ hashFiles('flake.lock', 'Cargo.lock') }}
+          primary-key: ${{ steps.nix-store-cache.outputs.primary-key }}
           gc-max-store-size-linux: 8G
+          purge: true
+          purge-prefixes: pages-${{ runner.os }}-
+          purge-created: 0
+          purge-primary-key: never
 
   deploy:
     needs: build

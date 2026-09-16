@@ -1,7 +1,7 @@
 # The domain: the crate whose mutations are the wasm module, and the
 # workspace's vendored dependencies.
 {
-  perSystem = { script, ... }: {
+  perSystem = { script, toolchain, sources, ... }: {
     petros = {
       # The hash of `cargo vendor` over `Cargo.lock`; nix prints the right one
       # when the lock moves.
@@ -27,6 +27,19 @@
       # Beside the domain rather than at the root, because it describes what is
       # in `functions.rs`. `nix flake check` holds every build to it.
       mutators.log = "domain/mutations.txt";
+    };
+
+    # Exposed so CI can gc-root them, which is the only reason either is here.
+    #
+    # `nix store gc --max` keeps what is reachable from a root, and the one
+    # root a build leaves is `result` — whose closure is the thing built and
+    # not the toolchain that built it. So a store trimmed to its cap loses the
+    # Rust toolchain and the vendored crates and the next run downloads both
+    # again, which is the trap `android.yml`'s "Keep the layers worth caching"
+    # exists for. These are that list, for the jobs that are not Android.
+    packages = {
+      rust-toolchain = toolchain;
+      cargo-vendor = sources.cargoDeps;
     };
 
     # Where the time goes in one mutation. Not part of the suite: it is a
