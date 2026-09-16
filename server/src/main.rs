@@ -34,6 +34,7 @@ use axum::extract::State;
 use axum::routing::get;
 use axum::Router;
 use harken::HarkenApp;
+use harken_server::assistant::ha;
 use harken_server::listening::route::{listen, Listening};
 use harken_server::{library, listening};
 use petros_auth::oidc::Provider;
@@ -118,6 +119,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         app = app.nest_service("/media", ServeDir::new(dir));
     }
 
+    // The house, if there is one. Every `media_player` Home Assistant knows
+    // about becomes a device in every listening session — a Sonos, a
+    // Chromecast, a television — because a speaker is a device and nothing in
+    // the protocol says the far end has to be somebody's screen.
+    //
+    // Kept alive for the life of the process: dropping it stops the bridge.
+    let _assistant = match assistant()? {
+        Some(config) => {
+            println!("  {} player(s) from {}", config.players.len(), config.url);
+            Some(ha::start(config, desk.clone()))
+        }
+        None => None,
+    };
+
     // Kept alive for the life of the process: dropping it stops the watch.
     let _scanner = match &media {
         Some(dir) => Some(library::Scanner::start(
@@ -170,6 +185,78 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
         .await?;
     Ok(())
+}
+
+/// The house, from the environment, or nothing.
+///
+/// All four together or none of them, the way the OpenID Connect three are:
+/// half a configuration is a server that starts and quietly does not do the
+/// thing it was configured for.
+///
+/// The token is a *file* for the same reason the client secret is — systemd
+/// hands it over as a credential, so it is never in a process listing, a unit
+/// file or a store path.
+fn assistant() -> Result<Option<ha::Config>, Box<dyn std::error::Error>> {
+    let url = env("HARKEN_HA_URL");
+    let token_file = env("HARKEN_HA_TOKEN_FILE");
+    let players = env("HARKEN_HA_PLAYERS");
+    match (url, token_file, players) {
+        (Some(url), Some(file), Some(players)) => {
+            let token = std::fs::read_to_string(&file)
+                .map_err(|e| format!("cannot read HARKEN_HA_TOKEN_FILE {file}: {e}"))?
+                .trim()
+                .to_string();
+            // `media_player.kitchen=Kitchen,media_player.study` — a name after
+            // an `=` when the entity id is not what you would call it out
+            // loud, and the id itself when it is.
+            let players = players
+                .split(',')
+                .map(str::trim)
+                .filter(|p| !p.is_empty())
+                .map(|p| match p.split_once('=') {
+                    Some((id, name)) => (id.trim().to_string(), name.trim().to_string()),
+                    None => (p.to_string(), pretty(p)),
+                })
+                .collect::<Vec<_>>();
+            if players.is_empty() {
+                return Err("HARKEN_HA_PLAYERS names no players".into());
+            }
+            // Where a *speaker* fetches from, which is not necessarily where a
+            // phone does: the phone may be on a public address while the
+            // speaker only knows one on the LAN.
+            let media = env("HARKEN_HA_MEDIA")
+                .or_else(|| env("HARKEN_PUBLIC_URL"))
+                .ok_or("HARKEN_HA_MEDIA: speakers need an address they can fetch bytes from")?;
+            Ok(Some(ha::Config {
+                url,
+                token,
+                players,
+                media,
+            }))
+        }
+        (None, None, None) => Ok(None),
+        _ => Err(
+            "HARKEN_HA_URL, HARKEN_HA_TOKEN_FILE and HARKEN_HA_PLAYERS go together; \
+                  set all three"
+                .into(),
+        ),
+    }
+}
+
+/// `media_player.the_kitchen` as `The kitchen`. A guess, and overridden by
+/// writing the name out — but a picker full of entity ids is a picker for
+/// somebody who already knows what is in their house.
+fn pretty(entity: &str) -> String {
+    let tail = entity
+        .rsplit('.')
+        .next()
+        .unwrap_or(entity)
+        .replace('_', " ");
+    let mut chars = tail.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        None => entity.to_string(),
+    }
 }
 
 /// How people sign in, from the environment: a provider, or a laptop.

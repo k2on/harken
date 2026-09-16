@@ -234,6 +234,12 @@ impl Bridge {
         })
     }
 
+    /// Whether anybody has handed this speaker something. Only those are
+    /// worth asking Home Assistant about.
+    pub fn holds(&self, entity: &str) -> bool {
+        self.held.contains_key(entity)
+    }
+
     /// The speaker is gone — unavailable, or the room it was in has closed.
     pub fn forget(&mut self, entity: &str) {
         self.held.remove(entity);
@@ -469,5 +475,326 @@ mod tests {
             }],
             "the speaker's own next, because it was given the whole list"
         );
+    }
+}
+
+/// The socket half: one thread, Home Assistant's REST API, and the `Desk`.
+///
+/// Blocking and polled, on a thread of its own, exactly as the scanner's watch
+/// is. There is no async anywhere in this server's own code and a bridge to a
+/// house is not a reason to start — a handful of small requests a second on a
+/// LAN is not a problem worth a runtime.
+///
+/// It polls only the players it is *holding*: a speaker nobody in a session
+/// handed anything to costs nothing, and a server whose house is asleep makes
+/// no requests at all.
+pub mod ha {
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    use harken::listening::{Device, DeviceId, Hear};
+    use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
+
+    use super::{Act, Bridge, Playing, Said};
+    use crate::listening::Desk;
+
+    /// How often a held player is asked what it is doing. The same cadence the
+    /// clients report on, for the same reason: it is what keeps a scrubber
+    /// drawn from somewhere else honest.
+    const TICK: Duration = Duration::from_millis(1_000);
+
+    /// How much of a queue is pushed at a speaker. Enough that nobody reaches
+    /// the end of it by hand, and few enough that starting a track is not a
+    /// hundred service calls.
+    const WINDOW: usize = 200;
+
+    /// What the server was told about the house.
+    pub struct Config {
+        /// Where Home Assistant is, e.g. `http://homeassistant.local:8123`.
+        pub url: String,
+        /// A long-lived access token. A file on disk, read by the caller —
+        /// never a store path and never an argument.
+        pub token: String,
+        /// Which entities to offer, and what to call them.
+        pub players: Vec<(String, String)>,
+        /// Where a *speaker* fetches bytes from, which is not where a phone
+        /// does: the phone may be on `https://harken.example.com` while the
+        /// speaker only knows an address on the LAN.
+        pub media: String,
+    }
+
+    /// Kept alive for the life of the process; dropping it stops the bridge.
+    pub struct Assistant {
+        stop: Arc<Mutex<bool>>,
+    }
+
+    impl Drop for Assistant {
+        fn drop(&mut self) {
+            if let Ok(mut stop) = self.stop.lock() {
+                *stop = true;
+            }
+        }
+    }
+
+    /// Offer the house's players to every account that is listening.
+    pub fn start(config: Config, desk: Arc<Mutex<Desk>>) -> Assistant {
+        let players: Vec<Device> = config
+            .players
+            .iter()
+            .map(|(id, name)| Device {
+                id: id.clone(),
+                name: name.clone(),
+                // A speaker is a speaker. This is the whole reason it is worth
+                // being a device rather than a controller.
+                audible: true,
+            })
+            .collect();
+        let stop = Arc::new(Mutex::new(false));
+        let flag = stop.clone();
+        std::thread::spawn(move || {
+            let mut bridge = Bridge::new(players, &config.media);
+            let (tx, opened) = unbounded_channel::<String>();
+            if let Ok(mut desk) = desk.lock() {
+                desk.watch(tx);
+            }
+            run(&config, &mut bridge, &desk, opened, &flag);
+        });
+        Assistant { stop }
+    }
+
+    fn run(
+        config: &Config,
+        bridge: &mut Bridge,
+        desk: &Mutex<Desk>,
+        mut opened: UnboundedReceiver<String>,
+        stop: &Mutex<bool>,
+    ) {
+        // One receiver per room the speakers are standing in. The wires are
+        // dropped with the room, so a closed one is an account that has stopped
+        // listening — which is also when a speaker it was holding is let go.
+        let mut ears: HashMap<(String, DeviceId), UnboundedReceiver<Hear>> = HashMap::new();
+        loop {
+            if stop.lock().map(|s| *s).unwrap_or(true) {
+                return;
+            }
+            // Rooms that have opened since the last tick.
+            while let Ok(user) = opened.try_recv() {
+                for device in bridge.devices().to_vec() {
+                    let (tx, rx) = unbounded_channel();
+                    if let Ok(mut desk) = desk.lock() {
+                        desk.stand(&user, device.clone(), tx);
+                    }
+                    ears.insert((user.clone(), device.id.clone()), rx);
+                }
+            }
+
+            // What those rooms have told the speakers to do.
+            let mut gone = Vec::new();
+            let mut acts = Vec::new();
+            for ((user, entity), rx) in ears.iter_mut() {
+                loop {
+                    match rx.try_recv() {
+                        Ok(Hear::Do { command }) => {
+                            acts.extend(bridge.told(user, entity, command));
+                        }
+                        // A `State` is this speaker being told what it already
+                        // said, and a `Denied` cannot reach a device that never
+                        // showed a token.
+                        Ok(_) => {}
+                        Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
+                        Err(_) => {
+                            gone.push((user.clone(), entity.clone()));
+                            break;
+                        }
+                    }
+                }
+            }
+            for (user, entity) in gone {
+                ears.remove(&(user, entity.clone()));
+                // The room closed while this speaker was playing its music.
+                // Nothing tells the speaker that, so this does.
+                bridge.forget(&entity);
+                call(config, &entity, "media_pause", None);
+            }
+            for act in acts {
+                perform(config, desk, act);
+            }
+
+            // …and what they are actually doing.
+            for entity in holding(bridge) {
+                match state(config, &entity) {
+                    Some(now) => {
+                        if let Some(said) = bridge.heard(&entity, &now) {
+                            report(desk, said);
+                        }
+                    }
+                    // Unreachable, unavailable, or renamed. Letting go is the
+                    // honest answer: a bar counting up for a speaker that is
+                    // not there is worse than one that stops.
+                    None => bridge.forget(&entity),
+                }
+            }
+
+            std::thread::sleep(TICK);
+        }
+    }
+
+    /// Which entities are worth asking about. A speaker nobody handed anything
+    /// to is not this server's business and is not polled.
+    fn holding(bridge: &Bridge) -> Vec<DeviceId> {
+        bridge
+            .devices()
+            .iter()
+            .map(|d| d.id.clone())
+            .filter(|id| bridge.holds(id))
+            .collect()
+    }
+
+    fn report(desk: &Mutex<Desk>, said: Said) {
+        if let Ok(mut desk) = desk.lock() {
+            desk.report(
+                &said.user,
+                &said.device,
+                said.queue,
+                said.at,
+                said.playing,
+                said.position_ms,
+            );
+        }
+    }
+
+    fn perform(config: &Config, desk: &Mutex<Desk>, act: Act) {
+        match act {
+            Act::Release { user } => {
+                // Somebody else has the speaker now. Their room is told rather
+                // than left drawing a transport for music it is not making.
+                if let Ok(mut desk) = desk.lock() {
+                    desk.transfer(&user, None);
+                }
+            }
+            Act::Verb { entity, verb } => {
+                call(config, &entity, verb, None);
+            }
+            Act::Seek {
+                entity,
+                position_ms,
+            } => {
+                call(
+                    config,
+                    &entity,
+                    "media_seek",
+                    Some(serde_json::json!({
+                        "seek_position": position_ms as f64 / 1000.0,
+                    })),
+                );
+            }
+            Act::Start {
+                entity,
+                urls,
+                at,
+                position_ms,
+                playing,
+            } => {
+                // The one it should be on replaces whatever was there, and the
+                // rest go after it — which is what leaves the speaker's own
+                // next and previous working, and the Sonos app with a queue in
+                // it. Previous walks back as far as the track you started
+                // from and no further; before that is harken's queue and not
+                // the speaker's, and asking for it is a fresh hand-off.
+                let Some(first) = urls.get(at) else {
+                    return;
+                };
+                if !call(config, &entity, "play_media", Some(media(first, "replace"))) {
+                    return;
+                }
+                for url in urls.iter().skip(at + 1).take(WINDOW) {
+                    call(config, &entity, "play_media", Some(media(url, "add")));
+                }
+                if position_ms > 0 {
+                    call(
+                        config,
+                        &entity,
+                        "media_seek",
+                        Some(serde_json::json!({
+                            "seek_position": position_ms as f64 / 1000.0,
+                        })),
+                    );
+                }
+                if !playing {
+                    call(config, &entity, "media_pause", None);
+                }
+            }
+        }
+    }
+
+    fn media(url: &str, enqueue: &str) -> serde_json::Value {
+        serde_json::json!({
+            "media_content_id": url,
+            // `music` rather than the file's own type: it is what every
+            // `media_player` platform understands, and the speaker sniffs the
+            // stream for the rest.
+            "media_content_type": "music",
+            "enqueue": enqueue,
+        })
+    }
+
+    /// Whether it went through, and nothing about why it did not. Nothing
+    /// here can act on the difference between a house that is asleep and one
+    /// that refused: both mean the speaker did not do it, and both are
+    /// answered by the next tick asking again.
+    fn call(
+        config: &Config,
+        entity: &str,
+        service: &str,
+        extra: Option<serde_json::Value>,
+    ) -> bool {
+        let mut body = serde_json::json!({ "entity_id": entity });
+        if let (Some(serde_json::Value::Object(extra)), Some(map)) = (extra, body.as_object_mut()) {
+            map.extend(extra);
+        }
+        ureq::post(&format!(
+            "{}/api/services/media_player/{service}",
+            config.url.trim_end_matches('/')
+        ))
+        .set("Authorization", &format!("Bearer {}", config.token))
+        .send_json(body)
+        .is_ok()
+    }
+
+    /// What one player is doing, or `None` if it will not say.
+    fn state(config: &Config, entity: &str) -> Option<Playing> {
+        let body: serde_json::Value = ureq::get(&format!(
+            "{}/api/states/{entity}",
+            config.url.trim_end_matches('/')
+        ))
+        .set("Authorization", &format!("Bearer {}", config.token))
+        .call()
+        .ok()?
+        .into_json()
+        .ok()?;
+        let state = body.get("state")?.as_str()?.to_string();
+        if state == "unavailable" || state == "unknown" {
+            return None;
+        }
+        let attrs = body.get("attributes")?;
+        Some(Playing {
+            state,
+            url: attrs
+                .get("media_content_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            // Home Assistant reports the position and *when it was measured*,
+            // so a player that has been running for thirty seconds without an
+            // update still knows where it is. Counting forward from that is
+            // the same extrapolation the clients do from a broadcast, and for
+            // the same reason.
+            position_ms: (attrs
+                .get("media_position")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0)
+                * 1000.0) as i64,
+        })
     }
 }

@@ -143,6 +143,83 @@
           '';
         };
 
+        homeAssistant = lib.mkOption {
+          default = null;
+          description = ''
+            The house's media players, as devices in every listening session.
+
+            A speaker is a *device*: it joins a session, becomes the output,
+            is told things and reports what it is doing, exactly as a phone
+            does. Which is why this is Home Assistant rather than Sonos — you
+            do not get Sonos, you get every `media_player` entity it knows
+            about, for the same six service calls.
+
+            The whole queue is pushed to the player, so its own buttons and
+            its own app keep working; where it is in that queue is then read
+            back from what it says it is playing. Somebody skipping on the
+            speaker moves every phone.
+          '';
+          example = lib.literalExpression ''
+            {
+              url = "http://homeassistant.local:8123";
+              tokenFile = "/run/secrets/harken-ha";
+              players = [ "media_player.kitchen" "media_player.study=Study" ];
+              mediaUrl = "http://10.0.0.2:8787";
+            }
+          '';
+          type = lib.types.nullOr (lib.types.submodule {
+            options = {
+              url = lib.mkOption {
+                type = lib.types.str;
+                example = "http://homeassistant.local:8123";
+                description = "Where Home Assistant is.";
+              };
+
+              tokenFile = lib.mkOption {
+                type = lib.types.path;
+                example = "/run/secrets/harken-ha";
+                description = ''
+                  A file holding a long-lived access token. A file rather
+                  than a string for the reason the OpenID Connect secret is
+                  one: systemd hands it over as a credential, so it is never
+                  in a process listing, a unit file or the store.
+                '';
+              };
+
+              players = lib.mkOption {
+                type = lib.types.listOf lib.types.str;
+                example = [ "media_player.kitchen" "media_player.study=The study" ];
+                description = ''
+                  Which entities to offer, and what to call them. `id=Name`
+                  when the entity id is not what you would say out loud, and
+                  the id alone when it is — `media_player.the_kitchen`
+                  becomes "The kitchen".
+
+                  Named rather than discovered, deliberately: a picker with
+                  every `media_player` in the house in it, including the
+                  television and the doorbell, is a picker nobody reads.
+                '';
+              };
+
+              mediaUrl = lib.mkOption {
+                type = lib.types.nullOr lib.types.str;
+                default = null;
+                example = "http://10.0.0.2:8787";
+                description = ''
+                  Where a *speaker* fetches bytes from, which is not
+                  necessarily where a phone does: the phone may be on
+                  `publicUrl` while the speaker only knows an address on the
+                  LAN. Falls back to `publicUrl`.
+
+                  Note that `/media` is served with no authentication at all,
+                  which is what lets a speaker fetch at all — so this wants to
+                  be an address only the house can reach.
+                '';
+              };
+            };
+          });
+        };
+
         mediaPath = lib.mkOption {
           type = lib.types.nullOr lib.types.path;
           default = "/srv/media";
@@ -194,14 +271,38 @@
       };
 
       config = lib.mkIf cfg.enable {
-        assertions = [{
-          assertion = cfg.oidc != null || cfg.devAuth;
-          message = ''
-            services.harken: nobody could sign in. Set services.harken.oidc
-            to an OpenID Connect provider, or services.harken.devAuth = true
-            on a machine nobody else can reach.
-          '';
-        }];
+        assertions = [
+          {
+            assertion = cfg.oidc != null || cfg.devAuth;
+            message = ''
+              services.harken: nobody could sign in. Set services.harken.oidc
+              to an OpenID Connect provider, or services.harken.devAuth = true
+              on a machine nobody else can reach.
+            '';
+          }
+          {
+            # The default `publicUrl` is loopback, because the default
+            # `address` is — which is right for a reverse proxy and useless
+            # to a speaker. A Sonos is a different computer, and being handed
+            # `http://127.0.0.1:8787/media/…` is the failure that looks like
+            # "the speaker plays nothing" and is really "the speaker fetched
+            # from itself".
+            assertion =
+              cfg.homeAssistant == null
+              || cfg.homeAssistant.mediaUrl != null
+              || !(
+                lib.hasInfix "127.0.0.1" cfg.publicUrl
+                || lib.hasInfix "localhost" cfg.publicUrl
+                || lib.hasInfix "0.0.0.0" cfg.publicUrl
+              );
+            message = ''
+              services.harken: the house's speakers would be told to fetch
+              from ${cfg.publicUrl}, which is this machine talking to itself.
+              Set services.harken.homeAssistant.mediaUrl to an address a
+              speaker can reach.
+            '';
+          }
+        ];
 
         # Made rather than required, so the default works on a machine where
         # nobody has put anything in it yet: an empty library is a library
@@ -235,13 +336,23 @@
             HARKEN_OIDC_CLIENT_SECRET_FILE = "%d/oidc-secret";
           } // lib.optionalAttrs cfg.devAuth {
             HARKEN_DEV_AUTH = "1";
-          };
+          } // lib.optionalAttrs (cfg.homeAssistant != null) {
+            HARKEN_HA_URL = cfg.homeAssistant.url;
+            HARKEN_HA_TOKEN_FILE = "%d/ha-token";
+            HARKEN_HA_PLAYERS = lib.concatStringsSep "," cfg.homeAssistant.players;
+          } // lib.optionalAttrs
+            (cfg.homeAssistant != null && cfg.homeAssistant.mediaUrl != null)
+            {
+              HARKEN_HA_MEDIA = cfg.homeAssistant.mediaUrl;
+            };
 
           serviceConfig = {
             ExecStart = "${lib.getExe cfg.package} ${cfg.address}:${toString cfg.port}";
             Restart = "on-failure";
-            LoadCredential = lib.optional (cfg.oidc != null)
-              "oidc-secret:${cfg.oidc.clientSecretFile}";
+            LoadCredential =
+              lib.optional (cfg.oidc != null) "oidc-secret:${cfg.oidc.clientSecretFile}"
+              ++ lib.optional (cfg.homeAssistant != null)
+                "ha-token:${cfg.homeAssistant.tokenFile}";
 
             # The log is the whole of the state, so it wants a real place
             # rather than the temp dir the demo uses. `TMPDIR` is what the

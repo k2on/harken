@@ -31,10 +31,15 @@ use crate::Id;
 
 /// One device, as everything here names it.
 ///
-/// It is the *login's* session id. `petros-auth` says a session is "one login
-/// on one device", which is exactly this and already exists — so a phone that
-/// reconnects is the same device it was, and signing out and back in is
-/// honestly a new one.
+/// Whatever names one output stably. For a client that is the *login's*
+/// session id — `petros-auth` says a session is "one login on one device",
+/// which is exactly this and already exists, so a phone that reconnects is
+/// the same device it was and signing out and back in is honestly a new one.
+///
+/// It is not always a login, and that is the point of saying it this way: a
+/// speaker in the kitchen has no login and is a device all the same. There it
+/// is the entity that names it — `media_player.kitchen` — because that is the
+/// thing that is still the same speaker tomorrow.
 pub type DeviceId = String;
 
 /// A track, carried rather than looked up.

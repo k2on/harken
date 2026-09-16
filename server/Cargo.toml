@@ -26,3 +26,13 @@ tower-http = { version = "0.6", features = ["fs"] }
 # does not wait for a rescan that may never come.
 lofty = "0.25"
 notify = { version = "8", default-features = false, features = ["macos_fsevent"] }
+# Home Assistant, over its REST API. Blocking and small, on a thread of its
+# own, exactly as the scanner's watch is — there is no async anywhere in this
+# server's own code and a bridge to a house is not a reason to start. The same
+# three crates the tree already carries: `ureq` is what `petros-auth` talks to
+# an identity provider with, pure-Rust TLS with the `ring` provider rather than
+# the default, because aws-lc wants cmake and a C toolchain in every sandbox
+# that builds this.
+ureq = { version = "2", default-features = false, features = ["tls", "json"] }
+serde = { workspace = true }
+serde_json = { workspace = true }

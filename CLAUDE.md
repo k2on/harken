@@ -42,6 +42,8 @@ server/                  axum, with one Petros handler mounted on it, and the
                          author what it finds
   src/listening.rs       one audio session per account: who is making the
                          sound, and the socket at /listen that relays it
+  src/assistant.rs       …and the house: every Home Assistant media_player as
+                         a device in it, over one thread and six service calls
   tests/library.rs       …a directory of real files becoming songs, once
   nix/default.nix        the package, `serve`, and the NixOS service — where
                          the OpenID Connect provider is configured
@@ -1510,6 +1512,81 @@ Three phone-specific things:
   the desktop and for the same reason: hiding the laptop would answer "where
   is my laptop" with silence, and "no audio device" is a different answer from
   "not here". The sheet says which.
+
+## A speaker is a device in the session, not a client of it
+
+`services.harken.homeAssistant` offers every `media_player` entity you name to
+every account that is listening. A Sonos becomes something you can pick in the
+play bar, hand the sound to, and take back.
+
+Nothing about the protocol changed, and that is the point: `harken::listening`
+already describes a device — it joins a room, becomes the output, is told
+things and reports what it is doing — and nothing in it says the far end has
+to be somebody's screen. What `server/src/assistant.rs` adds is the thing that
+*is* a device on a speaker's behalf.
+
+**Home Assistant rather than Sonos directly.** Not convenience: you do not get
+Sonos, you get every `media_player` in the house — a Chromecast, a television,
+an AirPlay receiver, a speaker group — for the same six service calls. Talking
+UPnP would buy one make of speaker and a discovery problem.
+
+**The queue is harken's and the position is the speaker's.** The list is
+enqueued rather than fed a track at a time, so the speaker's own buttons and
+the Sonos app keep working — and where it *is* in that list is read back from
+what it says it is playing. That is not two sources of truth; it is the rule
+the `Desk` already has, that the output reports and whoever is making the
+sound is right about it. Somebody pressing skip on the speaker moves every
+phone in the house.
+
+Six things that are each a decision:
+
+- **A standing device does not open a room and does not keep one alive.** A
+  speaker is in the session when somebody is listening, not the other way
+  round — and without the second half, a bridge standing in every room would
+  mean no room was ever empty, so the queue a person left behind would still
+  be there tomorrow. `Desk::stand` beside `Desk::join`, and the reap counts
+  the *client* wires.
+- **Two people can both take the kitchen, and the second one gets it.** A
+  speaker is one piece of hardware and a room is one account's, so the first
+  is *told* — `Act::Release`, which is a `transfer(user, None)` — rather than
+  left drawing a transport for somebody else's music. That is what a real
+  speaker does.
+- **A speaker playing something that is not ours is let go.** If it reports a
+  URL that is not in the queue it was given — a radio stream, a doorbell
+  chime — the session stops claiming it, because a bar with a scrubber
+  counting along somebody else's audio is a lie.
+- **Only a held player is polled.** A speaker nobody handed anything to costs
+  nothing, and a server whose house is asleep makes no requests at all.
+- **A speaker fetches from a different address than a phone.** `mediaUrl` is
+  its own option: the phone may be on `https://harken.example.com` while the
+  speaker only knows one on the LAN. The module *asserts* against the default,
+  because the default `publicUrl` is loopback — a Sonos handed
+  `http://127.0.0.1:8787/media/…` fetches from itself, and that presents as
+  "the speaker plays nothing".
+- **`/media` is served with no authentication at all.** That is what lets a
+  speaker fetch bytes, and it was true before any of this — worth writing down
+  now rather than discovering it later. On a LAN-bound server it is fine; the
+  moment the media route is really public, so is the library, and the fix is a
+  signed one-shot URL minted by the bridge so the speaker still needs no
+  token.
+
+`Bridge` owns no socket, for the reason `Desk` does not: every rule above is
+tested against values rather than a network, and the thread that polls Home
+Assistant is the thin part. Blocking `ureq` on a thread of its own, the same
+shape the scanner's watch has — there is no async in this server's own code
+and a bridge to a house is not a reason to start.
+
+**A device id is no longer always a login.** It was "one login on one device",
+which is exactly right for a client and meaningless for a speaker. It is
+"whatever names one output stably" now — `media_player.kitchen` for a speaker,
+a login's session id for a client.
+
+One limitation, honestly: **previous walks back only as far as the track you
+started from.** The window pushed at the speaker begins at `at`, so earlier
+tracks are in harken's queue and not the speaker's. Asking for one should be a
+fresh hand-off rather than a `media_previous_track`, and nothing does that
+yet. And none of this has been run against a real Home Assistant from here —
+the rules are tested, the six service calls are not.
 
 ## The media directory is a peer, and a rescan is free
 
