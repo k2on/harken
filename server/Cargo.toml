@@ -33,6 +33,6 @@ notify = { version = "8", default-features = false, features = ["macos_fsevent"]
 # an identity provider with, pure-Rust TLS with the `ring` provider rather than
 # the default, because aws-lc wants cmake and a C toolchain in every sandbox
 # that builds this.
-ureq = { version = "2", default-features = false, features = ["tls", "json"] }
+ureq = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

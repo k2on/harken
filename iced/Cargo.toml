@@ -27,7 +27,17 @@ serde_json.workspace = true
 #
 # `canvas` because the heart is a path: Fira Sans, which iced embeds, has no
 # U+2665, so the character would lay out fine and draw nothing at all.
-iced = { workspace = true, features = ["smol", "svg", "advanced"] }
+# `image` decodes a cover. It is the one feature both targets need and
+# neither had: the artwork in the log is a JPEG or a PNG behind a URL, and
+# without it there is no widget that can put one on screen.
+iced = { workspace = true, features = ["smol", "svg", "image", "advanced"] }
+# Fetching a cover, on a thread of its own.
+#
+# Blocking, and the same client the server's Home Assistant bridge uses, for
+# the same reason: there is no async runtime in this program and one cover is
+# not a reason to start. `covers.rs` hands the blocking call to a thread and
+# waits on a oneshot, which is what `iced::futures` is for.
+ureq = { workspace = true }
 
 # In a browser: a panic that reaches the console beats one that reports
 # "unreachable executed".
@@ -55,4 +65,8 @@ wasm-bindgen = "0.2"
 # falls back to its software renderer, and that cannot have the canvas because
 # WebGL already claimed it — which surfaces as a blank page and a panic about
 # canvas contexts.
-iced = { workspace = true, features = ["webgl", "svg", "advanced"] }
+iced = { workspace = true, features = ["webgl", "svg", "image", "advanced"] }
+# The browser half of the cover fetch: a promise from the snippet in
+# `covers.rs`, awaited, and the `Uint8Array` it resolves to copied out.
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"

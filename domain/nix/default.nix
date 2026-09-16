@@ -17,7 +17,7 @@
       # failure is nixpkgs' lockfile consistency check, which prints the diff
       # and no `got:`. Putting a hash nothing can have here is what forces the
       # fetch and gets the real one printed.
-      cargoVendorHash = "sha256-kO2gyBF8/T9uiQymtfSW2F/Mr3HAEAc44P22GGXaNuo=";
+      cargoVendorHash = "sha256-soTOJ7sscMc42wumJmR225OHjH4pFSCbyfO7YAhrmQQ=";
       mutators.crate = "harken";
       # Beside the domain rather than at the root, because it describes what is
       # in `functions.rs`. `nix flake check` holds every build to it.

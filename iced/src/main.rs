@@ -27,6 +27,7 @@
 //! two lines: where the database lives, and which transport carries the bytes.
 
 mod art;
+mod covers;
 mod icon;
 mod listening;
 mod palette;
@@ -43,7 +44,7 @@ use std::time::Duration;
 
 use harken::{self as mutators, HarkenApp, Item};
 use iced::widget::{
-    button, column, container, mouse_area, pin, row, rule, scrollable, slider, stack, text,
+    button, column, container, image, mouse_area, pin, row, rule, scrollable, slider, stack, text,
     text_input, Row,
 };
 use iced::{Element, Length, Subscription, Task};
@@ -385,6 +386,8 @@ enum Message {
     /// Make it. A blank name is refused by `apply`, not here.
     PickerCreate,
     ClosePicker,
+    /// A cover arrived, or did not.
+    Cover(covers::Loaded),
     /// A key nothing on screen wanted. See `subscription`.
     Key(iced::keyboard::Key, iced::keyboard::Modifiers),
     /// The window changed size. Only the menu cares.
@@ -730,6 +733,10 @@ struct Card {
     open: Source,
     /// A person is a circle and a record is a square.
     round: bool,
+    /// What `artwork` says, if anything — `media.file`'s spelling, joined to
+    /// this peer's server when it is drawn. Empty is the normal case and means
+    /// the derived square.
+    art: String,
 }
 
 /// A database, a socket, and what is maintained over them. Exists once
@@ -843,6 +850,10 @@ struct App {
     /// This account's listening session: every device signed in as this
     /// person, which one is making the sound, and what it is playing.
     listening: listening::Remote,
+    /// Covers, fetched once and kept: a directory on a desktop, the browser's
+    /// Cache API in a tab. Empty until something asks, which is what makes an
+    /// album with no artwork cost nothing.
+    covers: covers::Covers,
     /// The device picker, when it is up. `at` walks it like every other
     /// overlay; the last row is "nowhere".
     devices: Option<usize>,
@@ -1208,6 +1219,7 @@ impl App {
                 player: Player::new(),
                 queue: Vec::new(),
                 listening: listening::Remote::new(),
+                covers: covers::Covers::default(),
                 devices: None,
                 login: Some(login),
                 server: String::new(),
@@ -1237,6 +1249,7 @@ impl App {
                 player: Player::new(),
                 queue: Vec::new(),
                 listening: listening::Remote::new(),
+                covers: covers::Covers::default(),
                 devices: None,
                 login: remembered::recall(&server),
                 server,
@@ -1822,6 +1835,45 @@ impl App {
         }
     }
 
+    /// A cover's URL, from what the log carries.
+    ///
+    /// `artwork.file` is spelt exactly as `media.file` is, so this is the same
+    /// join the player already does — which is the point of spelling it that
+    /// way rather than inventing a second rule for pictures.
+    fn art_url(&self, art: &str) -> String {
+        if art.is_empty() {
+            return String::new();
+        }
+        media_url(&self.server, art)
+    }
+
+    /// Ask for every cover the two index pages would draw.
+    ///
+    /// All of them rather than the ones on screen, because scrolling does not
+    /// go through `update` and a cover that only starts loading once it is
+    /// visible is a cover that is never there when you look at it. `want` is
+    /// idempotent, so this is cheap to call whenever the library moves — the
+    /// second call for a URL returns `None` and nothing goes out.
+    fn want_covers(&mut self) -> Task<Message> {
+        let Some(peer) = &self.peer else {
+            return Task::none();
+        };
+        let urls: Vec<String> = peer
+            .albums
+            .iter()
+            .map(|a| a.art.clone())
+            .chain(peer.artists.iter().map(|a| a.art.clone()))
+            .filter(|art| !art.is_empty())
+            .map(|art| media_url(&self.server, &art))
+            .collect();
+        let tasks: Vec<Task<Message>> = urls
+            .into_iter()
+            .filter_map(|url| self.covers.want(url))
+            .map(|task| task.map(Message::Cover))
+            .collect();
+        Task::batch(tasks)
+    }
+
     /// The album or artist card at this position, if the page has cards.
     ///
     /// `None` on every other page, which is what lets one `<Enter>` mean "open
@@ -2017,6 +2069,10 @@ impl App {
             }
             Message::Resized(size) => {
                 self.window = size;
+                Ok(())
+            }
+            Message::Cover(done) => {
+                self.covers.loaded(done);
                 Ok(())
             }
             Message::Hover(at) => {
@@ -2317,8 +2373,12 @@ impl App {
                         peer.reload_shown();
                         if let Some(at) = at {
                             self.cursors[Pane::Sidebar as usize] = at;
-                            self.cursors[Pane::Tracks as usize] = 0;
                         }
+                        // Always, not only when the sidebar moved: an album
+                        // opened from a card is not a sidebar line, and
+                        // landing on row seventeen of a record you just opened
+                        // is a cursor that remembers the wrong list.
+                        self.cursors[Pane::Tracks as usize] = 0;
                         Ok(())
                     }
                     Message::ToggleLink => {
@@ -2362,6 +2422,13 @@ impl App {
             // list moves only when something arrives from the server.
             if arrived {
                 peer.refresh();
+            }
+            // Only when the library moved. `want_covers` is idempotent but it
+            // walks every album and every artist to find that out, and the
+            // tick runs twenty times a second — so the cheap call is the one
+            // that is not made.
+            if arrived {
+                return self.want_covers();
             }
         }
         Task::none()
@@ -2699,6 +2766,7 @@ impl App {
                         tally: a.tracks,
                         open: Source::Album(a.name.clone()),
                         round: false,
+                        art: a.art.clone(),
                     })
                     .collect(),
                 "No albums yet.",
@@ -2717,6 +2785,7 @@ impl App {
                         // the only thing telling the two grids apart at a
                         // glance.
                         round: true,
+                        art: a.art.clone(),
                     })
                     .collect(),
                 "Nobody yet.",
@@ -2729,6 +2798,7 @@ impl App {
                     "Album",
                     peer.rows(),
                     None,
+                    album.map(|a| a.art.as_str()).unwrap_or_default(),
                 );
                 column![header, self.view_list(peer)]
                     .spacing(0)
@@ -2737,7 +2807,13 @@ impl App {
             }
             Source::Artist(name) => {
                 let by = peer.albums_by(name);
-                let header = self.view_record(name, "", "Artist", peer.rows(), Some(by.len()));
+                let art = peer
+                    .artists
+                    .iter()
+                    .find(|a| a.name == *name)
+                    .map(|a| a.art.as_str())
+                    .unwrap_or_default();
+                let header = self.view_record(name, "", "Artist", peer.rows(), Some(by.len()), art);
                 column![header, self.view_list(peer)]
                     .spacing(0)
                     .width(Length::Fill)
@@ -2772,7 +2848,11 @@ impl App {
 
         let mut page = column![].spacing(Self::CARD_GAP);
         for (r, chunk) in cards.chunks(columns).enumerate() {
-            let mut line = row![].spacing(Self::CARD_GAP);
+            // Top-aligned, because a title that wrapped to two lines makes
+            // its card taller and centring would then float the short ones.
+            let mut line = row![]
+                .spacing(Self::CARD_GAP)
+                .align_y(iced::Alignment::Start);
             for (c, card) in chunk.iter().enumerate() {
                 let at = r * columns + c;
                 line = line.push(self.view_card(card, Some(at) == cursor));
@@ -2783,6 +2863,29 @@ impl App {
             .width(Length::Fill)
             .height(Length::Fill)
             .into()
+    }
+
+    /// The cover if one has arrived, and the derived square until then.
+    ///
+    /// One function, because every caller wants the same fallback and a caller
+    /// that forgot it would draw a hole. The square is not a placeholder to be
+    /// replaced by a spinner: it is right on its own, so a cover that never
+    /// comes costs nothing and one that does simply appears.
+    fn picture(&self, seed: &str, art: &str, side: f32, corner: f32) -> Element<'_, Message> {
+        let url = self.art_url(art);
+        match self.covers.handle(&url) {
+            Some(handle) => image(handle.clone())
+                .width(Length::Fixed(side))
+                .height(Length::Fixed(side))
+                // Cropped to the square rather than letterboxed: a cover is
+                // square and a photograph of a person is not, and a grid of
+                // cards with grey bars down the sides of half of them is a
+                // grid that looks broken.
+                .content_fit(iced::ContentFit::Cover)
+                .border_radius(corner)
+                .into(),
+            None => art::square::<Message>(seed, side, corner),
+        }
     }
 
     /// One card: the square, the name, and what is under it.
@@ -2796,10 +2899,15 @@ impl App {
         mouse_area(
             container(
                 column![
-                    art::square::<Message>(&card.seed, Self::CARD, corner),
+                    self.picture(&card.seed, &card.art, Self::CARD, corner),
+                    // Bounded, and allowed to wrap. Unbounded with
+                    // `Wrapping::None` the layout node is as wide as the text,
+                    // so "Goldberg Variations, BWV 988" ran straight through
+                    // the card beside it — two titles overlapping, which is
+                    // worse than either being cut.
                     text(card.title.clone())
                         .size(13)
-                        .wrapping(text::Wrapping::None)
+                        .width(Length::Fixed(Self::CARD))
                         .style(move |theme: &iced::Theme| text::Style {
                             color: Some(if on_cursor {
                                 palette::of(theme).primary.base.color
@@ -2807,11 +2915,11 @@ impl App {
                                 palette::of(theme).background.base.text
                             }),
                         }),
-                    text(under)
-                        .size(11)
-                        .style(|theme: &iced::Theme| text::Style {
+                    text(under).size(11).width(Length::Fixed(Self::CARD)).style(
+                        |theme: &iced::Theme| text::Style {
                             color: Some(palette::of(theme).background.base.text.scale_alpha(0.5)),
-                        }),
+                        }
+                    ),
                 ]
                 .spacing(4)
                 .width(Length::Fixed(Self::CARD)),
@@ -2839,6 +2947,7 @@ impl App {
         kind: &'static str,
         rows: &[Item],
         albums: Option<usize>,
+        art: &str,
     ) -> Element<'_, Message> {
         let tracks = rows.len() as i64;
         let ms: i64 = rows.iter().map(|i| i.duration_ms).sum();
@@ -2859,7 +2968,7 @@ impl App {
         let side = 116.0;
         container(
             row![
-                art::square::<Message>(name, side, if round { side / 2.0 } else { 8.0 }),
+                self.picture(name, art, side, if round { side / 2.0 } else { 8.0 }),
                 column![
                     text(kind)
                         .size(10)
@@ -2869,11 +2978,17 @@ impl App {
                     text(name.to_string())
                         .size(26)
                         .wrapping(text::Wrapping::None),
-                    text(under.to_string())
-                        .size(13)
-                        .style(|theme: &iced::Theme| text::Style {
-                            color: Some(palette::of(theme).primary.base.color),
-                        }),
+                    // The performer is the one thing on this page that is also
+                    // a *place*, so it is one: same accent, and a click goes
+                    // there.
+                    mouse_area(
+                        text(under.to_string())
+                            .size(13)
+                            .style(|theme: &iced::Theme| text::Style {
+                                color: Some(palette::of(theme).primary.base.color),
+                            },)
+                    )
+                    .on_press(Message::Select(Source::Artist(under.to_string()))),
                     text(facts)
                         .size(11)
                         .style(|theme: &iced::Theme| text::Style {
@@ -3050,17 +3165,25 @@ impl App {
         .width(Length::Fill)
         .padding([2, 4]);
 
+        // An album or an artist page opens with a header that already says the
+        // name and counts the tracks, so the table's own title would be the
+        // same two facts twice, eighty pixels apart. Everywhere else — the
+        // library, a playlist — there is no header and this *is* the title.
+        let titled = !matches!(peer.source, Source::Album(_) | Source::Artist(_));
         #[cfg_attr(feature = "demo", allow(unused_mut))]
-        let mut main = column![row![
-            text(peer.source.title().to_string()).size(22),
-            text(format!("{} tracks", peer.rows().len()))
-                .size(12)
-                .style(style::dim),
-        ]
-        .spacing(12)
-        .align_y(iced::Alignment::Center)]
-        .spacing(10)
-        .width(Length::Fill);
+        let mut main = column![].spacing(10).width(Length::Fill);
+        if titled {
+            main = main.push(
+                row![
+                    text(peer.source.title().to_string()).size(22),
+                    text(format!("{} tracks", peer.rows().len()))
+                        .size(12)
+                        .style(style::dim),
+                ]
+                .spacing(12)
+                .align_y(iced::Alignment::Center),
+            );
+        }
 
         #[cfg(not(feature = "demo"))]
         {

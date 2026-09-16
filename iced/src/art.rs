@@ -13,7 +13,7 @@
 //! one description in `branding/nix/palette.nix` — and why the hash below is
 //! specified down to the width of what it walks, rather than being "some hash".
 
-use iced::widget::{center, container, text};
+use iced::widget::svg;
 use iced::{Color, Element, Length, Theme};
 
 use crate::palette;
@@ -45,68 +45,70 @@ pub fn of(theme: &Theme, seed: &str) -> [Color; 2] {
     set[hash(seed) as usize % set.len()]
 }
 
-/// The square itself: the gradient, with a note drawn faintly on it.
+/// The square itself: a rounded rectangle in the name's own colour.
 ///
-/// Faint because it is a placeholder and not a logo — it should read as "a
-/// record" at a glance and stop asking for attention on the second look.
+/// **An SVG tinted by the style closure, not a `container` with a gradient
+/// background.** The container was the first version and it drew nothing at
+/// all — it laid out at the right size, the glyph inside it appeared, and the
+/// background simply never painted. This program already knows the answer to
+/// that shape of problem: `icon.rs` draws the transport and the heart as SVG
+/// because an image widget positions itself from its own bounds and nothing
+/// else, and the `svg` feature was already on for exactly that. Rounded
+/// corners, and the artist page's circle, come free with it.
+///
+/// The consequence is that the *colour* cannot be in the file. `view` never
+/// sees the theme — iced resolves Light or Dark internally and hands it only
+/// to style closures — so a two-colour gradient chosen per theme is not
+/// something a handle can carry. `svg`'s style filter replaces every colour in
+/// the drawing with one, which is the same rule the heart follows and the same
+/// reason.
+///
+/// So the depth is in *alpha* rather than in a second colour: the gradient
+/// runs from the tint at full strength to the tint at a third, which survives
+/// the filter because the filter replaces colour and leaves opacity alone. On
+/// a dark page it fades into the page and on a light one it fades out of it,
+/// which is the same shape the phone's two-stop gradient has.
 pub fn square<'a, Message: 'a>(seed: &str, size: f32, corner: f32) -> Element<'a, Message> {
+    // Drawn in a 100-unit box and scaled by the widget, so the same string
+    // serves the 132px card and the 116px header.
+    let radius = (corner / size * 100.0).clamp(0.0, 50.0);
     let seed = seed.to_string();
-    // The glyph is sized from the square rather than fixed, so one function
-    // serves the 34px thumbnail in a grid and the 180px one on an album page.
-    let note = text(icon_char()).size(size * 0.34).style({
-        let seed = seed.clone();
-        move |theme: &Theme| text::Style {
-            // Against the gradient rather than against the page: the light
-            // theme's pairs are dark, so the note is light on both.
-            color: Some(on(of(theme, &seed))),
-        }
-    });
-
-    container(center(note))
+    svg(svg::Handle::from_memory(drawing(radius).into_bytes()))
         .width(Length::Fixed(size))
         .height(Length::Fixed(size))
-        .style(move |theme: &Theme| {
-            let [from, to] = of(theme, &seed);
-            container::Style {
-                // Down-right, the way both clients' gradients run.
-                background: Some(
-                    iced::gradient::Linear::new(std::f32::consts::FRAC_PI_4 * 3.0)
-                        .add_stop(0.0, from)
-                        .add_stop(1.0, to)
-                        .into(),
-                ),
-                border: iced::Border {
-                    radius: corner.into(),
-                    ..Default::default()
-                },
-                ..container::Style::default()
-            }
+        .style(move |theme: &Theme, _| svg::Style {
+            // The first stop of the pair: the light end, which is the one the
+            // square should read as.
+            color: Some(of(theme, &seed)[0]),
         })
         .into()
 }
 
-/// Which of white or black is legible on a pair.
+/// The SVG source for a square of one corner radius.
 ///
-/// Read off the *first* stop, which is the light end of every pair in the
-/// branding — so the answer is the same for the whole square rather than
-/// changing halfway down it.
-fn on([from, _]: [Color; 2]) -> Color {
-    // Rec. 601 luma, which is what "is this dark" means to an eye.
-    let luma = 0.299 * from.r + 0.587 * from.g + 0.114 * from.b;
-    if luma > 0.55 {
-        Color::from_rgba(0.0, 0.0, 0.0, 0.5)
-    } else {
-        Color::from_rgba(1.0, 1.0, 1.0, 0.45)
-    }
-}
-
-/// The note, which the embedded font does not have.
-///
-/// Fira Sans is a text face: `♪` U+266A is outside Latin-1 and draws as a `?`
-/// or as nothing, which is the trap this repository has already paid for
-/// twice. So the placeholder is a character the font *does* have.
-fn icon_char() -> &'static str {
-    "·"
+/// Every colour in it is a placeholder that the style filter replaces, which
+/// is why there is only one and why it is white: what matters is the
+/// *opacity* at each stop, and white is the colour that says "I was replaced"
+/// most loudly if the filter ever stops being applied.
+fn drawing(radius: f32) -> String {
+    format!(
+        concat!(
+            r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">"##,
+            r##"<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">"##,
+            r##"<stop offset="0" stop-color="#FFFFFF" stop-opacity="1"/>"##,
+            r##"<stop offset="1" stop-color="#FFFFFF" stop-opacity="0.33"/>"##,
+            r##"</linearGradient></defs>"##,
+            r##"<rect width="100" height="100" rx="{radius}" ry="{radius}" fill="url(#g)"/>"##,
+            // A note, knocked back rather than drawn in a second colour. Fira
+            // Sans has no U+266A and U+00B7 is a four-pixel dot at any size,
+            // which is what the first attempt at this actually put on screen.
+            r##"<g fill="#FFFFFF" fill-opacity="0.35">"##,
+            r##"<circle cx="44" cy="62" r="8"/><rect x="50" y="26" width="4" height="36"/>"##,
+            r##"<path d="M50 26 L68 32 L68 40 L50 34 Z"/>"##,
+            "</g></svg>"
+        ),
+        radius = radius,
+    )
 }
 
 #[cfg(test)]

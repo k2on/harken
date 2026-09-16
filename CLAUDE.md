@@ -1680,19 +1680,75 @@ at all are the same answer to `albums()`.
 No `SCHEMA_VERSION` bump. A new table is `CREATE TABLE IF NOT EXISTS` and the
 engine only rebuilds when an existing table's *shape* moves.
 
-**What draws it, and what does not yet.** `albums()` and `artists()` carry
-`art`, and the phone can hand a URL straight to an `Image`. The desktop cannot:
-`iced::widget::image` takes bytes or a path and there is no URL widget, so a
-cover there means an HTTP fetch, a cache and a `Task` per image — a dependency
-this workspace does not have and a `cargoVendorHash` to move for it. So the
-desktop draws the derived square below and ignores `art` for now, which is
-stated here rather than discovered.
+**Both clients draw it now, and the caches are different on purpose.**
+`iced::widget::image` takes bytes or a path and there is no URL widget, so the
+desktop needed a fetch of its own: `iced/src/covers.rs`, one `want`/`handle`
+pair over two implementations.
+
+- **On a desktop it is a directory**, under `XDG_CACHE_HOME/harken/covers`,
+  keyed by FNV-1a of the URL. Beside the remembered login rather than in the
+  state directory, because this is a *cache* — losing it costs a re-fetch and
+  nothing else — and that is where a machine sweeps caches. The fetch is
+  blocking `ureq` on a thread of its own with the answer coming back over
+  `iced::futures::channel::oneshot`, because the desktop executor is `smol`
+  and handing it a blocking HTTP call would stall every other task behind it.
+- **In a browser the disk belongs to the browser**, so it is the Cache API —
+  the same store a service worker uses, keyed by URL, which is exactly the
+  shape of this question. A snippet rather than `web-sys`, the same trade
+  `player.rs` makes for the media session and for the same reason:
+  `CacheStorage` is behind `web_sys_unstable_apis`, which is a `RUSTFLAGS`
+  every build of the crate would have to agree on. `caches` needs a secure
+  context, so it is absent on plain `http://` that is not localhost — a
+  fall-through to a plain fetch rather than a failure.
+
+Three things that are each a decision:
+
+- **A failure is remembered and its reason is dropped.** A 404 does not become
+  a 200 because the window was redrawn, so `State::Missing` stops it being
+  asked again — but a status line reading "could not fetch the cover" forty
+  times would bury the notes that matter, like having been signed out. A cover
+  is decoration; the derived square is already correct.
+- **Every cover on a page is asked for, not the visible ones.** Scrolling does
+  not go through `update`, so a cover that starts loading when it comes into
+  view is a cover that is never there when you look at it. `want` is
+  idempotent, which is what makes that affordable.
+- **What is cached beyond the session is bytes, never handles.** A `Handle`
+  holds decoded pixels and forty albums of those is tens of megabytes. The map
+  is the session's; the disk is the machine's.
 
 ## The square when there is no cover
 
 `iced/src/art.rs` derives one from the name, which is most of what a cover is
 doing in a list and the part that survives having no picture. It is the
 *fallback* now rather than the answer.
+
+**It is an SVG tinted by the style closure, and the first version was a
+`container` with a gradient background that drew nothing at all.** The
+container laid out at the right size and the glyph inside it appeared; the
+background simply never painted. This program already knew the answer to that
+shape of problem — `icon.rs` draws the transport and the heart as SVG because
+an image widget positions itself from its own bounds and nothing else — and
+the `svg` feature was already on for exactly that. Rounded corners and the
+artist page's circle come free with it.
+
+The consequence is that the *colour* cannot be in the file. `view` never sees
+the theme: iced resolves Light or Dark internally and hands it only to style
+closures, so a two-colour gradient chosen per theme is not something a handle
+can carry. `svg`'s filter replaces every colour in the drawing with one. So
+the depth is in **alpha** instead — the gradient runs from the tint at full
+strength to the tint at a third, which survives the filter because the filter
+replaces colour and leaves opacity alone.
+
+Two smaller traps, both paid for:
+
+- **`"#` ends a `r#"…"#` literal**, and every colour in an SVG is written
+  `fill="#RRGGBB"`. It fails as `expected token: ','` pointing inside the
+  string, which reads like a `format!` problem. `r##"…"##`.
+- **U+00B7 is a four-pixel dot at any size.** The first note drawn on the
+  square was a `·` at a third of the square's height, and what appeared was a
+  speck in the middle of an invisible rectangle — which made the missing
+  background much harder to see, because something *was* on screen. The note
+  is drawn now, not typed.
 
 **The two clients must agree, and the hash is where that is won or lost.** The
 six gradients are generated into `iced/src/palette.rs` and
