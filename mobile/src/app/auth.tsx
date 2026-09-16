@@ -44,7 +44,7 @@ export default function Auth() {
     }
     if (!server) return;
     finish(server, code)
-      .then(() => router.replace({ pathname: '/library', params: { server, online: '1' } }))
+      .then(() => router.replace('/home'))
       .catch((e) => setFailed(e instanceof Error ? e.message : String(e)));
   }, [code, server]);
 

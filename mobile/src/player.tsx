@@ -210,12 +210,23 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       if (positionMs > 0) void audio.seekTo(positionMs / 1000).catch(() => {});
       if (playing) audio.play();
       else audio.pause();
+    },
+    [audio],
+  );
+
+  /** Put something on the lock screen, or take it off. */
+  const announce = useCallback(
+    (what: { title: string; creator: string; album: string } | null) => {
       try {
-        audio.setActiveForLockScreen(true, {
-          title: next.title,
-          artist: next.creator,
-          albumTitle: next.album,
-        });
+        if (what) {
+          audio.setActiveForLockScreen(true, {
+            title: what.title,
+            artist: what.creator,
+            albumTitle: what.album,
+          });
+        } else {
+          audio.setActiveForLockScreen(false);
+        }
       } catch {
         // A platform with no lock-screen transport is a platform with no
         // lock-screen transport. It is not a reason to stop the music.
@@ -368,7 +379,20 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   // sound is *told* rather than deciding.
   useEffect(() => {
     if (elsewhere) {
-      if (status.playing) audio.pause();
+      if (status.playing) {
+        // The element started while the sound is somewhere else, and nothing
+        // in this app asked it to — every button here goes through `ask`. So
+        // it was the lock screen, whose buttons `expo-audio` wires straight to
+        // its own player and does not offer to hand over.
+        //
+        // That is enough to forward it: go quiet, and pass the press on to
+        // whichever device is actually playing. Safe even when it was *not* a
+        // press — the tail of a hand-off made while playing looks the same —
+        // because `play` is a verb and not a toggle, so asking a device that
+        // is already playing to play is nothing.
+        audio.pause();
+        listening.ask({ do: 'play' });
+      }
       return;
     }
     // A phone that has never played anything says nothing, so opening the app
@@ -381,6 +405,30 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       Math.round(status.currentTime * 1000),
     );
   }, [elsewhere, audio, track, wireQueue, at, status.playing, status.currentTime]);
+
+  // What the lock screen says is the *session*, so a phone watching a laptop
+  // still carries the transport: the notification is the one control that is
+  // reachable without unlocking, and "nothing is playing" would be a lie about
+  // a track this account is in the middle of.
+  //
+  // Best effort, and worth saying which part. The metadata is ours to set and
+  // this sets it; what the platform *draws* is its own audio session's, which
+  // on a phone that is not the output has no source loaded — so a notification
+  // may not appear at all until this phone has played something, and while the
+  // sound is elsewhere it will show paused whatever the laptop is doing.
+  // Fixing that properly means a foreground service of our own rather than
+  // `expo-audio`'s, which is a native module this app does not have.
+  const shown = elsewhere ? (session?.queue[session.at] ?? null) : null;
+  const shownId = shown?.id ?? track?.id ?? null;
+  useEffect(() => {
+    const what = elsewhere
+      ? shown && { title: shown.title, creator: shown.creator, album: shown.album }
+      : track && { title: track.title, creator: track.creator, album: track.album };
+    announce(what ?? null);
+    // Keyed on which track it is rather than on the object, so a report a
+    // second does not reset the notification a second.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shownId, elsewhere, announce]);
 
   // A scrubber drawn from somebody else's device has nothing to re-render it
   // between reports, and those are a second apart. Four times a second while

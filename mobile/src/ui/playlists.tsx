@@ -28,6 +28,8 @@ import {
 } from 'react-native';
 import Animated, { FadeIn, FadeOut, SlideInDown } from 'react-native-reanimated';
 
+import { router } from 'expo-router';
+
 import { asId } from '@/mutators.gen';
 import type { Peer } from '@/peer';
 import { radius, space, type Theme } from '@/theme';
@@ -65,9 +67,13 @@ export function Playlists({
 
   const pick = (list: Playlist) => {
     if (item === null) {
-      // No track to add: the rows are the browser's, so picking one shows it.
-      peer.setSource({ kind: 'playlist', id: asId('playlist', list.id), name: list.name });
+      // No track to add: the rows are the library's, so picking one opens its
+      // page rather than re-pointing a list nothing is looking at.
       onClose();
+      router.push({
+        pathname: '/list',
+        params: { kind: 'playlist', id: list.id, name: list.name },
+      });
       return;
     }
     if (on === null) return;

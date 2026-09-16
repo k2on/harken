@@ -46,6 +46,22 @@ export function rememberServer(server: string): void {
   storage.set(LAST_SERVER, server);
 }
 
+/** Whether this phone was told to work alone, from the connect screen.
+ *
+ *  Remembered rather than carried as a route parameter, because it is an
+ *  answer about this install and not about a navigation: it used to ride on
+ *  `/library?online=0`, which meant every screen that wanted to know had to be
+ *  reached through that link, and a relaunch silently went back online. */
+const OFFLINE = 'harken.offline';
+
+export function offline(): boolean {
+  return storage.get(OFFLINE) === '1';
+}
+
+export function setOffline(alone: boolean): void {
+  storage.set(OFFLINE, alone ? '1' : '0');
+}
+
 /** The login this phone has for `server`, if it signed in before. */
 export function remembered(server: string): Login | null {
   return recallLogin(storage, server);

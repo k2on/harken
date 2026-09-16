@@ -42,7 +42,7 @@ import {
   View,
 } from 'react-native';
 
-import { recallServer, remembered, rememberServer, signIn } from '@/auth';
+import { recallServer, remembered, rememberServer, setOffline, signIn } from '@/auth';
 import { radius, space, useTheme, type Theme } from '@/theme';
 import { Icon } from '@/ui/icon';
 
@@ -61,7 +61,7 @@ export default function Connect() {
   // the very screen that was showing the sheet.
   const [to] = useState(start);
   if (to) {
-    return <Redirect href={{ pathname: '/library', params: { server: to, online: '1' } }} />;
+    return <Redirect href="/home" />;
   }
   return <Ask />;
 }
@@ -95,12 +95,15 @@ function Ask() {
   // `replace` rather than `push`, because the sign-in may have come back
   // through the `auth` route and left it on the stack — and a back gesture out
   // of the library should not land on a screen that is mid-exchange.
+  //
+  // Both answers are *remembered* rather than carried as parameters. They used
+  // to ride on `/library?server=…&online=…`, which meant every screen that
+  // wanted to know had to be reached through that link — and there are six of
+  // them now, reachable from each other.
   const go = (target: string, online: boolean) => {
     rememberServer(target);
-    router.replace({
-      pathname: '/library',
-      params: { server: target, online: online ? '1' : '0' },
-    });
+    setOffline(!online);
+    router.replace('/home');
   };
 
   const join = async () => {

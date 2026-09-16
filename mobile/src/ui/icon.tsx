@@ -58,6 +58,12 @@ const GLYPHS = {
   laptop: { ios: 'laptopcomputer', android: 'computer', text: '▭' },
   stop: { ios: 'stop.circle', android: 'stop_circle', text: '■' },
   debug: { ios: 'ladybug', android: 'bug_report', text: '?' },
+  // The three tabs, and the two chevrons a pushed screen needs.
+  home: { ios: 'house.fill', android: 'home', text: '⌂' },
+  search: { ios: 'magnifyingglass', android: 'search', text: '⌕' },
+  back: { ios: 'chevron.left', android: 'arrow_back', text: '‹' },
+  chevron: { ios: 'chevron.right', android: 'chevron_right', text: '›' },
+  shuffle: { ios: 'shuffle', android: 'shuffle', text: '⤨' },
 } as const satisfies Record<string, Glyph>;
 
 export type IconName = keyof typeof GLYPHS;

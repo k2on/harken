@@ -64,6 +64,13 @@ iced/                    the desktop and browser client
 mobile/                  the phone client; src/ is UI and a socket, nothing else
   src/auth.ts            …and signing in, through a browser sheet and `harken://`
   src/app/auth.tsx       …and the route that scheme names, because it is one
+  src/app/index.tsx      which server, and the login it remembers for it
+  src/app/(app)/_layout.tsx  the signed-in shell: the peer, the sheets, the
+                         player and the tab bar, over one `Stack`
+  src/app/(app)/home.tsx     …blank, and saying why
+  src/app/(app)/search.tsx   …the library, filtered, locally
+  src/app/(app)/library.tsx  …playlists, albums, artists
+  src/app/(app)/list.tsx     …and the one page all four of those open
   src/peer.ts            the database, the maintained library, and what a
                          screen may ask of either
   src/player.tsx         what is playing — `expo-audio`, the queue, the
@@ -76,12 +83,15 @@ mobile/                  the phone client; src/ is UI and a socket, nothing else
                          in this directory a color is written down
   src/ui/icon.tsx        every glyph, as an SF Symbol, a Material Symbol, and a
                          character to fall back to (see below)
+  src/ui/player.tsx      the bar and the sheet it grows into, which are one
+                         thing with two faces
+  src/ui/tabbar.tsx      Home, Search, Your Library — drawn, not routed
+  src/ui/swipe.tsx       the two gestures every row has
+  src/ui/tracklist.tsx   …and the list that gives them to it
   src/ui/playlists.tsx   which playlists a track is on, and how to make one
   src/ui/devices.tsx     which device is making the sound, and moving it
   src/ui/debug.tsx       every number the peer holds, on the phone being wrong —
                          and the one screen that can re-point it
-  src/ui/                the rest of the screen: the chips, the row, the bar,
-                         and the player sheet
   nix/readme.nix         its section of README.md
   modules/harken-native/ the turbo module — generated, gitignored, not authored
   gradle-deps.json       gradle's Maven graph, recorded, replayed by the APK build
@@ -1390,6 +1400,66 @@ could still do, and that wants a native WebSocket client, which is a dependency
 this workspace does not have and a `cargoVendorHash` to move for it. `nix run
 .#web` is the desktop client for anyone who wants one.
 
+### The phone is a shell with six screens, and the player is one of them
+
+`(app)/_layout.tsx` is one `Stack` with the player and the tab bar drawn over
+it, rather than `expo-router`'s `Tabs`. That is not a preference: the player
+bar has to sit **above** the tab bar and **below** every screen, including the
+ones pushed over the tabs, and a router-owned tab bar is a sibling of its
+screens with nowhere between them to put a third thing. So a tab is a
+`replace` and a record is a push — which is also what makes the back gesture
+mean "out of this album" rather than "back to the tab I was on".
+
+**The peer is in that shell and nowhere else.** It used to be opened by the
+library screen, which was right while that screen was the whole app; six
+screens later, each opening its own would run the read model six times against
+one session. `@petros/client` keys the session by actor and would hand them
+all the same database, so it would not be *wrong* — just paid for six times
+per change, which is the thing maintaining the view was for. The two sheets
+live there too, because a row on any screen can ask to be put on a playlist.
+
+Both answers the connect screen collects are **remembered** rather than
+carried as route parameters. `server` and `online` used to ride on
+`/library?server=…&online=…`, which meant every screen that wanted them had to
+be reached through that link — fine for one screen, impossible for six that
+reach each other — and a relaunch silently went back online.
+
+**The player is one thing with two faces.** A bar and a sheet used to be two
+components with two animations, and the seam showed: what you dragged up was
+not what appeared, and closing played a different animation from opening. Now
+there is one full-screen container translated by one shared value in `[0, 1]`
+— at 0 its top edge is exactly where the bar belongs and the sheet is off the
+bottom of the screen, at 1 it covers everything. The bar is pinned to the
+container's top and crossfades with the sheet, so the thing under your finger
+is the thing that arrives, and the same value run backwards is the close.
+
+Four things about it that are each a decision:
+
+- **Two gestures, split by axis.** Vertical opens and closes, from anywhere,
+  including anywhere on the expanded sheet; it fails on a horizontal drag,
+  which is what leaves the seek bar's own gesture alone. Horizontal *on the
+  bar* skips, because a mini bar is the one control people reach for without
+  looking. Both track the finger rather than firing on release: a sheet that
+  only moves after you let go is a sheet you are not sure you are dragging.
+- **The lift gesture is built twice from one description.** A `Gesture`
+  belongs to the detector it is given to, and this one has to be on the sheet
+  *and* on the bar.
+- **`opacity: 0` is not `pointerEvents: none`.** Collapsed, the sheet is off
+  the bottom of the screen except for the strip hanging over the tab bar — and
+  an invisible view still takes touches, so without the flag every tap on Your
+  Library went into a player nobody could see. Which is why the animation's
+  shared value is not enough on its own and there is a React `expanded` beside
+  it.
+- **The tab bar is drawn first, so the expanded player covers it.** A
+  full-screen player with a tab bar across the bottom is two apps.
+
+**A row has two swipes**, in `ui/swipe.tsx`: right to put the track on a
+playlist, left for what is not built yet. It snaps back either way rather than
+staying open, because both actions are immediate and a row that stays open is
+a row with a second state to close. The left one saying "Play next is not
+built yet" out loud is deliberate — a swipe that appears to do nothing is a
+gesture people try once.
+
 ### And the phone, which is the device the feature is about
 
 `mobile/src/listening.ts` is the same end in TypeScript — the protocol mirrored
@@ -1415,12 +1485,23 @@ them learning that a laptop exists. Only the picker is new UI.
 
 Three phone-specific things:
 
-- **The lock screen needs no special case, and that is the report's doing.**
-  `expo-audio` drives its own transport, so a pause from the notification
-  moves the platform rather than calling any of this — and because reporting
-  is driven by the *status* rather than by the buttons, the session hears
-  about it on the next tick anyway. A device that is not the output has
-  nothing on its lock screen to press, because it is not playing.
+- **The lock screen keeps working when the sound is on the laptop, and the
+  mechanism is a transition rather than a hook.** `expo-audio` wires the
+  notification's buttons straight to its own player and does not offer to hand
+  them over — so when the element starts while the sound is elsewhere, nothing
+  in this app asked it to, because every button here goes through `ask`. That
+  is enough to forward it: go quiet, and pass the press on to whichever device
+  is playing. Safe even when it was not a press — the tail of a hand-off made
+  while playing looks the same — because `play` is a verb and not a toggle.
+
+  The metadata follows the *session* rather than this phone's element, so a
+  phone watching a laptop still carries a transport. What the platform
+  **draws**, though, is its own audio session's, which on a phone that is not
+  the output has no source loaded: a notification may not appear until this
+  phone has played something, and while the sound is elsewhere it will read
+  paused whatever the laptop is doing. Fixing that properly means a foreground
+  service of our own rather than `expo-audio`'s, which is a native module this
+  app does not have. Not verified on a device.
 - **A remote scrubber needs a ticker.** The output reports about once a second
   and nothing else re-renders in between, so a bar drawn from another device
   would step rather than move. 250ms while `elsewhere && playing`, and not at
