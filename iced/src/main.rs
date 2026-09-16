@@ -355,6 +355,50 @@ impl Pane {
     }
 }
 
+/// Which grid the keyboard is in.
+///
+/// A pane while the page is bare, and whichever overlay is on top while one is
+/// up. It exists because three places had to agree about this and each decided
+/// it for itself: `act` routed a motion through an if-chain, every view drew
+/// its cursor from `self.pane` alone, and the status line named a pane that did
+/// not have the keyboard. So opening a menu over the track list left *two*
+/// accent-filled rows on screen — the row `j` used to move and the entry `j`
+/// actually moves — which is one highlight too many for one keyboard.
+///
+/// The order is the order `view` stacks the layers in, topmost first: what is
+/// drawn over everything is what the keyboard is in. That is the same fact
+/// twice rather than two facts to keep in step.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Focus {
+    Pane(Pane),
+    Menu,
+    Picker,
+    Devices,
+}
+
+/// Where a row's menu opens, which is decided by what asked for it.
+///
+/// macOS is the authority here and it does both. A contextual menu — right
+/// click, Control-click, two-finger tap — opens **at the pointer**, with its
+/// corner on the click and flipping when it is near an edge; that is what
+/// AppKit has done since contextual menus arrived in Mac OS 8, and Music.app
+/// is no exception. A menu belonging to a *control*, like the ⋯ at the end
+/// of a row, opens **at the control** instead, because the control is a fixed
+/// thing on screen and a menu that ignored it would look detached from the
+/// button you pressed.
+///
+/// So this is not a preference between two ways of placing a menu. It is the
+/// two rules AppKit already has, and which one applies is which of the two
+/// you used.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Anchor {
+    /// A right click: the corner goes on the pointer.
+    Pointer,
+    /// The row's ⋯, or `m`: the menu's right edge lines up with that column,
+    /// so it hangs off the button wherever along the row you clicked.
+    Dots,
+}
+
 /// Where a track's bytes are.
 ///
 /// `file` is one of two things, and which one is not a mode: the demo's
@@ -417,8 +461,10 @@ enum Message {
     SignOut,
     /// Where the pointer is, in the window. See `App::cursor`.
     Hover(iced::Point),
-    /// Open a row's menu, at the pointer: the three dots, or a right click.
-    RowMenu(Id),
+    /// Open a row's menu: the three dots, a right click, or `m`. It lands the
+    /// cursor on that row first — see the handler — and `Anchor` says where
+    /// the menu goes, because that depends on which of the three it was.
+    RowMenu(Id, Anchor),
     CloseMenu,
     /// Open the playlist picker over the track under the cursor.
     OpenPicker,
@@ -456,6 +502,16 @@ enum Message {
     CloseDevices,
     /// Pump the transport. Nothing else drives a sans-io client.
     Tick,
+    /// A wheel over a context window's backdrop, and the whole of what it
+    /// does is not reach the page.
+    ///
+    /// A `mouse_area` with an `on_scroll` captures the event, which is the
+    /// only way to stop it: the backdrop is already the thing standing between
+    /// the pointer and the page, so it is the thing that swallows this too.
+    /// Without it the list scrolls out from under a menu that `pin` holds
+    /// still at a window coordinate, and the menu ends up pointing at a
+    /// different row than the one it is about.
+    Swallow,
 }
 
 /// What the now-playing bar draws, from wherever it came.
@@ -1440,41 +1496,52 @@ impl App {
         }
     }
 
+    /// The demo, on whatever database its login names.
+    ///
+    /// Split out of `boot` only so a test can have one of its own: the path is
+    /// `petros-demo-{id}.db` and cargo runs a binary's tests on several
+    /// threads, so two of them booting the same demo meet inside SQLite and
+    /// the seed comes back `database is locked`. Each pass alone; the suite
+    /// fails. The same trap `demo_covers::blank` already carries.
+    #[cfg(feature = "demo")]
+    fn demo_app(login: Login) -> (Self, Task<Message>) {
+        let mut peer = Peer::open(&login);
+        seed::seed(&mut peer);
+        let app = App {
+            pane: Pane::Tracks,
+            cursors: [0; 2],
+            keys: vim::Keys::new(),
+            search: String::new(),
+            help: false,
+            picker: None,
+            menu: None,
+            nav: Nav::Push,
+            routed: None,
+            cursor: iced::Point::ORIGIN,
+            window: iced::Size::new(860.0, 600.0),
+            player: Player::new(),
+            queue: Vec::new(),
+            listening: listening::Remote::new(),
+            covers: covers::Covers::default(),
+            art_seen: 0,
+            devices: None,
+            login: Some(login),
+            server: String::new(),
+            user: None,
+            signing_in: false,
+            peer: Some(peer),
+            note: "a demo — nothing here leaves your browser".into(),
+        };
+        (app, Task::none())
+    }
+
     fn boot() -> (Self, Task<Message>) {
         // The demo signs nobody in and talks to nothing: it opens a peer, seeds
         // it, and that is the whole application. Everything below about tokens
         // and browsers is compiled out.
         #[cfg(feature = "demo")]
         {
-            let login = Self::demo_login();
-            let mut peer = Peer::open(&login);
-            seed::seed(&mut peer);
-            let app = App {
-                pane: Pane::Tracks,
-                cursors: [0; 2],
-                keys: vim::Keys::new(),
-                search: String::new(),
-                help: false,
-                picker: None,
-                menu: None,
-                nav: Nav::Push,
-                routed: None,
-                cursor: iced::Point::ORIGIN,
-                window: iced::Size::new(860.0, 600.0),
-                player: Player::new(),
-                queue: Vec::new(),
-                listening: listening::Remote::new(),
-                covers: covers::Covers::default(),
-                art_seen: 0,
-                devices: None,
-                login: Some(login),
-                server: String::new(),
-                user: None,
-                signing_in: false,
-                peer: Some(peer),
-                note: "a demo — nothing here leaves your browser".into(),
-            };
-            (app, Task::none())
+            Self::demo_app(Self::demo_login())
         }
 
         #[cfg(not(feature = "demo"))]
@@ -1631,10 +1698,45 @@ impl App {
     /// …and the picker's, which is a panel and also a submenu.
     const PICKER_WIDTH: f32 = 340.0;
     const PICKER_MAX_HEIGHT: f32 = 420.0;
+    /// A margin, so a panel that only just fits does not sit flush against
+    /// the glass.
+    const EDGE: f32 = 8.0;
+    /// Where a menu asked for with `m` opens, down the window.
+    ///
+    /// The one case that cannot be the row's own position: `m` has no pointer,
+    /// and iced lays out after `view` while this decides before it — so there
+    /// is nothing to ask where the cursor's row currently is. Near the top of
+    /// the list, against the same ⋯ column every other menu uses.
+    const MENU_BY_KEY_Y: f32 = 120.0;
 
     /// Where the cursor is in a pane.
     fn at(&self, pane: Pane) -> usize {
         self.cursors[pane as usize]
+    }
+
+    /// Which grid the keyboard is in. The one definition — see `Focus`.
+    fn focus(&self) -> Focus {
+        // Topmost layer first, which is the order `view` pushes them in.
+        if self.devices.is_some() {
+            return Focus::Devices;
+        }
+        if self.picker.is_some() {
+            return Focus::Picker;
+        }
+        if self.menu.is_some() {
+            return Focus::Menu;
+        }
+        Focus::Pane(self.pane)
+    }
+
+    /// Whether this pane has the keyboard, which is the whole of what decides
+    /// whether its cursor is drawn.
+    ///
+    /// A pane is not focused merely because it is the pane: a context window
+    /// over it has the keyboard, and a cursor drawn where the next `j` will
+    /// *not* go is a lie the window tells twenty times a second.
+    fn has_keys(&self, pane: Pane) -> bool {
+        self.focus() == Focus::Pane(pane)
     }
 
     /// What shape a pane is, which is all `vim` needs to know about it.
@@ -1721,36 +1823,38 @@ impl App {
     /// The only place that knows both halves: `vim` produced the action from
     /// keys, and this is what the action means in a music library.
     fn act(&mut self, action: vim::Action) -> Task<Message> {
-        // Whatever is over the list takes the motions while it is up — the
-        // picker first, because it is the layer above. `<Space>` is
-        // deliberately not one of them in either: the transport should not
-        // stop working because a panel is.
-        if self.menu.is_some() && self.picker.is_none() {
-            match action {
-                vim::Action::Move(motion) => return self.menu_travel(motion),
-                vim::Action::Activate => return self.update(Message::MenuActivate),
-                vim::Action::Cancel => return self.update(Message::CloseMenu),
-                vim::Action::Toggle => return self.update(Message::PlayPause),
-                _ => return Task::none(),
-            }
-        }
-        if self.picker.is_some() {
-            match action {
-                vim::Action::Move(motion) => return self.picker_travel(motion),
-                vim::Action::Activate => return self.update(Message::PickerActivate),
-                vim::Action::Cancel => return self.update(Message::ClosePicker),
-                vim::Action::Toggle => return self.update(Message::PlayPause),
-                _ => return Task::none(),
-            }
-        }
-        if self.devices.is_some() {
-            match action {
-                vim::Action::Move(motion) => return self.devices_travel(motion),
-                vim::Action::Activate => return self.pick_device(),
-                vim::Action::Cancel => return self.update(Message::CloseDevices),
-                vim::Action::Toggle => return self.update(Message::PlayPause),
-                _ => return Task::none(),
-            }
+        // Whatever is over the page takes the motions while it is up, and
+        // which one that is is `focus`'s to say rather than this chain's.
+        // `<Space>` is deliberately not one of them anywhere: the transport
+        // should not stop working because a panel is up.
+        //
+        // All three answer the same four things, because all three are a
+        // `vim::Grid::column` and nothing else: walk it, run the row, close
+        // it, and leave the transport alone.
+        let focus = self.focus();
+        if !matches!(focus, Focus::Pane(_)) {
+            return match action {
+                vim::Action::Move(motion) => match focus {
+                    Focus::Menu => self.menu_travel(motion),
+                    Focus::Picker => self.picker_travel(motion),
+                    _ => self.devices_travel(motion),
+                },
+                vim::Action::Activate => match focus {
+                    Focus::Menu => self.update(Message::MenuActivate),
+                    Focus::Picker => self.update(Message::PickerActivate),
+                    // Its own call rather than a message, because whether a
+                    // row is a target depends on the row: a device that
+                    // cannot be heard is drawn and does nothing.
+                    _ => self.pick_device(),
+                },
+                vim::Action::Cancel => match focus {
+                    Focus::Menu => self.update(Message::CloseMenu),
+                    Focus::Picker => self.update(Message::ClosePicker),
+                    _ => self.update(Message::CloseDevices),
+                },
+                vim::Action::Toggle => self.update(Message::PlayPause),
+                _ => Task::none(),
+            };
         }
         match action {
             vim::Action::Move(motion) => self.travel(motion),
@@ -1788,11 +1892,11 @@ impl App {
                 // question this client had no way to ask after the hearts
                 // went, which is "which lists is this on".
                 'a' => self.update(Message::OpenPicker),
-                // The same menu the dots and a right click open. Asked for by
-                // key it has no pointer to sit under, so it opens at the top
-                // left of the list and is walked with `j` like everything
-                // else — which is the whole of what "keyboard accessible"
-                // means here.
+                // The same menu the dots and a right click open, in the same
+                // place: the ⋯ column is arithmetic, so only how far down
+                // differs, and by key there is no pointer to ask. Walked with
+                // `j` like everything else, which is the whole of what
+                // "keyboard accessible" means here.
                 'm' => {
                     let id = self
                         .peer
@@ -1801,8 +1905,8 @@ impl App {
                         .map(|i| i.id);
                     match id {
                         Some(id) => {
-                            self.cursor = iced::Point::new(260.0, 120.0);
-                            self.update(Message::RowMenu(id))
+                            self.cursor.y = Self::MENU_BY_KEY_Y;
+                            self.update(Message::RowMenu(id, Anchor::Dots))
                         }
                         None => Task::none(),
                     }
@@ -2392,7 +2496,20 @@ impl App {
                 self.menu = None;
                 Ok(())
             }
-            Message::RowMenu(id) => {
+            Message::RowMenu(id, anchor) => {
+                // The selection moves to what the menu is about, before the
+                // menu takes the keyboard off it. A right click three rows
+                // below the cursor used to leave the cursor where it was, so
+                // the window drew a menu about one row and a highlight on
+                // another — and closing it put you back on the wrong one.
+                let row = self
+                    .peer
+                    .as_ref()
+                    .and_then(|p| p.rows().iter().position(|i| i.id == id));
+                if let Some(row) = row {
+                    self.pane = Pane::Tracks;
+                    self.cursors[Pane::Tracks as usize] = row;
+                }
                 if let Some(peer) = &self.peer {
                     if let Some(item) = peer.rows().iter().find(|i| i.id == id) {
                         let album = peer.detail_of(id).album;
@@ -2408,7 +2525,7 @@ impl App {
                             title: item.title.clone(),
                             album,
                             artist,
-                            origin: Self::menu_origin(self.cursor, self.window, entries),
+                            origin: Self::menu_origin(self.cursor, self.window, entries, anchor),
                             at: 0,
                         });
                     }
@@ -2576,6 +2693,7 @@ impl App {
             // The element runs on its own clock, so the end of a track arrives
             // as "the tick that noticed" rather than as an event. Twenty times
             // a second is plenty to move on by.
+            Message::Swallow => Ok(()),
             Message::Tick => {
                 if self.player.ended() {
                     self.skip(1);
@@ -2764,14 +2882,22 @@ impl App {
 
         if let Some(menu) = &self.menu {
             // A backdrop under it, because a menu that only closes on the key
-            // that opened it is a menu people click around.
+            // that opened it is a menu people click around — and because it is
+            // what stops the wheel reaching the list. A menu is pinned to a
+            // window coordinate, so a list that scrolled under it would leave
+            // it hanging beside a row it is not about.
             layers = layers
                 .push(
                     mouse_area(container(text("")).width(Length::Fill).height(Length::Fill))
                         .on_press(Message::CloseMenu)
-                        .on_right_press(Message::CloseMenu),
+                        .on_right_press(Message::CloseMenu)
+                        .on_scroll(|_| Message::Swallow),
                 )
-                .push(pin(Self::view_menu(menu)).x(menu.origin.x).y(menu.origin.y));
+                .push(
+                    pin(Self::view_menu(menu, self.focus() == Focus::Menu))
+                        .x(menu.origin.x)
+                        .y(menu.origin.y),
+                );
         }
 
         if let Some(picker) = &self.picker {
@@ -2797,7 +2923,8 @@ impl App {
                         ..container::Style::default()
                     }),
             )
-            .on_press(Message::ClosePicker);
+            .on_press(Message::ClosePicker)
+            .on_scroll(|_| Message::Swallow);
             layers = layers.push(backdrop).push(match picker.origin {
                 Some(at) => Element::from(pin(Self::view_picker(picker)).x(at.x).y(at.y)),
                 None => Element::from(
@@ -2825,7 +2952,8 @@ impl App {
                 .push(
                     mouse_area(container(text("")).width(Length::Fill).height(Length::Fill))
                         .on_press(Message::CloseDevices)
-                        .on_right_press(Message::CloseDevices),
+                        .on_right_press(Message::CloseDevices)
+                        .on_scroll(|_| Message::Swallow),
                 )
                 .push(pin(self.view_devices(at)).x(origin.x).y(origin.y));
         }
@@ -2833,24 +2961,50 @@ impl App {
         layers.into()
     }
 
-    /// Where to pin a menu asked for at `cursor`.
+    /// Where the ⋯ column is — the track list's right-hand edge, less the
+    /// menu's own width, so a menu's right edge lines up with the dots that
+    /// opened it.
+    ///
+    /// Arithmetic rather than a measurement, for the reason `columns_in` is:
+    /// iced lays out after `view` and this decides before it. It is the same
+    /// division that function does, minus the same three things — so the menu
+    /// ends where the list ends, which is where the button is.
+    fn dots_x(window: iced::Size) -> f32 {
+        (window.width - Self::PAGE_PADDING - SCROLLBAR - Self::MENU_WIDTH).max(Self::EDGE)
+    }
+
+    /// Where to pin a menu asked for on the row at `cursor.y`.
     ///
     /// A menu opened near the bottom of the window would otherwise run off it
     /// — and `pin` clips rather than scrolls, so the entries nearest the edge
-    /// would simply not be there. Down and to the right when there is room,
-    /// and back the other way when there is not, which is what every menu on
-    /// every desktop does and nobody notices until it does not.
+    /// would simply not be there. Down when there is room and back up when
+    /// there is not, which is what every menu on every desktop does and nobody
+    /// notices until it does not.
+    ///
+    /// **How far down is always the row's; how far across is the `Anchor`'s.**
+    /// A right click lands on the pointer, the way a contextual menu does
+    /// everywhere; the ⋯ put the menu's right edge on their own column, so
+    /// the button's menu hangs off the button.
     ///
     /// The size is computed rather than measured: iced lays out after `view`
     /// and this has to decide before it. Both numbers are the panel's own —
     /// `MENU_WIDTH` is what `view_menu` sets, and the height is its padding,
     /// its title line and `entries` rows of text.
-    fn menu_origin(cursor: iced::Point, window: iced::Size, entries: usize) -> iced::Point {
+    fn menu_origin(
+        cursor: iced::Point,
+        window: iced::Size,
+        entries: usize,
+        anchor: Anchor,
+    ) -> iced::Point {
         const TITLE: f32 = 27.0;
         const ENTRY: f32 = 27.0;
         const PADDING: f32 = 8.0;
+        let x = match anchor {
+            Anchor::Pointer => cursor.x,
+            Anchor::Dots => Self::dots_x(window),
+        };
         Self::fit(
-            cursor,
+            iced::Point::new(x, cursor.y),
             window,
             Self::MENU_WIDTH,
             PADDING + TITLE + ENTRY * entries as f32,
@@ -2860,9 +3014,7 @@ impl App {
     /// Put a panel of that size at `at`, or back the other way when it would
     /// not fit. The one rule both the menu and its submenu follow.
     fn fit(at: iced::Point, window: iced::Size, w: f32, h: f32) -> iced::Point {
-        // A margin, so a panel that only just fits does not sit flush against
-        // the glass.
-        let edge = 8.0;
+        let edge = Self::EDGE;
         let x = if at.x + w + edge > window.width {
             (at.x - w).max(edge)
         } else {
@@ -2881,16 +3033,23 @@ impl App {
     /// Four things, and each is something this window could already do — the
     /// menu is a way to ask for them *about a row you are pointing at*, which
     /// is the one thing the keyboard could not express.
-    fn view_menu(menu: &RowMenu) -> Element<'_, Message> {
+    ///
+    /// `focused` is false while its submenu is up, and then the entry under
+    /// the cursor dims to `background.strong` instead of filling with the
+    /// accent — the way a native menu leaves the parent entry marked rather
+    /// than lit. Two accent-filled rows would be two answers to "where does
+    /// the next key go".
+    fn view_menu(menu: &RowMenu, focused: bool) -> Element<'_, Message> {
         let rows = menu.entries().into_iter().enumerate().fold(
             column![].spacing(0),
             |col, (i, (label, _))| {
                 let on_cursor = menu.at == i;
+                let lit = on_cursor && focused;
                 col.push(
                     mouse_area(
                         container(text(middle(&label, 26)).size(13).style(
                             move |theme: &iced::Theme| text::Style {
-                                color: Some(if on_cursor {
+                                color: Some(if lit {
                                     palette::of(theme).primary.base.text
                                 } else {
                                     palette::of(theme).background.base.text
@@ -2901,7 +3060,12 @@ impl App {
                         .padding([5, 10])
                         .style(move |theme: &iced::Theme| container::Style {
                             background: on_cursor.then(|| {
-                                iced::Background::Color(palette::of(theme).primary.base.color)
+                                let palette = palette::of(theme);
+                                iced::Background::Color(if focused {
+                                    palette.primary.base.color
+                                } else {
+                                    palette.background.strong.color
+                                })
                             }),
                             border: iced::Border {
                                 radius: 4.0.into(),
@@ -2950,7 +3114,7 @@ impl App {
     /// both clients would fold the library the same way.
     fn view_sidebar(&self, peer: &'_ Peer) -> Element<'_, Message> {
         let cursor = self.at(Pane::Sidebar);
-        let focused = self.pane == Pane::Sidebar;
+        let focused = self.has_keys(Pane::Sidebar);
         let mut side = column![].spacing(0).padding(iced::Padding {
             top: 0.0,
             right: 10.0,
@@ -3263,7 +3427,7 @@ impl App {
             .padding(Self::PAGE_PADDING)
             .into();
         }
-        let focused = self.pane == Pane::Tracks;
+        let focused = self.has_keys(Pane::Tracks);
         let cursor = focused.then_some(self.at(Pane::Tracks));
         let mut list = column![];
         for (at, take) in peer.recordings.iter().enumerate() {
@@ -3354,7 +3518,7 @@ impl App {
             .padding(Self::PAGE_PADDING)
             .into();
         }
-        let focused = self.pane == Pane::Tracks;
+        let focused = self.has_keys(Pane::Tracks);
         let cursor = focused.then_some(self.at(Pane::Tracks));
         let columns = self.columns();
 
@@ -3551,7 +3715,7 @@ impl App {
         // different from it, which is a worse thing to show than nothing: the
         // sidebar's highlight is a *selection* and has to persist, but this
         // one only ever means "where the next `j` goes".
-        let focused = self.pane == Pane::Tracks;
+        let focused = self.has_keys(Pane::Tracks);
         let cursor = focused.then_some(self.at(Pane::Tracks));
 
         // An album is the one place a track number means anything. Everywhere
@@ -3669,7 +3833,7 @@ impl App {
                             button(icon::more(on_cursor))
                                 .style(button::text)
                                 .padding([0, 6])
-                                .on_press(Message::RowMenu(item.id)),
+                                .on_press(Message::RowMenu(item.id, Anchor::Dots)),
                         );
                     col.push(
                         // The background belongs to a container spanning the whole
@@ -3682,7 +3846,7 @@ impl App {
                         ))
                         .on_enter(Message::HoverAt(i))
                         .on_press(Message::PlayItem(item.id))
-                        .on_right_press(Message::RowMenu(item.id)),
+                        .on_right_press(Message::RowMenu(item.id, Anchor::Pointer)),
                     )
                 });
 
@@ -3960,9 +4124,14 @@ impl App {
         // Which pane has the cursor, and anything half-typed. Without this a
         // swallowed `5`, or a `g` still waiting for its pair, is invisible —
         // which is the one thing that makes a modal keymap feel broken.
-        let mode = match self.pane {
-            Pane::Sidebar => "browse",
-            Pane::Tracks => "tracks",
+        let mode = match self.focus() {
+            Focus::Pane(Pane::Sidebar) => "browse",
+            Focus::Pane(Pane::Tracks) => "tracks",
+            // Naming the overlay rather than the pane under it, because the
+            // pane under it is not where the next key goes.
+            Focus::Menu => "menu",
+            Focus::Picker => "playlists",
+            Focus::Devices => "devices",
         };
         row![
             text(line).size(12).style(style::dim).width(Length::Fill),
@@ -4844,6 +5013,143 @@ mod cards {
                 one_more > room,
                 "at {width}px there is room for {} cards and only {n} are drawn",
                 n + 1.0
+            );
+        }
+    }
+}
+
+/// Which grid the keyboard is in, and where a menu goes.
+///
+/// Both halves of the same rule: a context window takes the keyboard off the
+/// grid it opens over, and it opens at the row it is about rather than at
+/// whatever the mouse was doing.
+#[cfg(all(test, feature = "demo"))]
+mod context {
+    use super::{Anchor, App, Focus, Message, Pane};
+
+    /// The demo's own boot, which is a seeded peer and nothing else — on a
+    /// database of this test's own, because cargo runs them on threads and
+    /// two seeds into one SQLite file is `database is locked`. Found the hard
+    /// way, twice; see `demo_covers::blank`.
+    fn app(who: &str) -> App {
+        App::demo_app(App::demo_login_for(who)).0
+    }
+
+    /// One keyboard, one cursor drawn.
+    ///
+    /// The window used to paint two: the track list kept its accent-filled row
+    /// while a menu over it had the keys, so the row `j` would move and the
+    /// row `j` actually moved were both lit. Falsify it by reading
+    /// `self.pane` in `has_keys` instead of `focus()` — every one of these
+    /// fails, and the sidebar's does too.
+    #[test]
+    fn a_context_window_takes_the_keyboard_from_the_grid_behind() {
+        let mut app = app("keys");
+        app.pane = Pane::Tracks;
+        assert_eq!(app.focus(), Focus::Pane(Pane::Tracks));
+        assert!(app.has_keys(Pane::Tracks), "nothing is over the page");
+
+        let id = app.peer.as_ref().unwrap().rows()[3].id;
+        let _ = app.update(Message::RowMenu(id, Anchor::Pointer));
+        assert_eq!(app.focus(), Focus::Menu, "the menu has it now");
+        assert!(!app.has_keys(Pane::Tracks), "…so the list does not");
+        assert!(!app.has_keys(Pane::Sidebar));
+
+        // The submenu takes it off the menu in turn, which is what makes the
+        // parent entry dim rather than stay lit.
+        let _ = app.update(Message::OpenPicker);
+        assert_eq!(app.focus(), Focus::Picker);
+        // …and giving it back is `<Esc>`, one layer at a time.
+        let _ = app.update(Message::ClosePicker);
+        assert_eq!(app.focus(), Focus::Menu, "back to the parent");
+        let _ = app.update(Message::CloseMenu);
+        assert_eq!(
+            app.focus(),
+            Focus::Pane(Pane::Tracks),
+            "and back to the list"
+        );
+    }
+
+    /// The selection moves to what the menu is about.
+    ///
+    /// A right click three rows below the cursor used to leave the cursor
+    /// where it was, so the window drew a menu about one row and a highlight
+    /// on another — and `<Esc>` put you back on the wrong one. Falsify it by
+    /// dropping the `position` block in the `RowMenu` handler: the cursor
+    /// stays at 0.
+    #[test]
+    fn opening_a_row_menu_lands_the_cursor_on_that_row() {
+        let mut app = app("lands");
+        app.pane = Pane::Sidebar;
+        app.cursors[Pane::Tracks as usize] = 0;
+
+        let id = app.peer.as_ref().unwrap().rows()[5].id;
+        let _ = app.update(Message::RowMenu(id, Anchor::Pointer));
+        assert_eq!(app.at(Pane::Tracks), 5, "the cursor moved to the row");
+        assert_eq!(app.pane, Pane::Tracks, "…and to the pane it is in");
+
+        // The menu is about that row and not about the one the cursor was on.
+        assert_eq!(app.menu.as_ref().unwrap().media, id);
+
+        // Closing it leaves the cursor there, which is the half that makes it
+        // a *move* rather than a flicker.
+        let _ = app.update(Message::CloseMenu);
+        assert_eq!(app.at(Pane::Tracks), 5);
+    }
+
+    /// The two AppKit rules, and they are not the same rule.
+    ///
+    /// A contextual menu opens on the pointer; a control's menu opens on the
+    /// control. Getting this wrong in either direction looks like a bug rather
+    /// than a choice — a right-click menu that jumps to the right-hand edge
+    /// reads as the click having missed, and a button menu that appears
+    /// wherever the mouse drifted reads as detached from the button.
+    ///
+    /// Falsify it by making `menu_origin` ignore the anchor: whichever branch
+    /// you keep, one of these two halves fails.
+    #[test]
+    fn a_right_click_opens_on_the_pointer_and_the_dots_open_on_the_dots() {
+        let window = iced::Size::new(1280.0, 720.0);
+
+        // A right click puts the corner where you clicked, both ways.
+        let left = App::menu_origin(iced::Point::new(220.0, 300.0), window, 4, Anchor::Pointer);
+        let right = App::menu_origin(iced::Point::new(600.0, 300.0), window, 4, Anchor::Pointer);
+        assert_eq!(left, iced::Point::new(220.0, 300.0));
+        assert_eq!(right, iced::Point::new(600.0, 300.0));
+
+        // The ⋯ do not care where along the row the pointer was — the button
+        // is a fixed thing on screen and the menu belongs to it.
+        let a = App::menu_origin(iced::Point::new(220.0, 300.0), window, 4, Anchor::Dots);
+        let b = App::menu_origin(iced::Point::new(1240.0, 300.0), window, 4, Anchor::Dots);
+        assert_eq!(a, b, "one button, one place");
+        assert_eq!(a.y, 300.0, "…and how far down is still the row's");
+        assert_eq!(
+            a.x + App::MENU_WIDTH,
+            window.width - App::PAGE_PADDING - super::SCROLLBAR,
+            "the menu ends where the dots do"
+        );
+    }
+
+    /// …and it stays on the glass at every window a person can drag.
+    ///
+    /// `pin` clips rather than scrolls, so a menu placed off the left edge
+    /// simply loses that half — there is no scrollbar to find it with.
+    ///
+    /// **It starts at 120 and not at 320, and the first version started at
+    /// 320 and was worthless.** `dots_x` only goes negative below 232px, so
+    /// the loop never reached the case and the test passed with the `.max`
+    /// taken out — which is the shape of mistake this repository keeps
+    /// finding: an assertion satisfied by a width the bug does not live at.
+    /// Falsify it by dropping the `.max` in `dots_x` and it fails at 120.
+    #[test]
+    fn a_menu_never_hangs_off_the_glass() {
+        for width in 120..=4000 {
+            let window = iced::Size::new(width as f32, 720.0);
+            let at = App::menu_origin(iced::Point::new(0.0, 100.0), window, 4, Anchor::Dots);
+            assert!(
+                at.x >= App::EDGE,
+                "at {width}px the menu starts at {} and its left half is clipped",
+                at.x
             );
         }
     }

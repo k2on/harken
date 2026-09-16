@@ -1062,8 +1062,22 @@ every row is one line. Four things about it are load-bearing:
   It answers to the keyboard like everything else: `j` and `k` walk it,
   `<Enter>` runs the entry, `<Esc>` closes it, and a click does the same two
   things a key does — lands the cursor and runs it — so whichever you used
-  last, the other carries on from there. Asked for with `m` it has no pointer
-  to sit under, so it opens at the top of the list.
+  last, the other carries on from there.
+
+  **Where it opens is AppKit's two rules, because they are two rules.** A
+  right click puts the menu's corner on the pointer, which is what a
+  contextual menu does on every desktop and has done on macOS since Mac OS 8.
+  The three dots put it on the *dots*: a menu belonging to a control opens at
+  the control, so it hangs off that button wherever along the row you clicked
+  from. `Anchor` is which, decided by what sent the message, and `m` takes the
+  button's — by key there is no pointer to land on. Getting either backwards
+  looks like a bug rather than a choice: a right-click menu that jumps to the
+  right-hand edge reads as the click having missed, and a button's menu that
+  appears wherever the mouse drifted reads as detached from the button.
+
+  The dots' column is arithmetic and not a measurement, for the reason
+  `columns_in` is — `dots_x` is that same division minus the same three
+  things, so the menu ends where the list ends, which is where the button is.
 
   **Add to playlist is that menu's submenu, and it is the same component `a`
   opens.** One `view_picker`, in two places: reached from the menu it is
@@ -1076,7 +1090,7 @@ every row is one line. Four things about it are load-bearing:
 
   Both overlays are layers of one `stack!` over the page, not panels in place
   of the list: the picker is about a row, and something that replaces the rows
-  hides the one it is about. The menu is placed with `pin`, at coordinates the
+  hides the one it is about. The menu is placed with `pin`, at a point the
   root's `mouse_area(..).on_move` reported — which is why the tracking is on
   the root and not on the list, since `pin` and the point have to share an
   origin. It costs a message per mouse move, and the view is rebuilt by the
@@ -1087,6 +1101,18 @@ every row is one line. Four things about it are load-bearing:
   too. A menu that only answers to the key that opened it is a menu people
   click around and then click again; one that stays up after it has been
   answered is one you dismiss twice.
+
+  **The backdrop also swallows the wheel, and that is not a nicety.** `pin`
+  holds the menu at a window coordinate, so a list that went on scrolling
+  under it would leave a menu hanging beside a row it is not about — the same
+  detachment the anchor above is for, arriving a second later. AppKit answers
+  this by having an open menu take the event stream outright: while a menu is
+  up the view behind does not scroll, on macOS, on Windows and in a browser's
+  own context menu. The only way to say it in iced is to *capture* the event,
+  and `mouse_area`'s `on_scroll` does, so `Message::Swallow` is one line on
+  each backdrop — which is the right place, since the backdrop is already the
+  thing standing between the pointer and the page. What is above a backdrop
+  still scrolls, which is why the playlist picker's own list still does.
 
   **The menu opens away from whichever edge it is against.** `pin` clips
   rather than scrolls, so a menu asked for near the bottom of the window would
@@ -1174,6 +1200,30 @@ every row is one line. Four things about it are load-bearing:
   a dimmed one would sit one shade from the zebra and mean something else
   entirely. The playing track is the one row drawn in the accent *color*
   rather than filled with it, so it stays findable under either.
+
+- **"Has the keyboard" is one question, and three places used to answer it
+  separately.** `act` routed a motion through an if-chain over the three
+  overlays, every view decided `focused` from `self.pane` alone, and the
+  status line named a pane. So a menu over the track list left *two*
+  accent-filled rows on screen — the row `j` used to move and the entry `j`
+  actually moves — and the status line said `tracks` while the keys were going
+  somewhere else. `Focus` is the one answer now: a `Pane` while the page is
+  bare, and otherwise whichever overlay is on top, in the order `view` stacks
+  them. `has_keys(pane)` is what a view asks, so a cursor drawn where the next
+  `j` will *not* go stopped being possible rather than stopping by agreement.
+
+  Two things fall out of it. The row menu dims its own entry to
+  `background.strong` while its submenu is up, the way a native menu leaves a
+  parent entry marked rather than lit. And **opening a menu lands the cursor
+  on the row it is about** — a right click three rows below the cursor used to
+  leave the cursor where it was, so the window drew a menu about one row and a
+  highlight on another, and `<Esc>` put you back on the wrong one. macOS does
+  the same thing for the same reason: right-clicking an unselected row selects
+  it first.
+
+  All four grids here are already the same shape — `vim::Grid::column` — which
+  is why the four things an overlay answers (walk it, run the row, close it,
+  leave the transport alone) are written once rather than three times.
 
 The Album column is the interesting one, because `album_name` is on the `song`
 side table and the library row is deliberately kind-neutral. Rather than widen
