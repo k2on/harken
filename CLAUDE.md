@@ -1159,8 +1159,8 @@ indexes are *pages*: a grid of cards, each opening the record it stands for.
 
 Four things follow, and each is a decision:
 
-- **The index pages are the first `vim::Grid` this program has had.** CLAUDE.md
-  has said for a while that `Grid` was kept and tested without a caller,
+- **The index pages are the first `vim::Grid` caller** this program has had.
+  CLAUDE.md said for a while that `Grid` was kept and tested without one,
   because a hook with one implementation is not a hook. A page laid out in
   rows of cards is what `h` and `l` mean something on, and a `List` there would
   *refuse* them and hand the cursor to the sidebar halfway along a shelf.
@@ -1896,20 +1896,45 @@ needing a key to confirm what you have already moved onto is a keystroke that
 only ever means "yes, that one". `<Enter>` there steps into the table instead.
 
 **`step` returning `None` means "not mine", and that is the whole pane
-mechanism.** A vertical `List` refuses `h` and `l` because it has no
-horizontal axis, so `Pane::beyond` is free to read a refused `l` in the
-sidebar as "the track list". A `Grid` accepts all four and *clamps* at its
-edges, because it does have both axes and the motion was its own. Refusing
-and clamping are different answers to different questions, and keeping them
-apart is what lets one grammar drive a list, a row and a grid. The bar is the
-`Row`: `h` and `l` walk the transport, and `k` is what leaves it.
+mechanism.** There is one rule and every shape is written in terms of it, in
+`vim::along`: **a step is refused only when the cursor is already at that
+edge.** So `5j` three cells from the end goes to the end — there was somewhere
+to go — and `j` at the end refuses, because there was not. `Pane::beyond` then
+reads a refused `h` as "the sidebar" and a refused `j` as nothing at all.
 
-Every pane is a vertical list, so `List` is the only shape with a caller.
-`Row` and `Grid` are kept and tested anyway, because a hook with one
-implementation is not a hook — `List` alone could not tell you whether
-`Navigate` was a general shape or a description of the track list, and `Grid`
-is what makes the difference between *refusing* a motion and *clamping* it
-visible.
+It did not start that way, and the first version had a real bug in it. A
+`List` refused `h` and `l` outright while a `Grid` *clamped* them, on the
+reasoning that refusing and clamping were different answers to different
+questions — a grid has both axes, so the motion was its own. That holds until
+a grid has a caller: the album page was then somewhere the keyboard could walk
+into and never walk out of, because `h` at column zero clamped to column zero
+for ever. One rule fixes it with no special case — a grid still answers `h` in
+the middle of a row and refuses it at column zero, which is exactly the
+boundary the sidebar is on the other side of.
+
+A list keeps refusing `h` and `l` wherever the cursor is, and that is the same
+rule rather than an exception: a list has no horizontal axis, so every column
+is its edge. The bar is the `Row`: `h` and `l` walk the transport, and `k` is
+what leaves it.
+
+**`Navigate::progress` is the other half of "the shape knows".** Keeping the
+cursor on screen was `at / (cells - 1)` in `App::reveal`, which is right for a
+column and wrong for a grid — six cells share one row and only rows can be
+scrolled past, so the first card of the last row of forty-in-six scrolled to
+92% of the way down instead of to the end. The shape answers now, with the
+single-column version as the default so a new shape that *is* one gets it
+free.
+
+**Hovering moves the cursor, in the content panes only.** One highlight,
+whether you got there with the mouse or with `j` — and it takes the keyboard
+as well as the highlight, because the cursor is only *drawn* in the pane that
+has it, so a hover that moved an undrawn cursor would look like nothing
+happening and then the next `j` would jump from wherever the mouse had been.
+
+Deliberately not the sidebar. There the cursor *is* the selection — moving
+onto a line shows it, with no `<Enter>` in between — so hovering would
+navigate on the way past, and a sidebar highlight that did *not* navigate
+would be a second meaning for the one highlight that pane has.
 
 Two things that are easy to get wrong and cost a round each:
 

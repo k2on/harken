@@ -386,6 +386,13 @@ enum Message {
     /// Make it. A blank name is refused by `apply`, not here.
     PickerCreate,
     ClosePicker,
+    /// The pointer moved onto a row or a card.
+    ///
+    /// Content panes only. In the sidebar the cursor *is* the selection —
+    /// moving onto a line shows it — so hovering there would navigate on the
+    /// way past, and a highlight that did not navigate would be a second
+    /// meaning for the one highlight the sidebar has.
+    HoverAt(usize),
     /// A cover arrived, or did not.
     Cover(covers::Loaded),
     /// A key nothing on screen wanted. See `subscription`.
@@ -1629,14 +1636,13 @@ impl App {
     /// that is close enough to keep it in view without the widget having to
     /// report its own geometry back.
     fn reveal(&self) -> Task<Message> {
-        let (id, len) = match self.pane {
-            Pane::Sidebar => (Self::SIDEBAR, self.shape(Pane::Sidebar).cells()),
-            Pane::Tracks => (Self::TRACKS, self.shape(Pane::Tracks).cells()),
+        let id = match self.pane {
+            Pane::Sidebar => Self::SIDEBAR,
+            Pane::Tracks => Self::TRACKS,
         };
-        if len < 2 {
-            return Task::none();
-        }
-        let y = self.at(self.pane) as f32 / (len - 1) as f32;
+        // The shape answers, because only it knows whether its cells are
+        // stacked one per row or six.
+        let y = self.shape(self.pane).progress(self.at(self.pane));
         // `advanced` is on for exactly this: keeping a keyboard cursor inside
         // its scrollable is a widget operation, and there is no other way to
         // ask a scrollable to move.
@@ -2069,6 +2075,16 @@ impl App {
             }
             Message::Resized(size) => {
                 self.window = size;
+                Ok(())
+            }
+            Message::HoverAt(at) => {
+                // Takes the keyboard as well as the highlight, because the
+                // cursor is only *drawn* in the pane that has it — a hover
+                // that moved an undrawn cursor would look like nothing
+                // happening, and then the next `j` would jump from wherever
+                // the mouse had been.
+                self.pane = Pane::Tracks;
+                self.cursors[Pane::Tracks as usize] = at;
                 Ok(())
             }
             Message::Cover(done) => {
@@ -2855,7 +2871,7 @@ impl App {
                 .align_y(iced::Alignment::Start);
             for (c, card) in chunk.iter().enumerate() {
                 let at = r * columns + c;
-                line = line.push(self.view_card(card, Some(at) == cursor));
+                line = line.push(self.view_card(card, at, Some(at) == cursor));
             }
             page = page.push(line);
         }
@@ -2889,7 +2905,7 @@ impl App {
     }
 
     /// One card: the square, the name, and what is under it.
-    fn view_card(&self, card: &Card, on_cursor: bool) -> Element<'_, Message> {
+    fn view_card(&self, card: &Card, at: usize, on_cursor: bool) -> Element<'_, Message> {
         let corner = if card.round { Self::CARD / 2.0 } else { 6.0 };
         let under = if card.under.is_empty() {
             format!("{} {}", card.tally, plural(card.tally, "track"))
@@ -2930,6 +2946,7 @@ impl App {
             // where the next `l` goes.
             .padding(0),
         )
+        .on_enter(Message::HoverAt(at))
         .on_press(Message::Select(card.open.clone()))
         .into()
     }
@@ -3140,6 +3157,7 @@ impl App {
                                 row_style(theme, on_cursor, focused, i % 2 == 1)
                             },
                         ))
+                        .on_enter(Message::HoverAt(i))
                         .on_press(Message::PlayItem(item.id))
                         .on_right_press(Message::RowMenu(item.id)),
                     )
