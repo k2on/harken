@@ -811,3 +811,77 @@ fn the_same_file_twice_is_one_song() {
         "no file means no collision"
     );
 }
+
+/// A cover reaches `albums()` and `artists()`, and `set_artwork` is dispatched
+/// at all.
+///
+/// The second half is the one that had to be learnt. `#[mutation]` writes the
+/// authoring function and the schema section, so a verb left out of `peer!`
+/// compiles, type-checks at every call site and appears in `mutations.txt` —
+/// and is refused at apply time as an unknown mutation. `set_artwork` shipped
+/// that way, and what it looked like was covers that never loaded.
+#[test]
+fn artwork_reaches_the_lists_it_is_drawn_on() {
+    let mut c = Client::<harken::HarkenApp>::open(
+        petros::open_memory().unwrap(),
+        "alice",
+        AutoCtx::seeded(7),
+    )
+    .unwrap();
+
+    c.mutate(harken::add_song(
+        "Alla Hornpipe".into(),
+        "George Frideric Handel".into(),
+        "Water Music".into(),
+        0,
+        "music/a.mp3".into(),
+        1,
+        String::new(),
+        String::new(),
+        String::new(),
+        0,
+    ))
+    .unwrap();
+
+    // Unwrapped, not discarded: a refusal here is the whole bug.
+    c.mutate(harken::set_artwork(
+        "album".into(),
+        "Water Music".into(),
+        "https://example.com/thames.jpg".into(),
+    ))
+    .expect("set_artwork has to be a verb this build can apply");
+    c.mutate(harken::set_artwork(
+        "artist".into(),
+        "George Frideric Handel".into(),
+        "https://example.com/denner.jpg".into(),
+    ))
+    .unwrap();
+
+    let albums = harken::albums(&mut c.store()).unwrap();
+    assert_eq!(albums.len(), 1);
+    assert_eq!(albums[0].art, "https://example.com/thames.jpg");
+
+    let artists = harken::artists(&mut c.store()).unwrap();
+    assert_eq!(artists.len(), 1);
+    assert_eq!(artists[0].art, "https://example.com/denner.jpg");
+
+    // Last write wins, which is the opposite of `add_song` and the point of
+    // the verb: replacing a cover is what it is for.
+    c.mutate(harken::set_artwork(
+        "album".into(),
+        "Water Music".into(),
+        "https://example.com/better.jpg".into(),
+    ))
+    .unwrap();
+    assert_eq!(
+        harken::albums(&mut c.store()).unwrap()[0].art,
+        "https://example.com/better.jpg"
+    );
+
+    // A third subject is refused rather than stored where nothing reads it.
+    assert!(
+        c.mutate(harken::set_artwork("sleeve".into(), "x".into(), "y".into()))
+            .is_err(),
+        "artwork is of an album or an artist"
+    );
+}

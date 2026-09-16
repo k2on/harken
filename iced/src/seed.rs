@@ -2657,11 +2657,23 @@ pub fn seed(peer: &mut Peer) {
     // enforces that, because the row would be perfectly valid either way, but
     // a cover authored before its album is a cover nobody can see a reason for.
     for a in ART {
-        let _ = peer.client.mutate(mutators::set_artwork(
+        let done = peer.client.mutate(mutators::set_artwork(
             a.subject.into(),
             a.name.into(),
             a.file.into(),
         ));
+        // Asserted rather than discarded. A seed mutation can only be refused
+        // by a mistake in this repository — a verb missing from `peer!`, an
+        // argument that moved — and every one of those presents on the page as
+        // a cover that silently falls back to the derived square, which is
+        // also what eight of the twelve albums correctly do. `let _ =` here
+        // hid `set_artwork` being undispatched for two commits.
+        debug_assert!(
+            done.is_ok(),
+            "the demo could not author {}: {:?}",
+            a.name,
+            done.err()
+        );
     }
     peer.refresh();
     // A few of them hearted, so the playlist is not empty either.

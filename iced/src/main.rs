@@ -3861,3 +3861,79 @@ mod tests {
         );
     }
 }
+
+/// The demo's covers, walked the way the demo walks them.
+///
+/// This has now been wrong twice — once because the ask was wired to the wire
+/// and once because nobody had ever run the path — and both times what the
+/// page showed was a grid of correct-looking derived squares, which is exactly
+/// what it shows when everything works and eight of the twelve albums have no
+/// picture. A silent fallback is the hardest kind of broken to see, so the
+/// path gets a test rather than a reading.
+#[cfg(all(test, feature = "demo"))]
+mod demo_covers {
+    use super::{covers, media_url, seed, App, Peer};
+
+    /// `seed` returns early on a database that already has tracks, and the
+    /// native demo's is a file in the temp directory that outlives the run.
+    fn fresh() -> Peer {
+        let db = std::env::temp_dir().join("petros-demo-demo.db");
+        // `-intents` is the one that matters and is the one easily forgotten:
+        // a client's pending mutations live in a file of their own, so
+        // deleting the database alone reopens a peer that replays every song
+        // the last run authored — and `seed` then returns early on a library
+        // it did not make.
+        for suffix in ["", "-wal", "-shm", "-intents"] {
+            let _ = std::fs::remove_file(format!("{}{}", db.display(), suffix));
+        }
+        let mut peer = Peer::open(&App::demo_login());
+        seed::seed(&mut peer);
+        peer
+    }
+
+    #[test]
+    fn the_seeded_art_reaches_a_fetch() {
+        let peer = fresh();
+
+        let albums: Vec<&str> = peer
+            .albums
+            .iter()
+            .filter(|a| !a.art.is_empty())
+            .map(|a| a.name.as_str())
+            .collect();
+        let artists: Vec<&str> = peer
+            .artists
+            .iter()
+            .filter(|a| !a.art.is_empty())
+            .map(|a| a.name.as_str())
+            .collect();
+
+        assert!(
+            albums.contains(&"Water Music"),
+            "an album seeded with a cover has to come back carrying it; \
+             albums with art: {albums:?}"
+        );
+        assert!(
+            artists.contains(&"George Frideric Handel"),
+            "…and so does a composer; artists with art: {artists:?}"
+        );
+
+        // The demo has no server, so the join is `media_url("", …)` — which is
+        // the case a Wikimedia URL passes through unchanged. A relative path
+        // here would resolve against the page and 200 with the index.
+        let mut want = covers::Covers::default();
+        let asked = peer
+            .albums
+            .iter()
+            .map(|a| a.art.clone())
+            .chain(peer.artists.iter().map(|a| a.art.clone()))
+            .filter(|art| !art.is_empty())
+            .filter(|art| want.want(media_url("", art)).is_some())
+            .count();
+        assert_eq!(
+            asked,
+            albums.len() + artists.len(),
+            "every seeded cover is a fetch the client would make"
+        );
+    }
+}

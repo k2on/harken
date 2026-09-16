@@ -512,6 +512,39 @@ authored the entry. Everything after them is a caller's argument, and appears in
 the authoring function, the schema the module carries, and the generated
 TypeScript. `peer!` at the bottom of the file wires dispatch.
 
+**And a verb missing from `peer!` fails in the one place nothing looks.**
+`#[mutation]` writes the authoring function *and* the schema section, and
+`peer!` is a separate list — so a verb left out of it compiles, type-checks at
+every call site, reaches `mutations.txt`, and reaches the generated
+TypeScript. Everything that could plausibly be checked says the verb exists.
+What it cannot do is *apply*, and what a caller gets is:
+
+```
+rejected: unknown mutation "SetArtwork"; this build knows AddSong,
+CreatePlaylist, AddToPlaylist, AddAllToPlaylist, RemoveFromPlaylist,
+RemoveMedia
+```
+
+at run time, from `mutate`. `set_artwork` shipped that way for two commits.
+Three things made it invisible and each is worth knowing on its own:
+
+- **`mutations.txt` is not evidence a mutation can be applied.** It is
+  generated from the module's schema section, which `#[mutation]` produces —
+  so `SetArtwork` was recorded, `check-log` passed, and the log surface was
+  correct about a verb no build could run. It says what the log may *carry*,
+  never what `apply` will *do*.
+- **`let _ = client.mutate(…)` threw the message away.** The demo's seed
+  discarded every result, so twelve rejections in a row were silent. A seed
+  mutation can only be refused by a mistake in this repository, so it is a
+  `debug_assert!` now — which names the verb and the reason on the first run
+  of any test or dev build.
+- **What it looked like was right.** Covers fell back to the derived square,
+  which is what eight of the twelve demo albums correctly do. A grid of
+  gold squares is the same picture whether the feature works or has never
+  once run, and that is the shape of bug to write a test for rather than
+  read for: `domain/tests/read_model.rs` unwraps `set_artwork` and
+  `iced/src/main.rs`'s `demo_covers` walks the demo's own boot.
+
 The server and the iced peer link these; the phone runs the same source compiled
 to wasm and interpreted by `petros-wasm-host`, because that is the only peer
 where a rebuild costs four minutes instead of a third of a second.
@@ -1723,6 +1756,13 @@ Three things that are each a decision:
   whether there is a new cover to want. It costs one integer compare per
   frame, where calling `want_covers` outright would walk every album and
   artist twenty times a second.
+- **The demo's pending mutations are in a file of their own.** A peer with no
+  server never confirms anything, so the whole seeded library lives in
+  `petros-demo-demo.db-intents` beside the database — and deleting the `.db`
+  alone reopens a peer that replays every song the last run authored, with
+  `seed` then returning early on a library it did not make. The test that
+  wants a fresh demo deletes all four files, and it went green against a
+  stale one first.
 - **What is cached beyond the session is bytes, never handles.** A `Handle`
   holds decoded pixels and forty albums of those is tens of megabytes. The map
   is the session's; the disk is the machine's.

@@ -705,8 +705,16 @@ fn item_of(row: &With<Media, PlaylistItem>) -> Item {
     }
 }
 
+// Every verb, and this list is the one that decides whether a mutation can be
+// *applied*. `#[mutation]` alone is not enough: it writes the authoring
+// function and the schema section, so a verb missing from here still compiles,
+// still type-checks at every call site, and still appears in `mutations.txt` —
+// and is then refused at apply time as an unknown mutation. `set_artwork` was
+// exactly that for two commits, and what it looked like was covers that never
+// loaded.
 peer!(
     add_song,
+    set_artwork,
     create_playlist,
     add_to_playlist,
     add_all_to_playlist,
