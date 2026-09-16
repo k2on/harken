@@ -23,7 +23,9 @@ offline and it lands after whatever arrived while you were away.
 domain/                  the domain — the ONLY apply
   schema.sql             the one description of the tables. `migrate` runs it,
                          `tables!` generates the row types from it, and its
-                         foreign keys generate the relationships between them
+                         foreign keys generate the relationships between them.
+                         media / song, and person / work / movement /
+                         recording / credit — see "A work is not a recording"
   src/schema.rs          the model: the tables, and the view a client reads
   src/listening.rs       the *other* wire: one account's audio session, and the
                          four sentences its devices say. Not the log, ever
@@ -31,8 +33,8 @@ domain/                  the domain — the ONLY apply
                          a mutation takes `ctx: &Ctx` for who authored it
   tests/conformance.rs   the native and wasm builds of `apply`, compared
   tests/converge.rs      the domain against a simulated fleet
-  tests/read_model.rs    library(), the covers and the playlists, against
-                         rows apply wrote
+  tests/read_model.rs    library(), the covers, the playlists and the work
+                         chain, against rows apply wrote
   src/lib.rs             …and, under `cfg(wasm32)`, the module's ABI
   src/foreign_client.rs  the client a foreign caller sees (feature `foreign`)
   src/wasm_app.rs        the App whose `apply` is a module (feature `foreign`)
@@ -1234,7 +1236,8 @@ The client is a library with a sidebar: playlists, then albums, then artists.
 Which of those a row belongs to is not a column on the library list — the album
 lives on the `song` side table precisely so that `media` stays kind-neutral —
 so the grouping is four queries in the domain (`albums`, `artists`, `album`,
-`artist`) rather than a wider `Item`. Both clients would then fold the library
+`artist`) rather than a wider `Item` — with `composers`, `works`, `recordings`
+and `recording` beside them now, which nothing draws yet. Both clients would then fold the library
 the same way, and a screen that browses by album is asking a song-shaped
 question and gets a song-shaped answer.
 
@@ -1746,16 +1749,17 @@ inventing one would put a nameless card on the albums page for every single
 somebody ever typed in. It also fixed a latent bug: `albums()` used to group
 every album-less song under one entry named `""`.
 
-**Nothing has a foreign key into `artist`**, deliberately. `media.creator` is
-the one kind-neutral name for whoever made a thing — a song's artist, a
-sermon's speaker, a podcast's show — and a foreign key from it into a table
-called `artist` would be naming two of those three wrongly. So `artist` is a
-table of what is *known about* a creator, joined by name where there is a row,
-and `artists()` still reads its names from `media`: a new kind appears in that
-list without the query learning about it, and a creator with no row is a
-creator with no cover rather than one who does not exist. `albums()` is the
-same shape for the same reason — which albums *exist* is the songs' answer, and
-the table is asked only for the picture.
+**Nothing has a foreign key into `person`** (which `artist` became — see the
+section below), deliberately. `media.creator` is the one kind-neutral name for
+whoever made a thing — a song's artist, a classical work's composer, a sermon's
+speaker, a podcast's show — and a foreign key from it into a table of people
+would be naming some of those wrongly. So `person` is a table of what is *known
+about* a creator, joined by name where there is a row, and `artists()` still
+reads its names from `media`: a new kind appears in that list without the query
+learning about it, and a creator with no row is a creator with no cover rather
+than one who does not exist. `albums()` is the same shape for the same reason —
+which albums *exist* is the songs' answer, and the table is asked only for the
+picture.
 
 **`art` is spelt exactly as `media.file` is** — a path under the media root or
 a whole URL — because a client already knows how to turn one of those into
@@ -1830,6 +1834,11 @@ Three things that are each a decision:
   `seed` then returning early on a library it did not make. The test that
   wants a fresh demo deletes all four files, and it went green against a
   stale one first.
+- **…and the database name is per test, because that file is shared.** The path
+  is `petros-demo-{id}.db` and cargo runs a binary's tests on several threads,
+  so two tests both deleting and reseeding one demo database fail *only when
+  run together*: each passes alone and the suite fails, which is the worst way
+  to find out. `fresh` takes a name for exactly this.
 - **What is cached beyond the session is bytes, never handles.** A `Handle`
   holds decoded pixels; the map is the session's and the disk is the machine's.
 - **The decode happens where the fetch is, and putting it anywhere else was a
@@ -1859,6 +1868,135 @@ Three things that are each a decision:
   keeping the shrunk pixels would be ten times the disk to save CPU that is no
   longer on the render thread, in a form that could not be re-shrunk if the
   bound ever moved.
+
+## A work is not a recording, and neither is an album
+
+Three nouns where there was one, and a classical library is unbrowsable without
+them. **Composer → Work → Recording → Album/Track** is Apple Music Classical's
+spine and MusicBrainz's; their catalogue is quoted as "20,000+ composers,
+115,000+ unique works, 350,000+ movements" over 5M tracks, which is three
+counts because they are three tables. MusicBrainz says the join outright: a
+track is always associated with exactly one recording, and a recording can be
+linked to any number of tracks.
+
+- a **work** is the composition — `BWV 988`, written once, never performed;
+- a **recording** is one performance of it, by particular people on a
+  particular day;
+- an **album** is a *release*, and may carry several recordings.
+
+That last distinction is the whole thing. This file used to grope for it in
+prose — "Nos. 1 and 4 are two recordings between them because that is the only
+way either is complete" — with nowhere to put the word. The demo now says it in
+rows: BWV 1046 and BWV 1049 each come out with **two recordings**, and it took
+no change to `seed.rs` at all.
+
+**Pop is not a second case, and that is the point.** The industry already has
+both layers — an ISWC identifies a work and an ISRC a recording — and pop hides
+them because its works have one movement and nobody quotes their catalogue
+numbers. So a pop track is a song with no work and no movement, which is a true
+statement rather than a hole, and `media`, the library list, search, playlists
+and the player are byte-identical to what they were.
+
+**Every track has a recording, though, pop included**, and that one is load
+bearing. The first draft made `recording` require a `work`, which means credits
+hang off recordings for classical and off nothing for pop — so "who played
+this" would be two different questions depending on genre and one browse page
+would mean two things. `recording.work_id` is nullable instead. The cost is
+about two rows per pop track and the gain is that `credit` is the one answer
+for every genre, which also turns "somebody feat. somebody else" from a string
+a list draws into two people a library can be browsed by.
+
+**Credits are on the recording, not the track**, because a conductor is a fact
+about a performance. Per track, two movements of one recording could disagree
+about their own conductor — the same argument that keeps a cover off `song`,
+one level up.
+
+### The keys are natural, and classical is why that is free
+
+`fill_auto` hands a mutation exactly one uuid, so no verb can mint a work and a
+song in the same entry, and two peers each adding "BWV 988" offline would author
+two rows with one losing the rebase and taking every track pointing at it into a
+dangling reference. Classical is the one genre where the answer costs nothing:
+**a catalogue number is exactly a name every peer agrees on without being
+told**, which is what catalogue numbers are for. `work_key`, `movement_key` and
+`recording_key` in `functions.rs` are the whole of it, they are permanent the
+way `apply` is, and nothing ever draws one.
+
+That is also what lets there be separate verbs at all — `describe_work`,
+`describe_recording`, `describe_person`, `credit_recording` — because a client
+referencing a row it has not seen confirmed is safe when the reference is a
+function of the data.
+
+- **`describe_work` and `describe_recording` refuse a row no song has named**,
+  rather than making one: a work with an id and no composer breaks the foreign
+  key that makes it a work. `describe_person` does make it, because a person row
+  needs nothing but a name.
+- **Every field is fill-if-given.** An empty string and a 0 leave what is there,
+  so a scanner that learns the period on a second pass and says nothing about
+  the key does not erase the key. This is `art_to_write`'s rule, generalised.
+
+### Two numbers that look like one
+
+`song.track` is where a track sits **on the release**; `movement.no` is where it
+sits **in the work**. A compilation puts the Moonlight's first movement at track
+9. `album()` sorts by the first and `recording()` by the second, from the same
+rows, and conflating them is what makes an album page and a work page disagree.
+
+### What an entry written before any of this replays as
+
+`AddSong` still carries `part`, `catalogue` and `performer` forever — a log
+argument can never be withdrawn — so the only question was where `apply` puts
+them. Reading an old entry's empty `work_title` as "no work" would throw away a
+whole library's structure, so two things in an old entry are read as saying
+there is one:
+
+- **a catalogue number**, because nobody catalogues a track;
+- **a part**, because `song.part` was defined as "the division of the work this
+  belongs to", so a track with one is a track of a work by the definition of the
+  column.
+
+The second is the one that got missed, and it silently dropped the part of every
+uncatalogued suite — a whole album's grouping — until
+`an_album_is_in_the_works_order_and_not_the_librarys` failed. The work's *name*
+is then the album's, because this library was authored one record per work, and
+`movement_no` reads as the track number for the same reason. Those readings are
+why the demo grows works, movements and recordings without one line of `seed.rs`
+moving.
+
+### The lumped performer, and the row that is a fallback
+
+`add_song` gets one string — "London Symphony Orchestra, Hermann Scherchen" —
+and splitting it into two people with two roles is a guess. So it writes one
+credit at **`pos: 0`, which is what marks it a fallback**, and
+`credit_recording` writes real credits from 1. `performers_of` prefers the real
+ones and ignores the fallback when there are any.
+
+Without that they read together and every properly credited recording lists its
+orchestra twice, once on its own and once inside the lumped string it came
+from. The test did not catch it: `a_lumped_performer_becomes_people_with_roles`
+asserted `contains(…)`, which the fallback satisfied on its own, so the test
+passed under falsification. It asserts the whole string now.
+
+**A known wart, and it is the demo's data rather than the schema's.** `seed.rs`
+puts the licence *inside* the performer string, so Water Music's first suite is
+credited to a person called `(CC BY-SA 3.0)`. `recording.licence` is where that
+belongs and moving it is one line — but the album page deliberately *draws* the
+licence beside the track ("a credit nobody draws is a condition nobody met"), so
+the seed and the client have to move together or the credit is simply lost.
+
+### What is not done yet
+
+Stage one is the domain: the schema, the verbs, the queries and the tests.
+`composers()`, `works()`, `recordings()` and `recording()` exist and nothing
+draws them — the sidebar is still Songs / Albums / Artists, and `albums()`,
+`artists()`, `album()`, `artist()` and `track_details()` keep their exact
+signatures so both clients are untouched. `track_details` now joins `part` and
+`catalogue` out of the work and rebuilds `performer` from the credits, which is
+what makes that possible.
+
+A library with no works has no Composers page and no Works page to draw, so the
+sidebar will have to show a line only when there are rows behind it — the rule
+`Playlists` already follows.
 
 ## The square when there is no cover
 

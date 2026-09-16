@@ -43,7 +43,21 @@ pub use petros_schema::Id;
 #[cfg(feature = "storage")]
 petros::app!(HarkenApp {
     schema: crate::schema::SCHEMA,
-    // 3, and this one is not a shape change — `playlist` has exactly the
+    // 4 is a shape change and the largest one so far: `artist` became `person`,
+    // `work`, `movement`, `recording` and `credit` arrived, and `song` gave up
+    // `part`, `catalogue` and `performer` to them — none of which were facts
+    // about a track. `migrate` runs `CREATE TABLE IF NOT EXISTS` and so does
+    // nothing at all to a `song` that is already there, which is exactly what
+    // this number is for: drop, recreate at the new shape, replay every entry.
+    //
+    // Nothing in the *log* was removed to do it. `AddSong` still carries
+    // `part`, `catalogue` and `performer`, because a log is permanent and an
+    // argument can never be withdrawn — what changed is where `apply` puts
+    // them. An entry written before any of this replays as the work it always
+    // described; `add_song` says how, and that reading is the reason the demo's
+    // library grows works without one line of its seed moving.
+    //
+    // 3 was not a shape change — `playlist` has exactly the
     // columns it had. `create_playlist` changed its *meaning*: a name a person
     // already has is now a no-op, because every client makes a default
     // playlist before it has seen the log and a person on three devices ended
@@ -65,7 +79,7 @@ petros::app!(HarkenApp {
     //
     // 2 was `song` growing the columns that say where a track sits in its
     // album: the number, the part, the catalogue, who played it, the tempo.
-    schema_version: 3,
+    schema_version: 4,
     apply: crate::functions::apply,
     fill_auto: crate::functions::fill_auto,
 });

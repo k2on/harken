@@ -134,6 +134,66 @@ petros_schema::row! {
         art: String,
     };
 
+    /// Somebody who wrote something, as a composer index lists them.
+    ///
+    /// Not the same question as [`Artist`], which is everyone `media.creator`
+    /// names — for this repertoire that is the composer too, but for pop it is
+    /// the performer and for a podcast it is the show. This one is exactly the
+    /// people some `work` is *by*, so a library with no works has none of them
+    /// and a client draws no Composers page at all.
+    Composer => {
+        name: String,
+        /// "Bach, Johann Sebastian", or the name again when nobody said.
+        sort_name: String,
+        /// Years, 0 unknown.
+        born: i64,
+        died: i64,
+        /// How many of their works this library has something of, which is the
+        /// number a composer index is actually ranked by.
+        works: i64,
+        tracks: i64,
+        art: String,
+    };
+
+    /// A composition, as a composer's page lists them.
+    Work => {
+        /// The derived key. A client carries it to ask for the recordings and
+        /// never draws it — see `work_key` in `functions.rs`.
+        id: String,
+        title: String,
+        composer: String,
+        /// `BWV 988`. What disambiguates two works with one title.
+        catalogue: String,
+        /// "Symphony", "Concerto". Empty when nobody said.
+        form: String,
+        /// "Baroque". Empty when nobody said.
+        period: String,
+        /// How many performances of it this library holds, which is the fact a
+        /// work page exists to show.
+        recordings: i64,
+        tracks: i64,
+        art: String,
+    };
+
+    /// One performance, as a work's page lists them.
+    Recording => {
+        id: String,
+        /// The credits, in billing order, joined — "Hermann Scherchen, London
+        /// Symphony Orchestra". What tells two recordings of one work apart,
+        /// and the reason this list is worth drawing.
+        performers: String,
+        /// The year it was recorded, which is not the year it was released.
+        /// 0 unknown.
+        recorded: i64,
+        label: String,
+        /// The terms it was offered on, where they are not "none reserved".
+        /// Drawn beside the performers, because a credit nobody draws is a
+        /// condition nobody met.
+        licence: String,
+        tracks: i64,
+        art: String,
+    };
+
     /// A playlist. "Favorites" is one of these and nothing more — which
     /// playlist a heart stands for is the client's choice, not the domain's.
     Playlist => {

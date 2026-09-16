@@ -36,6 +36,9 @@ fn mutating_without_a_module_is_refused_rather_than_ignored() {
             0,
             String::new(),
             String::new(),
+            0,
+            String::new(),
+            0,
         )
         .expect_err("no module is loaded");
     assert!(

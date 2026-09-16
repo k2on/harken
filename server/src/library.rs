@@ -306,6 +306,14 @@ fn offer(
         // tracks, is what fills these in; neither is written yet.
         String::new(),
         String::new(),
+        // No disc, no work, no movement number — none of which a plain tag
+        // carries. A file that names a work does so in the tags Apple and
+        // MusicBrainz agreed on (`WORK`, `MOVEMENTNAME`, `MOVEMENT`), and this
+        // reader does not look at them yet. 0 and empty are "nobody said": the
+        // track becomes a recording of its own, which is what a pop track is.
+        0,
+        String::new(),
+        0,
     )) {
         Ok(_) => true,
         Err(e) => {

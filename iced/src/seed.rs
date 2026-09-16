@@ -2676,6 +2676,15 @@ pub fn seed(peer: &mut Peer) {
             // track, and `apply` reads the repeats as one row.
             art_of("album", s.album),
             art_of("artist", s.composer),
+            // Nothing said about the disc, the work or the movement — and the
+            // demo still comes out with works, because `add_song` reads an
+            // entry that names a catalogue number as being *of* a work whose
+            // name is the record's. That is a rule about replaying old entries
+            // rather than a shortcut for this file, and it happens to be
+            // exactly true here: this library is one record per work.
+            0,
+            String::new(),
+            0,
         ));
         // Asserted rather than discarded. A seed mutation can only be refused
         // by a mistake in this repository — a verb missing from `peer!`, an

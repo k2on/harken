@@ -26,6 +26,9 @@ fn library_and_favorites_agree_with_what_apply_wrote() {
             0,
             String::new(),
             String::new(),
+            0,
+            String::new(),
+            0,
         ))
         .unwrap();
     }
@@ -160,6 +163,9 @@ fn the_maintained_library_agrees_with_the_read_one() {
                 0,
                 String::new(),
                 String::new(),
+                0,
+                String::new(),
+                0,
             ))
             .unwrap();
         settle(&mut client, &mut view, &mut favorites, &mut rendered);
@@ -275,6 +281,9 @@ fn a_peers_changes_reach_the_maintained_library() {
                 0,
                 String::new(),
                 String::new(),
+                0,
+                String::new(),
+                0,
             ),
         );
     }
@@ -347,6 +356,9 @@ fn a_first_sync_delivers_songs_and_favorites_without_doubling() {
                 0,
                 String::new(),
                 String::new(),
+                0,
+                String::new(),
+                0,
             ),
         );
         sim.step();
@@ -582,6 +594,9 @@ fn albums_and_artists_group_the_library_and_select_it_back() {
             0,
             String::new(),
             String::new(),
+            0,
+            String::new(),
+            0,
         ))
         .unwrap();
     }
@@ -674,6 +689,9 @@ fn an_album_is_in_the_works_order_and_not_the_librarys() {
             0,
             String::new(),
             String::new(),
+            0,
+            String::new(),
+            0,
         ))
         .unwrap();
     }
@@ -692,6 +710,9 @@ fn an_album_is_in_the_works_order_and_not_the_librarys() {
         0,
         String::new(),
         String::new(),
+        0,
+        String::new(),
+        0,
     ))
     .unwrap();
 
@@ -739,6 +760,9 @@ fn a_track_knows_which_playlists_it_is_on() {
             0,
             String::new(),
             String::new(),
+            0,
+            String::new(),
+            0,
         ))
         .unwrap();
     }
@@ -798,6 +822,9 @@ fn the_same_file_twice_is_one_song() {
             0,
             String::new(),
             String::new(),
+            0,
+            String::new(),
+            0,
         )
     };
     c.mutate(add("Für Elise", "beethoven/fur-elise.mp3"))
@@ -867,6 +894,9 @@ fn artwork_reaches_the_lists_it_is_drawn_on() {
             0,
             album_art.into(),
             artist_art.into(),
+            0,
+            String::new(),
+            0,
         )
     };
 
@@ -921,10 +951,430 @@ fn artwork_reaches_the_lists_it_is_drawn_on() {
         0,
         String::new(),
         String::new(),
+        0,
+        String::new(),
+        0,
     ))
     .unwrap();
     let albums = harken::albums(&mut c.store()).unwrap();
     assert_eq!(albums.len(), 2);
     let bergamasque = albums.iter().find(|a| a.name == "Suite bergamasque");
     assert_eq!(bergamasque.map(|a| a.art.as_str()), Some(""));
+}
+
+// ------------------------------------------- composers, works and recordings
+
+/// One `add_song`, with everything the classical chain needs, as a closure so
+/// the tests below read as the music rather than as fifteen arguments.
+#[allow(clippy::too_many_arguments)]
+fn track(
+    title: &str,
+    composer: &str,
+    album: &str,
+    catalogue: &str,
+    performer: &str,
+    file: &str,
+    track_no: i64,
+    work_title: &str,
+    movement_no: i64,
+) -> petros_schema::cbor::Value {
+    harken::add_song(
+        title.into(),
+        composer.into(),
+        album.into(),
+        0,
+        file.into(),
+        track_no,
+        String::new(),
+        catalogue.into(),
+        performer.into(),
+        0,
+        String::new(),
+        String::new(),
+        0,
+        work_title.into(),
+        movement_no,
+    )
+}
+
+fn peer(seed: u64) -> Client<harken::HarkenApp> {
+    Client::<harken::HarkenApp>::open(
+        petros::open_memory().unwrap(),
+        "alice",
+        AutoCtx::seeded(seed),
+    )
+    .unwrap()
+}
+
+/// **The whole point of the shape**: one work, two performances of it.
+///
+/// This is what could not be said before. Two complete Goldbergs were two
+/// albums with the same thirty-two titles in them and nothing saying they were
+/// the same music — which is why the demo keeps only one of them and CLAUDE.md
+/// explains the omission in prose. `works()` says 1 and `recordings()` says 2.
+///
+/// Falsify it by putting the performer in `work_key`: both rows become two
+/// works and the count on the left is 2.
+#[test]
+fn one_work_holds_every_recording_of_it() {
+    let mut c = peer(21);
+    let favs = favorites(&mut c);
+
+    for (performer, file) in [("Kimiko Ishizaka", "a"), ("Glenn Gould", "b")] {
+        for no in 1..=3 {
+            c.mutate(track(
+                &format!("Variatio {no}"),
+                "Johann Sebastian Bach",
+                "Goldberg Variations",
+                "BWV 988",
+                performer,
+                &format!("music/{file}{no}.mp3"),
+                no,
+                "Goldberg Variations",
+                no,
+            ))
+            .unwrap();
+        }
+    }
+
+    let composers = harken::composers(&mut c.store()).unwrap();
+    assert_eq!(composers.len(), 1);
+    assert_eq!(composers[0].name, "Johann Sebastian Bach");
+    assert_eq!(composers[0].works, 1, "one work, however many recordings");
+    assert_eq!(composers[0].tracks, 6);
+
+    let works = harken::works(&mut c.store(), "Johann Sebastian Bach".into()).unwrap();
+    assert_eq!(works.len(), 1, "two performances are not two works");
+    assert_eq!(works[0].catalogue, "BWV 988");
+    assert_eq!(works[0].recordings, 2);
+    assert_eq!(works[0].tracks, 6);
+
+    let takes = harken::recordings(&mut c.store(), works[0].id.clone()).unwrap();
+    assert_eq!(takes.len(), 2, "…and they are two recordings");
+    let who: Vec<&str> = takes.iter().map(|r| r.performers.as_str()).collect();
+    assert!(who.contains(&"Kimiko Ishizaka"), "performers: {who:?}");
+    assert!(who.contains(&"Glenn Gould"), "performers: {who:?}");
+
+    // And each one plays as its own list of three.
+    let one = harken::recording(&mut c.store(), favs, takes[0].id.clone()).unwrap();
+    assert_eq!(one.len(), 3);
+}
+
+/// A pop track is a song with no work, and it still has everywhere to hang.
+///
+/// The guarantee that this shape did not cost the other genres: `media` and the
+/// library list are untouched, the album page works, and the artist is a person
+/// with a credit rather than only a string — so "who played this" is one
+/// question with one answer whatever the genre.
+///
+/// Falsify it by making `recording.work_id` required: the artist has no credit,
+/// because there is nothing to credit them on.
+#[test]
+fn a_pop_track_has_a_recording_and_no_work() {
+    let mut c = peer(22);
+    let favs = favorites(&mut c);
+
+    c.mutate(track(
+        "Low Tide",
+        "The Quiet Hours",
+        "Northerly",
+        "",
+        "",
+        "music/northerly/07.flac",
+        7,
+        "",
+        0,
+    ))
+    .unwrap();
+
+    assert!(
+        harken::composers(&mut c.store()).unwrap().is_empty(),
+        "nobody wrote a work, so there is no composers page to draw"
+    );
+    assert_eq!(
+        harken::artists(&mut c.store()).unwrap()[0].name,
+        "The Quiet Hours",
+        "…and the artist is exactly where they always were"
+    );
+    assert_eq!(harken::albums(&mut c.store()).unwrap().len(), 1);
+    assert_eq!(
+        harken::album(&mut c.store(), favs, "Northerly".into())
+            .unwrap()
+            .len(),
+        1
+    );
+
+    // The part that is new: the artist is a credit on a recording, so the same
+    // read answers for pop and for classical.
+    let details = harken::track_details(&mut c.store()).unwrap();
+    assert_eq!(details[0].performer, "The Quiet Hours");
+    assert_eq!(details[0].catalogue, "", "no work, so no catalogue number");
+}
+
+/// A track number is the release's and a movement number is the work's, and a
+/// compilation is where they disagree.
+///
+/// `album()` answers in release order and `recording()` in work order, from the
+/// same four rows. Falsify it by sorting `recording()` on `song.track`: both
+/// lists come out the same and the second assertion names the wrong one.
+#[test]
+fn a_track_number_is_not_a_movement_number() {
+    let mut c = peer(23);
+    let favs = favorites(&mut c);
+
+    // A "best of" that opens with the finale and buries the first movement.
+    for (title, movement, track_no) in [("III. Presto", 3, 1), ("I. Adagio", 1, 9)] {
+        c.mutate(track(
+            title,
+            "Ludwig van Beethoven",
+            "Piano Favourites",
+            "Op. 27 No. 2",
+            "Wilhelm Kempff",
+            &format!("music/{movement}.mp3"),
+            track_no,
+            "Moonlight Sonata",
+            movement,
+        ))
+        .unwrap();
+    }
+
+    let on_the_record = harken::album(&mut c.store(), favs, "Piano Favourites".into()).unwrap();
+    assert_eq!(
+        on_the_record
+            .iter()
+            .map(|i| i.title.as_str())
+            .collect::<Vec<_>>(),
+        vec!["III. Presto", "I. Adagio"],
+        "an album page is about the release, so it is in the release's order"
+    );
+
+    let works = harken::works(&mut c.store(), "Ludwig van Beethoven".into()).unwrap();
+    let takes = harken::recordings(&mut c.store(), works[0].id.clone()).unwrap();
+    let in_the_work = harken::recording(&mut c.store(), favs, takes[0].id.clone()).unwrap();
+    assert_eq!(
+        in_the_work
+            .iter()
+            .map(|i| i.title.as_str())
+            .collect::<Vec<_>>(),
+        vec!["I. Adagio", "III. Presto"],
+        "a work page is about the work, so it is in the work's order"
+    );
+}
+
+/// The two readings that let an entry written before any of this still say what
+/// it said.
+///
+/// `AddSong` keeps `catalogue`, `part` and `performer` forever — a log argument
+/// can never be withdrawn — so the question is only where `apply` puts them. An
+/// old entry carries no `work_title` and no `movement_no`, and reading those as
+/// "no work" would throw away a whole library's structure. A catalogue number
+/// says there is a work; so does a part, which is the case that got missed
+/// first and cost an album its grouping.
+///
+/// Falsify either half by narrowing the rule in `add_song`: the first assertion
+/// loses its catalogue and the second loses its part.
+#[test]
+fn an_entry_from_before_the_work_still_names_one() {
+    let mut c = peer(24);
+
+    // A catalogue number and nothing else: the record was the work.
+    c.mutate(harken::add_song(
+        "Variatio 12".into(),
+        "Johann Sebastian Bach".into(),
+        "Goldberg Variations".into(),
+        0,
+        "music/a.mp3".into(),
+        13,
+        String::new(),
+        "BWV 988".into(),
+        "Kimiko Ishizaka".into(),
+        0,
+        String::new(),
+        String::new(),
+        0,
+        String::new(), // no work_title …
+        0,             // … and no movement number
+    ))
+    .unwrap();
+    let works = harken::works(&mut c.store(), "Johann Sebastian Bach".into()).unwrap();
+    assert_eq!(works.len(), 1, "a catalogue number means there is a work");
+    assert_eq!(works[0].title, "Goldberg Variations");
+    assert_eq!(
+        harken::track_details(&mut c.store()).unwrap()[0].catalogue,
+        "BWV 988",
+        "…and the catalogue comes back out through the work"
+    );
+
+    // A part and no catalogue: still a work, because a part is a division *of*
+    // one. This is the half that was missed.
+    let mut c = peer(25);
+    c.mutate(harken::add_song(
+        "Alla Hornpipe".into(),
+        "George Frideric Handel".into(),
+        "Water Music".into(),
+        0,
+        "music/b.mp3".into(),
+        12,
+        "Suite No. 2 in D major".into(),
+        String::new(),
+        String::new(),
+        0,
+        String::new(),
+        String::new(),
+        0,
+        String::new(),
+        0,
+    ))
+    .unwrap();
+    assert_eq!(
+        harken::track_details(&mut c.store()).unwrap()[0].part,
+        "Suite No. 2 in D major",
+        "a part is evidence of a work, and it is what an album page groups by"
+    );
+}
+
+/// `credit_recording` turns one lumped string into people with roles, and both
+/// reads put them back together in billing order.
+///
+/// "London Symphony Orchestra, Hermann Scherchen" is one string a column can
+/// draw and nothing can browse. Falsify it by dropping `pos` from the sort:
+/// the conductor comes back first because `B` sorts before `L`.
+#[test]
+fn a_lumped_performer_becomes_people_with_roles() {
+    let mut c = peer(26);
+    c.mutate(track(
+        "Hallelujah",
+        "George Frideric Handel",
+        "Messiah",
+        "HWV 56",
+        "London Symphony Orchestra, Hermann Scherchen",
+        "music/m.mp3",
+        44,
+        "Messiah",
+        44,
+    ))
+    .unwrap();
+
+    let works = harken::works(&mut c.store(), "George Frideric Handel".into()).unwrap();
+    let id = harken::recordings(&mut c.store(), works[0].id.clone()).unwrap()[0]
+        .id
+        .clone();
+
+    // What `add_song` could say on its own: one credit, the whole string.
+    assert_eq!(
+        harken::track_details(&mut c.store()).unwrap()[0].performer,
+        "London Symphony Orchestra, Hermann Scherchen"
+    );
+
+    c.mutate(harken::credit_recording(
+        id.clone(),
+        "Hermann Scherchen".into(),
+        "conductor".into(),
+        String::new(),
+        2,
+    ))
+    .unwrap();
+    c.mutate(harken::credit_recording(
+        id.clone(),
+        "London Symphony Orchestra".into(),
+        "orchestra".into(),
+        String::new(),
+        1,
+    ))
+    .unwrap();
+
+    let takes = harken::recordings(&mut c.store(), works[0].id.clone()).unwrap();
+    assert_eq!(
+        takes[0].performers, "London Symphony Orchestra, Hermann Scherchen",
+        "billing order and not alphabetical — and the lumped string `add_song` \
+         wrote is displaced rather than listed beside the two people it named, \
+         which is what this asserted the first time and it passed either way"
+    );
+    assert_eq!(
+        harken::track_details(&mut c.store()).unwrap()[0].performer,
+        "London Symphony Orchestra, Hermann Scherchen",
+        "…and the table column reads the same credits the work page does"
+    );
+
+    // Refused rather than stored where nothing reads it.
+    assert!(
+        c.mutate(harken::credit_recording(
+            "nobody/nothing@x".into(),
+            "Somebody".into(),
+            "conductor".into(),
+            String::new(),
+            1,
+        ))
+        .is_err(),
+        "a credit needs a recording to be on"
+    );
+}
+
+/// `describe_work` fills in what a track could not carry, and refuses a work no
+/// song has named.
+///
+/// The fill-if-given rule is the one that matters: a scanner that learns the
+/// period on a second pass and says nothing about the key must not erase the
+/// key. Falsify it by writing the incoming value unconditionally — the last
+/// assertion finds an empty `form`.
+#[test]
+fn describing_a_work_fills_in_and_never_erases() {
+    let mut c = peer(27);
+    c.mutate(track(
+        "I. Allegro con brio",
+        "Ludwig van Beethoven",
+        "Symphony No. 5",
+        "Op. 67",
+        "Carlos Kleiber",
+        "music/5.mp3",
+        1,
+        "Symphony No. 5",
+        1,
+    ))
+    .unwrap();
+    let id = harken::works(&mut c.store(), "Ludwig van Beethoven".into()).unwrap()[0]
+        .id
+        .clone();
+
+    c.mutate(harken::describe_work(
+        id.clone(),
+        String::new(),
+        "C Minor".into(),
+        "Symphony".into(),
+        String::new(),
+        1808,
+        String::new(),
+    ))
+    .unwrap();
+    // A second pass that knows the period and nothing else.
+    c.mutate(harken::describe_work(
+        id.clone(),
+        String::new(),
+        String::new(),
+        String::new(),
+        "Classical".into(),
+        0,
+        String::new(),
+    ))
+    .unwrap();
+
+    let work = harken::works(&mut c.store(), "Ludwig van Beethoven".into())
+        .unwrap()
+        .remove(0);
+    assert_eq!(work.period, "Classical", "the second pass said this");
+    assert_eq!(work.form, "Symphony", "…and must not have erased this");
+
+    assert!(
+        c.mutate(harken::describe_work(
+            "nobody/nothing".into(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            0,
+            String::new(),
+        ))
+        .is_err(),
+        "a work exists because a song named it"
+    );
 }

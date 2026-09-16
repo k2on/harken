@@ -3874,10 +3874,19 @@ mod tests {
 mod demo_covers {
     use super::{covers, media_url, seed, App, Peer};
 
+    /// A demo peer with a library in it, from nothing.
+    ///
     /// `seed` returns early on a database that already has tracks, and the
-    /// native demo's is a file in the temp directory that outlives the run.
-    fn fresh() -> Peer {
-        let db = std::env::temp_dir().join("petros-demo-demo.db");
+    /// native demo's is a file in the temp directory that outlives the run — so
+    /// this deletes it first.
+    ///
+    /// **`who` is a database name, and every caller needs its own.** The path
+    /// is `petros-demo-{id}.db`, cargo runs a binary's tests on several threads
+    /// at once, and two tests both deleting and reseeding one file fail only
+    /// when they are run *together*: each passes alone and the suite fails,
+    /// which is the worst way to find out. One name each and they cannot meet.
+    pub fn fresh(who: &str) -> Peer {
+        let db = std::env::temp_dir().join(format!("petros-demo-{who}.db"));
         // `-intents` is the one that matters and is the one easily forgotten:
         // a client's pending mutations live in a file of their own, so
         // deleting the database alone reopens a peer that replays every song
@@ -3886,14 +3895,16 @@ mod demo_covers {
         for suffix in ["", "-wal", "-shm", "-intents"] {
             let _ = std::fs::remove_file(format!("{}{}", db.display(), suffix));
         }
-        let mut peer = Peer::open(&App::demo_login());
+        let mut login = App::demo_login();
+        login.user.id = who.to_string();
+        let mut peer = Peer::open(&login);
         seed::seed(&mut peer);
         peer
     }
 
     #[test]
     fn the_seeded_art_reaches_a_fetch() {
-        let peer = fresh();
+        let peer = fresh("covers");
 
         let albums: Vec<&str> = peer
             .albums
@@ -3934,6 +3945,64 @@ mod demo_covers {
             asked,
             albums.len() + artists.len(),
             "every seeded cover is a fetch the client would make"
+        );
+    }
+}
+
+/// What the demo's own library comes out as, through the work chain.
+///
+/// Not one line of `seed.rs` moved for this: every track already carried a
+/// catalogue number or a part, and `add_song` reads either as saying there is a
+/// work whose name is the record's. So this is the replay rule for entries
+/// written before any of it existed, checked against the only real library
+/// there is rather than against a fixture — which is the half a unit test
+/// cannot do.
+#[cfg(all(test, feature = "demo"))]
+mod demo_works {
+    use super::demo_covers::fresh;
+
+    #[test]
+    fn the_demo_is_composers_with_works() {
+        let mut peer = fresh("works");
+        let store = &mut peer.client.store();
+
+        let composers = harken::composers(store).unwrap();
+        assert!(
+            composers.len() >= 5,
+            "the demo is seven composers; it has {}: {:?}",
+            composers.len(),
+            composers.iter().map(|c| &c.name).collect::<Vec<_>>()
+        );
+
+        let bach = composers
+            .iter()
+            .find(|c| c.name == "Johann Sebastian Bach")
+            .expect("Bach is in the demo");
+        assert!(
+            bach.works >= 3,
+            "Bach has the Goldbergs, the Brandenburgs and the Well-Tempered \
+             Clavier at least; this says {}",
+            bach.works
+        );
+
+        // The Goldbergs: one work, one recording, thirty-two movements — which
+        // is the shape the old schema could not say, because thirty-two tracks
+        // with one catalogue number between them was thirty-two catalogue
+        // numbers.
+        let works = harken::works(store, "Johann Sebastian Bach".into()).unwrap();
+        let goldbergs = works
+            .iter()
+            .find(|w| w.catalogue == "BWV 988")
+            .expect("BWV 988 is in the demo");
+        assert_eq!(goldbergs.recordings, 1, "one performance of it is seeded");
+        assert!(goldbergs.tracks > 20, "tracks: {}", goldbergs.tracks);
+
+        let takes = harken::recordings(store, goldbergs.id.clone()).unwrap();
+        assert_eq!(takes.len(), 1);
+        assert!(
+            !takes[0].performers.is_empty(),
+            "a recording nobody is credited on is a recording nothing tells \
+             apart from another"
         );
     }
 }
