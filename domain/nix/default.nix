@@ -11,7 +11,15 @@
       # adding a dependency edge to a crate already in the tree moves it too.
       # `serve`'s Home Assistant bridge did exactly that — `ureq`, `serde` and
       # `serde_json` were all already vendored for something else.
-      cargoVendorHash = "sha256-de8hRe9F0mdpTdzGmSR/vBzHJ8TXR8n6hdB4jsmZ2x8=";
+      #
+      # One round: the lock moved and the old hash is already in the store, so
+      # nix substituted the *stale* vendor directory instead of rebuilding it
+      # and the failure was the lockfile consistency check rather than a hash
+      # mismatch — which prints no `got:` to copy. A hash nothing can have
+      # forces the fetch, and the next run prints the real one. Written out
+      # rather than as `lib.fakeHash` so that a wrong guess about what
+      # `perSystem` is handed cannot cost the round this is spending.
+      cargoVendorHash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
       mutators.crate = "harken";
       # Beside the domain rather than at the root, because it describes what is
       # in `functions.rs`. `nix flake check` holds every build to it.
