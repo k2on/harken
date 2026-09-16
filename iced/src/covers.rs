@@ -1,7 +1,8 @@
 //! Covers: fetched once, shrunk once, and drawn instead of the derived square.
 //!
-//! `artwork` in the log carries a *name* — a path under the media root, or a
-//! whole URL — and never the bytes, for the reason `media.file` does not. So
+//! `album.art` and `artist.art` carry a *name* — a path under the media root
+//! or a whole URL — and never the bytes, for the reason `media.file` does not.
+//! So
 //! the bytes are this file's problem, and the problem has two halves: doing
 //! the fetch once, and handing the renderer something the size of the thing on
 //! screen.

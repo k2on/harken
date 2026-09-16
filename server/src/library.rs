@@ -298,6 +298,14 @@ fn offer(
         String::new(),
         track.performer,
         track.bpm,
+        // No cover, from a scanner that cannot yet find one. Both are empty
+        // rather than absent, and `apply` reads empty as "this entry has no
+        // picture to offer" and leaves whatever is already on the row — so a
+        // rescan of a library somebody has given covers to does not wipe them.
+        // Reading the embedded art out of a tag, or a `folder.jpg` beside the
+        // tracks, is what fills these in; neither is written yet.
+        String::new(),
+        String::new(),
     )) {
         Ok(_) => true,
         Err(e) => {

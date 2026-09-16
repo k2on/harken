@@ -1,12 +1,15 @@
 /**
  * The square beside a track, and the big one over the player.
  *
- * There is no artwork in the log and there should not be: `media` carries a
- * title, a creator, a length and the name of a file, and a cover would be a
- * column every kind pays for so that one kind can have a picture. So this
- * draws one instead, from the name — deterministically, so the same album is
- * the same square on every device and after every reinstall, which is most of
- * what a cover is actually doing in a list.
+ * Drawn from the name, deterministically, so the same album is the same square
+ * on every device and after every reinstall — which is most of what a cover is
+ * actually doing in a list. The log does carry covers now (`album.art` and
+ * `artist.art`, which the desktop fetches), and this phone does not draw them
+ * yet, so this is what every record here gets.
+ *
+ * What a cover is never on is `media`: it hangs on the album and artist rows,
+ * because a column there would be one every kind pays for so that one kind can
+ * have a picture.
  */
 
 import { View } from 'react-native';

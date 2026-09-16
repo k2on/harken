@@ -39,7 +39,7 @@ use petros_schema::prelude::*;
 #[cfg(feature = "foreign")]
 use crate::Peer;
 
-use crate::schema::tables::{Artwork, Media, Playlist, PlaylistItem, Song};
+use crate::schema::tables::{Album, Artist, Media, Playlist, PlaylistItem, Song};
 
 // Only the queries below use these, and a query is not built for the sandbox.
 #[cfg(feature = "storage")]
@@ -78,6 +78,14 @@ pub fn add_song(
     catalogue: String,
     performer: String,
     bpm: i64,
+    // The covers, which arrive with the song rather than through a verb of
+    // their own. There was a `set_artwork` here and it is gone: an album and
+    // an artist are rows now, so a picture has something to be a column *on*,
+    // and the thing that knows a track's album is the entry that adds the
+    // track. Empty is "nobody said" and leaves whatever is already there —
+    // see `name_art`, which is where that rule is.
+    album_art: String,
+    artist_art: String,
 ) -> Result {
     if title.trim().is_empty() {
         return Err("a song needs a title".into());
@@ -119,9 +127,43 @@ pub fn add_song(
         added_ms,
         user_id: ctx.user.id.clone(),
     })?;
+    // The record and the person, as rows. Written here and not by a verb of
+    // their own, because the name is the key: `add_song` naming an album that
+    // already exists is one row, from any peer, in any order, with nothing to
+    // reconcile. A verb that minted an id could not say that.
+    let album = album.trim().to_string();
+    let artist = artist.trim().to_string();
+    if !album.is_empty() {
+        let have = db.select(Album::all().filter(Album::name.eq(album.clone())));
+        if let Some(art) = art_to_write(have.first().map(|a| a.art.as_str()), &album_art) {
+            db.put(&Album {
+                name: album.clone(),
+                art,
+                added_ms,
+                user_id: ctx.user.id.clone(),
+            })?;
+        }
+    }
+    if !artist.is_empty() {
+        let have = db.select(Artist::all().filter(Artist::name.eq(artist.clone())));
+        if let Some(art) = art_to_write(have.first().map(|a| a.art.as_str()), &artist_art) {
+            db.put(&Artist {
+                name: artist.clone(),
+                art,
+                added_ms,
+                user_id: ctx.user.id.clone(),
+            })?;
+        }
+    }
     db.put(&Song {
         media_id: id,
-        album: album.trim().to_string(),
+        // `None`, not `""`: there is a foreign key on this column, so a song
+        // with no record has nothing to point at rather than a row with no
+        // name to point at.
+        album_name: match album.is_empty() {
+            true => None,
+            false => Some(album),
+        },
         // Negatives are not a position in an album, and neither is a number
         // past any plausible one: clamped rather than refused, because a bad
         // track number is not a reason to lose the recording.
@@ -136,52 +178,35 @@ pub fn add_song(
     Ok(())
 }
 
-/// Give an album or an artist a cover.
+/// What to put in a row's `art`, or `None` to leave the row exactly as it is.
 ///
-/// `subject` is `"album"` or `"artist"` and `name` is what the tracks call it.
-/// `file` is spelt exactly as `media.file` is — a path under the media root,
-/// or a whole URL — because a client already knows how to turn one of those
-/// into something it can fetch, and a second rule for pictures would be a
-/// second thing to get wrong.
+/// One rule, here rather than twice in `add_song`, because an album and an
+/// artist follow the same one and two copies of it would eventually be two
+/// rules:
 ///
-/// **Last write wins, which is the opposite of every other verb here.**
-/// `add_song` and `create_playlist` both let the *first* entry win, because
-/// adding the same song twice is a mistake and the log is where the first
-/// answer lives. A cover is not that: replacing one is the whole point, and a
-/// person who picks a better picture means the newer one. The log being
-/// totally ordered is what makes "newer" a fact rather than a race — every
-/// peer replaying reaches the same last write — so this is one `put` over a
-/// row keyed by the pair, and the key does the work.
+/// - **No row yet — make one**, carrying whatever this entry brought. Often
+///   that is nothing, and a row with an empty `art` is right: the row is the
+///   thing a song points at, and having no cover is a fact about the album
+///   rather than a reason not to have the album.
+/// - **A row already there — a picture replaces a picture, and nothing
+///   replaces nothing.** This is the one last-write-wins rule in the file, and
+///   it is deliberate: `add_song` lets the *first* entry win on a file, because
+///   adding a song twice is a mistake, but somebody who picks a better cover
+///   means the newer one. The log is totally ordered, so "newer" is a fact
+///   every replica reaches the same way.
+/// - **The same picture again writes nothing**, which is what keeps a rescan
+///   of a thousand tracks a thousand reads and no writes — a `put` would move
+///   `added_ms` and report a change to every maintained view watching.
 ///
-/// Clearing one is `file` empty, rather than a `remove_artwork` beside this:
-/// the row staying with nothing in it and the row not existing are the same
-/// answer to `albums()`, and one verb is one thing to get right.
-#[mutation]
-pub fn set_artwork(
-    db: &mut Db,
-    ctx: &Ctx,
-    added_ms: Now,
-    subject: String,
-    name: String,
-    file: String,
-) -> Result {
-    // Refused rather than ignored: a third subject would be a picture nothing
-    // ever reads, stored forever, and the caller would never hear about it.
-    if subject != "album" && subject != "artist" {
-        return Err("artwork is of an album or an artist".into());
+/// Not behind `storage`: this runs inside `apply`, which is exactly the build
+/// that has no read model.
+fn art_to_write(current: Option<&str>, incoming: &str) -> Option<String> {
+    let incoming = incoming.trim();
+    match current {
+        None => Some(incoming.to_string()),
+        Some(have) if incoming.is_empty() || have == incoming => None,
+        Some(_) => Some(incoming.to_string()),
     }
-    let name = name.trim().to_string();
-    if name.is_empty() {
-        return Err("artwork needs something to be of".into());
-    }
-    db.put(&Artwork {
-        subject,
-        name,
-        file: file.trim().to_string(),
-        added_ms,
-        user_id: ctx.user.id.clone(),
-    })?;
-    Ok(())
 }
 
 /// Make a playlist.
@@ -493,12 +518,28 @@ pub fn albums(db: &mut Db) -> Result<Vec<crate::schema::Album>> {
     let mut by_name: BTreeMap<String, (String, i64)> = BTreeMap::new();
     for row in &rows {
         let Some(media) = row.one() else { continue };
+        // A song on no record contributes to no album, which is what the
+        // nullable column buys: this used to group every album-less song under
+        // one entry named `""` and draw it as a card with no title.
+        let Some(name) = &row.row.album_name else {
+            continue;
+        };
         let entry = by_name
-            .entry(row.row.album.clone())
+            .entry(name.clone())
             .or_insert_with(|| (media.creator.clone(), 0));
         entry.1 += 1;
     }
-    let mut art = covers(db, "album");
+    // Which albums there *are* is still the songs' answer, not this table's: a
+    // row here with nothing pointing at it would be an album with no tracks,
+    // which is not something to put in a sidebar. What the table is asked for
+    // is the cover — and in one read rather than a point lookup per album,
+    // because two hundred albums would otherwise be two hundred of those to
+    // draw a sidebar, and these rows are small.
+    let mut art: BTreeMap<String, String> = db
+        .select(Album::all())
+        .into_iter()
+        .map(|a| (a.name, a.art))
+        .collect();
     Ok(by_name
         .into_iter()
         .map(|(name, (creator, tracks))| crate::schema::Album {
@@ -517,7 +558,14 @@ pub fn artists(db: &mut Db) -> Result<Vec<crate::schema::Artist>> {
     for media in db.select(Media::all()) {
         *by_name.entry(media.creator).or_insert(0) += 1;
     }
-    let mut art = covers(db, "artist");
+    // The names come from `media` above, so a kind with no songs still has its
+    // creator in this list; `artist` is joined for the picture and nothing
+    // else, which is the whole reason nothing has a foreign key into it.
+    let mut art: BTreeMap<String, String> = db
+        .select(Artist::all())
+        .into_iter()
+        .map(|a| (a.name, a.art))
+        .collect();
     Ok(by_name
         .into_iter()
         .map(|(name, tracks)| crate::schema::Artist {
@@ -526,19 +574,6 @@ pub fn artists(db: &mut Db) -> Result<Vec<crate::schema::Artist>> {
             tracks,
         })
         .collect())
-}
-
-/// Every cover of one subject, by the name it belongs to.
-///
-/// One read for the whole list rather than one per album: a library with two
-/// hundred albums would otherwise be two hundred point lookups to draw a
-/// sidebar, and the rows are small.
-#[cfg(feature = "storage")]
-fn covers(db: &mut impl Store, subject: &str) -> BTreeMap<String, String> {
-    db.select(Artwork::all().filter(Artwork::subject.eq(subject.to_string())))
-        .into_iter()
-        .map(|a| (a.name, a.file))
-        .collect()
 }
 
 /// Every track that is on an album, and which one.
@@ -552,7 +587,7 @@ pub fn track_details(db: &mut Db) -> Result<Vec<crate::schema::TrackDetail>> {
         .into_iter()
         .map(|s| crate::schema::TrackDetail {
             media_id: s.media_id,
-            album: s.album,
+            album: s.album_name.unwrap_or_default(),
             track: s.track,
             part: s.part,
             catalogue: s.catalogue,
@@ -578,7 +613,7 @@ pub fn track_details(db: &mut Db) -> Result<Vec<crate::schema::TrackDetail>> {
 #[query]
 pub fn album(db: &mut Db, playlist_id: Id<Playlist>, name: String) -> Result<Vec<Item>> {
     let order: BTreeMap<Id<Media>, (String, i64)> = db
-        .select(Song::all().filter(Song::album.eq(name)))
+        .select(Song::all().filter(Song::album_name.eq(Some(name))))
         .into_iter()
         // 0 is "nobody said", and an untagged track belongs after the ones
         // that did say, not ahead of track 1.
@@ -710,11 +745,11 @@ fn item_of(row: &With<Media, PlaylistItem>) -> Item {
 // function and the schema section, so a verb missing from here still compiles,
 // still type-checks at every call site, and still appears in `mutations.txt` —
 // and is then refused at apply time as an unknown mutation. `set_artwork` was
-// exactly that for two commits, and what it looked like was covers that never
-// loaded.
+// exactly that for its whole life — two commits, and what it looked like was
+// covers that never loaded. It is gone now, and the covers it could not set
+// ride on `add_song`.
 peer!(
     add_song,
-    set_artwork,
     create_playlist,
     add_to_playlist,
     add_all_to_playlist,

@@ -30,13 +30,76 @@ CREATE TABLE IF NOT EXISTS media (
     user_id     TEXT NOT NULL
 );
 
+-- A record: a thing, rather than a string somebody typed on a track.
+--
+-- It was the second of those until now, with a separate `artwork` table keyed
+-- by `(subject, name)` to hang a picture on — because a cover has to belong to
+-- something, and there was nothing for it to belong to. This is that something.
+-- `song.album_name` points at a row here, and the cover is a *column* on it
+-- rather than a row in a table of covers about things that are not rows.
+--
+-- **Keyed by the name and not by an id**, which is the decision everything else
+-- follows from. Two reasons, and the first is mechanical: `fill_auto` hands a
+-- mutation exactly one uuid, so no single verb can mint an album and a song in
+-- the same entry, and splitting it into two verbs means a client authoring a
+-- reference to a row it has not seen confirmed. The second is the rebase. Two
+-- peers each adding "Water Music" offline would author two rows with two ids,
+-- one of which loses — and every song pointing at the loser is left pointing at
+-- nothing. A name is the thing both peers already agree on without being told,
+-- which is what makes `add_song` able to write this row itself.
+--
+-- So there is no `create_album`. A row appears because a song named it.
+CREATE TABLE IF NOT EXISTS album (
+    name     TEXT PRIMARY KEY NOT NULL,
+    -- Where the cover is, spelt exactly as `media.file` is: a path relative to
+    -- the media root, or a whole URL. The bytes are not the log's business, and
+    -- a client joins the path to its own server — the rule that already exists,
+    -- rather than a second one for pictures.
+    --
+    -- Empty is "nobody said", which is the normal case: a client draws the
+    -- square it derives from the name, and that is an answer rather than a
+    -- placeholder.
+    art      TEXT NOT NULL,
+    added_ms BIGINT NOT NULL,
+    user_id  TEXT NOT NULL
+);
+
+-- Whoever made something, on exactly the terms `album` is on.
+--
+-- **Nothing references this**, and that is deliberate. `media.creator` is the
+-- one kind-neutral name for whoever made a thing — a song's artist, a sermon's
+-- speaker, a podcast's show — and a foreign key from it into a table called
+-- `artist` would be naming two of those three wrongly. So this is a table of
+-- what is *known about* a creator, joined by the name where there is a row, and
+-- a creator with no row is a creator with no cover rather than a creator who
+-- does not exist. `artists()` still reads its names from `media`, which is what
+-- keeps a new kind appearing in that list without the query learning about it.
+CREATE TABLE IF NOT EXISTS artist (
+    name     TEXT PRIMARY KEY NOT NULL,
+    art      TEXT NOT NULL,
+    added_ms BIGINT NOT NULL,
+    user_id  TEXT NOT NULL
+);
+
 -- What is true of a song and of nothing else. A second kind is a table like
 -- this one and a verb beside `add_song`; no row here moves and no column above
 -- changes, which is what makes the shape worth having before there is a second
 -- kind to prove it.
 CREATE TABLE IF NOT EXISTS song (
     media_id BLOB PRIMARY KEY NOT NULL REFERENCES media(id),
-    album    TEXT NOT NULL,
+    -- The record this is on, or NULL for a song that is not on one.
+    --
+    -- `_name` because the row it names is `album`, and `tables!` names a
+    -- relationship after the table it points at — so a column called `album`
+    -- and the `Song::album` it generates would be the same name twice, which
+    -- the macro refuses by name.
+    --
+    -- **Nullable, and the foreign key is why.** Petros enforces these, so a
+    -- song not on any album cannot carry `''` here unless there is an album
+    -- called `''` for it to point at — and inventing one would put a nameless
+    -- card on the albums page for every single somebody typed in. NULL is what
+    -- "no record" actually is, and `albums()` skips it without a special case.
+    album_name TEXT REFERENCES album(name),
     -- Where it sits in the album. 0 is "not known", which is honest for a
     -- single somebody typed in and for a file with no tag — and sorts first,
     -- which is where an unplaced track belongs.
@@ -110,39 +173,4 @@ CREATE TABLE IF NOT EXISTS playlist_item (
     added_ms    BIGINT NOT NULL,
     user_id     TEXT NOT NULL,
     PRIMARY KEY (playlist_id, media_id)
-);
-
--- A cover, for something that is not a row.
---
--- An album is not a table here and an artist is not either: an album is a
--- string on `song` and an artist is `media.creator`, which is what keeps the
--- library kind-neutral and what makes the grouping four queries rather than
--- four tables. So a picture of one has nowhere to hang. On `song` it would be
--- repeated once per track and two tracks of one album could disagree about
--- their own cover; on `media` it would be a column every kind pays for so that
--- one kind can have a picture, which is the argument that kept artwork out of
--- the log in the first place.
---
--- Keyed by the pair, like `playlist_item`: the pair is what a cover belongs
--- to, and the key is what makes replacing one a `put` rather than a search.
-CREATE TABLE IF NOT EXISTS artwork (
-    -- What the picture is of: 'album' or 'artist'.
-    --
-    -- Not a `media.kind`. That one names the *side table* carrying the rest of
-    -- a row, and neither of these has a row at all — this says which namespace
-    -- `name` is a name in, because "Water Music" the album and a performer of
-    -- the same name are two different pictures.
-    subject  TEXT NOT NULL,
-    -- The album's name or the artist's, exactly as the tracks spell it. Names
-    -- rather than ids for the reason the sidebar's routes carry names: there
-    -- is no id to carry, because there is no row.
-    name     TEXT NOT NULL,
-    -- Where the image is, spelt exactly as `media.file` is: a path relative to
-    -- the media root, or a whole URL. The bytes are not the log's business and
-    -- a client joins the path to its own server, which is the rule that
-    -- already exists rather than a second one for pictures.
-    file     TEXT NOT NULL,
-    added_ms BIGINT NOT NULL,
-    user_id  TEXT NOT NULL,
-    PRIMARY KEY (subject, name)
 );

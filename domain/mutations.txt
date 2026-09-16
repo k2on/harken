@@ -2,10 +2,9 @@
 # build. A verb or an argument may be ADDED — a payload without a field decodes
 # to that field's default. Removing or renaming a verb, or dropping or retyping
 # an argument, breaks every entry already written, and the check refuses it.
-AddSong title:Text artist:Text album:Text duration_ms:Integer file:Text track:Integer part:Text catalogue:Text performer:Text bpm:Integer
-SetArtwork subject:Text name:Text file:Text
-CreatePlaylist name:Text
-AddToPlaylist playlist_id:Id(playlist) media_id:Id(media)
-RemoveFromPlaylist playlist_id:Id(playlist) media_id:Id(media)
-AddAllToPlaylist playlist_id:Id(playlist)
+AddSong title:Text artist:Text album:Text duration_ms:Integer file:Text track:Integer part:Text catalogue:Text performer:Text bpm:Integer album_art:Text artist_art:Text
 RemoveMedia id:Id(media)
+AddToPlaylist playlist_id:Id(playlist) media_id:Id(media)
+CreatePlaylist name:Text
+AddAllToPlaylist playlist_id:Id(playlist)
+RemoveFromPlaylist playlist_id:Id(playlist) media_id:Id(media)

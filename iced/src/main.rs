@@ -740,7 +740,7 @@ struct Card {
     open: Source,
     /// A person is a circle and a record is a square.
     round: bool,
-    /// What `artwork` says, if anything — `media.file`'s spelling, joined to
+    /// The row's `art`, if anything — `media.file`'s spelling, joined to
     /// this peer's server when it is drawn. Empty is the normal case and means
     /// the derived square.
     art: String,
@@ -1849,7 +1849,7 @@ impl App {
 
     /// A cover's URL, from what the log carries.
     ///
-    /// `artwork.file` is spelt exactly as `media.file` is, so this is the same
+    /// `album.art` is spelt exactly as `media.file` is, so this is the same
     /// join the player already does — which is the point of spelling it that
     /// way rather than inventing a second rule for pictures.
     fn art_url(&self, art: &str) -> String {

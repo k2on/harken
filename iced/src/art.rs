@@ -1,10 +1,15 @@
 //! The square that stands in for a cover.
 //!
-//! There is no artwork in the log and there should not be: `media` carries a
-//! title, a creator, a length and the name of a file, and a picture would be a
-//! column every kind pays for so that one kind can have one. So this draws one
-//! from the name instead — which is most of what a cover is actually doing in
-//! a list, and the part that survives having no picture.
+//! Most records have no cover, and this is what is drawn for them: a square
+//! derived from the name, which is most of what a cover is actually doing in a
+//! list and the part that survives having no picture. It is the *fallback* —
+//! `album.art` and `artist.art` are real columns, and `covers.rs` fetches them
+//! — but it is the answer for eight of the demo's twelve albums and for every
+//! library nobody has given pictures to.
+//!
+//! Nothing here is on `media`, deliberately: a cover hangs on the album and
+//! the artist rows, never on the kind-neutral one, because that would be a
+//! column every kind pays for so that one kind can have a picture.
 //!
 //! **Deterministic, and the same on both clients.** The phone's
 //! `mobile/src/ui/artwork.tsx` does this too, and the two have to agree or one

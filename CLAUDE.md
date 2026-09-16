@@ -31,7 +31,8 @@ domain/                  the domain — the ONLY apply
                          a mutation takes `ctx: &Ctx` for who authored it
   tests/conformance.rs   the native and wasm builds of `apply`, compared
   tests/converge.rs      the domain against a simulated fleet
-  tests/read_model.rs    library() and favorites() against rows apply wrote
+  tests/read_model.rs    library(), the covers and the playlists, against
+                         rows apply wrote
   src/lib.rs             …and, under `cfg(wasm32)`, the module's ABI
   src/foreign_client.rs  the client a foreign caller sees (feature `foreign`)
   src/wasm_app.rs        the App whose `apply` is a module (feature `foreign`)
@@ -59,6 +60,10 @@ iced/                    the desktop and browser client
                          the socket, and the one rule about making a sound
   src/player.rs          what is playing — an <audio> element in a browser,
                          and nothing at all on the desktop
+  src/covers.rs          a cover, fetched once and shrunk before the renderer
+                         ever sees it; two caches, one `want`/`handle` pair
+  src/art.rs             …and the square derived from the name, for the eight
+                         albums in twelve that have no picture
   nix/readme.nix         its section of README.md
   web/                   the browser shell `nix run .#web` serves
   nix/default.nix        the desktop package and `iced`
@@ -525,8 +530,10 @@ CreatePlaylist, AddToPlaylist, AddAllToPlaylist, RemoveFromPlaylist,
 RemoveMedia
 ```
 
-at run time, from `mutate`. `set_artwork` shipped that way for two commits.
-Three things made it invisible and each is worth knowing on its own:
+at run time, from `mutate`. `set_artwork` shipped that way for the whole two
+commits it existed — which is also what later made it the one verb that could
+be deleted rather than kept forever, since no log ever carried an entry naming
+it. Three things made it invisible and each is worth knowing on its own:
 
 - **`mutations.txt` is not evidence a mutation can be applied.** It is
   generated from the module's schema section, which `#[mutation]` produces —
@@ -542,8 +549,9 @@ Three things made it invisible and each is worth knowing on its own:
   which is what eight of the twelve demo albums correctly do. A grid of
   gold squares is the same picture whether the feature works or has never
   once run, and that is the shape of bug to write a test for rather than
-  read for: `domain/tests/read_model.rs` unwraps `set_artwork` and
-  `iced/src/main.rs`'s `demo_covers` walks the demo's own boot.
+  read for: `domain/tests/read_model.rs` unwraps every cover mutation rather
+  than discarding it, and `iced/src/main.rs`'s `demo_covers` walks the demo's
+  own boot.
 
 The server and the iced peer link these; the phone runs the same source compiled
 to wasm and interpreted by `petros-wasm-host`, because that is the only peer
@@ -1162,7 +1170,7 @@ every row is one line. Four things about it are load-bearing:
   entirely. The playing track is the one row drawn in the accent *color*
   rather than filled with it, so it stays findable under either.
 
-The Album column is the interesting one, because `album` is on the `song`
+The Album column is the interesting one, because `album_name` is on the `song`
 side table and the library row is deliberately kind-neutral. Rather than widen
 `Item` — which would put a join behind every list, the thing `media` exists to
 avoid — `track_details()` returns the song-only facts and the client joins them
@@ -1223,7 +1231,7 @@ header would be saying "1". Lengths there are `2 hr 30 min` rather than
 length — `clock` is still what a row uses.
 
 The client is a library with a sidebar: playlists, then albums, then artists.
-Which of those a row belongs to is not a column on the library list — `album`
+Which of those a row belongs to is not a column on the library list — the album
 lives on the `song` side table precisely so that `media` stays kind-neutral —
 so the grouping is four queries in the domain (`albums`, `artists`, `album`,
 `artist`) rather than a wider `Item`. Both clients would then fold the library
@@ -1684,34 +1692,93 @@ fresh hand-off rather than a `media_previous_track`, and nothing does that
 yet. And none of this has been run against a real Home Assistant from here —
 the rules are tested, the six service calls are not.
 
-## A cover is a row, because an album is not one
+## An album and an artist are rows, and each carries its own cover
 
-`artwork` is a table of its own, keyed by `(subject, name)` where `subject` is
-`'album'` or `'artist'`. That shape is forced rather than chosen: an album is a
-string on `song` and an artist is `media.creator`, so neither is a row for a
-picture to hang on. On `song` a cover would be repeated once per track and two
-tracks of one album could disagree about it; on `media` it would be a column
-every kind pays for so that one kind can have a picture, which is the argument
-that kept artwork out of the log in the first place.
+They were not, and a cover had nowhere to live. An album was a string on `song`
+and an artist was `media.creator`, so the first answer was an `artwork` table
+keyed by `(subject, name)` — a table of pictures about things that were not
+rows — and a `set_artwork` verb to write it. Both are gone. `album` and
+`artist` are tables now, `song.album_name` is a foreign key into the first, and
+the cover is an ordinary column on each.
 
-**`file` is spelt exactly as `media.file` is** — a path under the media root or
+**Keyed by the name, not by an id**, which is the decision everything else
+follows from. Two reasons, and the mechanical one comes first: `fill_auto`
+hands a mutation exactly *one* uuid, so no single verb can mint an album row
+and a song row in the same entry — and splitting it into two verbs would mean
+a client authoring a reference to a row it has not seen confirmed. The second
+is the rebase. Two peers each adding "Water Music" offline would author two
+rows with two ids, one of which loses, and every song pointing at the loser is
+left pointing at nothing. A name is the thing both peers already agree on
+without being told. So there is no `create_album` and no `create_artist`: a row
+appears because a song named it.
+
+**Which means `add_song` writes them**, and carries the two covers:
+`album_art` and `artist_art` at the end of its arguments. That is what "the
+cover arrives with the song" means — the entry that knows a track's album is
+the entry that adds the track, and a picture reaches the log on it. The scanner
+sends both empty until it learns to read an embedded tag or a `folder.jpg`.
+
+**`art_to_write` is the one last-write-wins rule in the domain**, and it has
+three cases that reading cannot tell apart, so `read_model.rs` asserts each:
+
+- **No row yet — make one**, with whatever the entry brought. Usually nothing,
+  and a row with an empty `art` is right: the row is what a song points at, and
+  having no cover is a fact about the album rather than a reason not to have
+  one.
+- **A picture replaces a picture.** `add_song` lets the *first* entry win on a
+  file, because adding a song twice is a mistake — but somebody who picks a
+  better cover means the newer one, and the log being totally ordered is what
+  makes "newer" a fact every replica reaches the same way.
+- **Nothing replaces nothing.** An entry with no picture leaves the one that is
+  there. This is the case the scanner is in on *every* rescan, and getting it
+  wrong wipes a library's covers one track at a time.
+
+  …and the same picture again writes nothing at all, which is what keeps a
+  rescan of a thousand tracks a thousand reads and no writes: a `put` would
+  move `added_ms` and report a change to every maintained view watching.
+
+**`song.album_name` is nullable, and a foreign key is why.** Petros enforces
+these — the first version had it `NOT NULL`, and every test writing a song with
+no album failed with `writing to song: FOREIGN KEY constraint failed`, which is
+the schema being right rather than the tests being wrong. A song on no record
+has nothing to point at; `''` would need an album called `''` to point at, and
+inventing one would put a nameless card on the albums page for every single
+somebody ever typed in. It also fixed a latent bug: `albums()` used to group
+every album-less song under one entry named `""`.
+
+**Nothing has a foreign key into `artist`**, deliberately. `media.creator` is
+the one kind-neutral name for whoever made a thing — a song's artist, a
+sermon's speaker, a podcast's show — and a foreign key from it into a table
+called `artist` would be naming two of those three wrongly. So `artist` is a
+table of what is *known about* a creator, joined by name where there is a row,
+and `artists()` still reads its names from `media`: a new kind appears in that
+list without the query learning about it, and a creator with no row is a
+creator with no cover rather than one who does not exist. `albums()` is the
+same shape for the same reason — which albums *exist* is the songs' answer, and
+the table is asked only for the picture.
+
+**`art` is spelt exactly as `media.file` is** — a path under the media root or
 a whole URL — because a client already knows how to turn one of those into
 something it can fetch, and a second rule for pictures would be a second thing
 to get wrong.
 
-**`set_artwork` is last-write-wins, which is the opposite of every other verb
-here.** `add_song` and `create_playlist` both let the *first* entry win,
-because adding the same thing twice is a mistake and the log is where the first
-answer lives. A cover is not that: replacing one is the whole point, and
-somebody who picks a better picture means the newer one. The log being totally
-ordered is what makes "newer" a fact rather than a race — every peer replaying
-reaches the same last write — so this is one `put` over a row keyed by the
-pair, and `INSERT OR REPLACE` does the rest. Clearing a cover is `file` empty
-rather than a `remove_artwork` beside it: a row with nothing in it and no row
-at all are the same answer to `albums()`.
+**No `SCHEMA_VERSION` bump, by decision rather than by accident.** `song` lost
+a column and gained another, which is exactly the shape change the bump exists
+for — so an existing database keeps its old `song.album`, `migrate` will not
+alter it (`CREATE TABLE IF NOT EXISTS` does nothing to a table that is there),
+and every query breaks on the missing `album_name`. The call was "still alpha":
+nobody carrying a database has to be able to open it, so anyone holding one
+reinstalls. Bumping it is a one-line change to make later, and it is the thing
+to do the day somebody's library is worth keeping.
 
-No `SCHEMA_VERSION` bump. A new table is `CREATE TABLE IF NOT EXISTS` and the
-engine only rebuilds when an existing table's *shape* moves.
+**`set_artwork` could only be deleted because it had never once run.** The
+engine forbids removing a mutation variant — `log-compat` refuses it by name,
+"the log still carries entries naming it, and every peer replays them" — and
+that rule is right. The exemption here is factual rather than an override: the
+verb was missing from `peer!` for its entire life, so every call was refused at
+apply time and no log anywhere has ever held a `SetArtwork` entry. `--write`
+records the new surface deliberately, and this was the one moment it could be
+done honestly.
 
 **Both clients draw it now, and the caches are different on purpose.**
 `iced::widget::image` takes bytes or a path and there is no URL widget, so the
@@ -1764,8 +1831,34 @@ Three things that are each a decision:
   wants a fresh demo deletes all four files, and it went green against a
   stale one first.
 - **What is cached beyond the session is bytes, never handles.** A `Handle`
-  holds decoded pixels and forty albums of those is tens of megabytes. The map
-  is the session's; the disk is the machine's.
+  holds decoded pixels; the map is the session's and the disk is the machine's.
+- **The decode happens where the fetch is, and putting it anywhere else was a
+  visible stutter.** `Handle::from_bytes` does *not* decode — it hands iced the
+  encoded bytes and the decode runs inside whichever frame first draws them. So
+  each seeded portrait was a 1.2 megapixel JPEG decoded in a frame and then
+  4.8 MB of RGBA in the atlas for something drawn 132 pixels wide; seven
+  artists is 34 MB. iced evicts what a frame did not use, so opening an artist
+  page dropped six of them and going back decoded all six again — which is why
+  it presented as a hitch on *navigation* rather than on load.
+
+  `covers::BOUND` is 384, a shade under 3× the largest square this program
+  draws, and `Handle::from_rgba` is what reaches the renderer. Natively that is
+  the `image` crate on the thread the blocking fetch is already on — no new
+  crate, since iced's own `image` feature already put it in `Cargo.lock`, so
+  `cargoVendorHash` does not move. In a browser it is `createImageBitmap`,
+  the platform's decoder, off the main thread.
+
+  **Decoded from the fetched blob, never from the URL.** A canvas that has
+  drawn a cross-origin image is *tainted* and `getImageData` on it throws a
+  SecurityError, so going through bytes the page already holds is what makes
+  the pixels readable at all.
+
+  It is a bound and not a size: aspect is kept, so `ContentFit::Cover` still
+  does the cropping in `view` where that decision belongs. And what the disk
+  caches is still the *encoded original* — that cache is of the fetch, and
+  keeping the shrunk pixels would be ten times the disk to save CPU that is no
+  longer on the render thread, in a form that could not be re-shrunk if the
+  bound ever moved.
 
 ## The square when there is no cover
 

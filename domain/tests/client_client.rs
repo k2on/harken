@@ -44,6 +44,8 @@ fn the_client_runs_the_module() {
             String::new(),
             String::new(),
             0,
+            String::new(),
+            String::new(),
         )
         .expect("the module accepted it");
     client
@@ -58,6 +60,8 @@ fn the_client_runs_the_module() {
             String::new(),
             String::new(),
             0,
+            String::new(),
+            String::new(),
         )
         .expect("second");
     // A playlist to heart onto: there is no favorites table, so a heart is
@@ -92,6 +96,8 @@ fn the_client_runs_the_module() {
             String::new(),
             String::new(),
             0,
+            String::new(),
+            String::new(),
         )
         .expect_err("a blank title is refused");
     assert!(
@@ -117,6 +123,8 @@ fn the_client_runs_the_module() {
             String::new(),
             String::new(),
             0,
+            String::new(),
+            String::new(),
         )
         .expect("still working");
     assert_eq!(client.library(favs.clone()).unwrap().len(), 3);
@@ -288,6 +296,8 @@ fn the_peer_maintains_its_library() {
                 String::new(),
                 String::new(),
                 0,
+                String::new(),
+                String::new(),
             )
             .unwrap();
         settle(&client, &mut held);

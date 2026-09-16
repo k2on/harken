@@ -2310,24 +2310,29 @@ pub const MESSIAH: &[Seed] = &[
 
 /// One picture, for an album or for a person.
 pub struct Art {
-    /// `"album"` or `"artist"`, spelt as `set_artwork` spells it.
+    /// `"album"` or `"artist"` — which of the two lists `name` is a name in,
+    /// because "Water Music" the record and a performer called that would be
+    /// two different pictures.
     pub subject: &'static str,
     /// The name the tracks use. Artwork is keyed by name because neither an
     /// album nor an artist is a row with an id to point at.
     pub name: &'static str,
     /// A Commons thumbnail, at 960px where the original is bigger. An absolute
-    /// URL, exactly as the recordings are — `media.file` and `artwork.file`
-    /// are the same kind of string and the client joins them the same way.
+    /// URL, exactly as the recordings are — `media.file` and `album.art` are
+    /// the same kind of string and the client joins them the same way.
     pub file: &'static str,
 }
 
 /// What a record and a person look like.
 ///
-/// Nothing in the log carries a cover — `media` has a title, a creator, a
-/// length and a file — so these are `artwork` rows, keyed by the *name* the
-/// tracks use, and they arrive through `set_artwork` like any other mutation.
-/// The demo is the only place they are authored; a real library gets them from
-/// whoever runs it.
+/// An album and an artist are rows now, each with an `art` column, and the
+/// entry that puts one there is `add_song` — so these reach the log on the
+/// tracks that name them rather than through a verb of their own. The demo is
+/// the only place they are authored; a real library gets them from whoever
+/// runs it, and the scanner sends empty strings until it learns to read a tag.
+///
+/// Keyed by the name for the reason the rows are: a name is what a track
+/// already says, so nothing here has to agree with anything else about an id.
 ///
 /// **Public domain, the same rule the recordings follow**, and chosen to be
 /// *of the work* rather than decorative: a painting of the occasion a suite was
@@ -2410,6 +2415,18 @@ pub const ART: &[Art] = &[
         file: "https://upload.wikimedia.org/wikipedia/commons/7/71/Messiah-titlepage.jpg",
     },
 ];
+
+/// The picture for one album or one person, or nothing.
+///
+/// A linear walk of eleven rows per track, which is nothing, and the thing it
+/// buys is that `ART` stays the short table it is: a cover written once where
+/// it belongs rather than copied onto every `Seed` row of the record.
+fn art_of(subject: &str, name: &str) -> String {
+    ART.iter()
+        .find(|a| a.subject == subject && a.name == name)
+        .map(|a| a.file.to_string())
+        .unwrap_or_default()
+}
 
 pub fn seed(peer: &mut Peer) {
     if !peer.items.is_empty() {
@@ -2632,7 +2649,7 @@ pub fn seed(peer: &mut Peer) {
         .chain(FIREWORKS)
         .chain(MESSIAH)
     {
-        let _ = peer.client.mutate(mutators::add_song(
+        let done = peer.client.mutate(mutators::add_song(
             s.title.into(),
             s.composer.into(),
             s.album.into(),
@@ -2650,28 +2667,27 @@ pub fn seed(peer: &mut Peer) {
                 format!("{} ({})", s.performer, s.licence)
             },
             s.bpm,
-        ));
-    }
-    // The pictures, after the tracks. `set_artwork` is keyed by a name, and a
-    // name is only worth anything once there is something called it — nothing
-    // enforces that, because the row would be perfectly valid either way, but
-    // a cover authored before its album is a cover nobody can see a reason for.
-    for a in ART {
-        let done = peer.client.mutate(mutators::set_artwork(
-            a.subject.into(),
-            a.name.into(),
-            a.file.into(),
+            // The pictures, carried by the entry that names the album and the
+            // composer rather than authored separately afterwards. `ART` is
+            // the seed's own table because a cover belongs to a record and not
+            // to each of its fifty tracks — repeating the URL on every `Seed`
+            // row would be the same string fifty times and fifty chances for
+            // two of them to disagree. What reaches the log is still per
+            // track, and `apply` reads the repeats as one row.
+            art_of("album", s.album),
+            art_of("artist", s.composer),
         ));
         // Asserted rather than discarded. A seed mutation can only be refused
         // by a mistake in this repository — a verb missing from `peer!`, an
-        // argument that moved — and every one of those presents on the page as
-        // a cover that silently falls back to the derived square, which is
-        // also what eight of the twelve albums correctly do. `let _ =` here
-        // hid `set_artwork` being undispatched for two commits.
+        // argument that moved — and a refusal presents on the page as a song
+        // that is simply not there, or a cover that silently falls back to the
+        // derived square, which is what eight of the twelve albums correctly
+        // do. `let _ =` here hid `set_artwork` being undispatched for two
+        // commits.
         debug_assert!(
             done.is_ok(),
             "the demo could not author {}: {:?}",
-            a.name,
+            s.title,
             done.err()
         );
     }

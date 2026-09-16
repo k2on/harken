@@ -24,6 +24,8 @@ fn library_and_favorites_agree_with_what_apply_wrote() {
             String::new(),
             String::new(),
             0,
+            String::new(),
+            String::new(),
         ))
         .unwrap();
     }
@@ -156,6 +158,8 @@ fn the_maintained_library_agrees_with_the_read_one() {
                 String::new(),
                 String::new(),
                 0,
+                String::new(),
+                String::new(),
             ))
             .unwrap();
         settle(&mut client, &mut view, &mut favorites, &mut rendered);
@@ -269,6 +273,8 @@ fn a_peers_changes_reach_the_maintained_library() {
                 String::new(),
                 String::new(),
                 0,
+                String::new(),
+                String::new(),
             ),
         );
     }
@@ -339,6 +345,8 @@ fn a_first_sync_delivers_songs_and_favorites_without_doubling() {
                 String::new(),
                 String::new(),
                 0,
+                String::new(),
+                String::new(),
             ),
         );
         sim.step();
@@ -572,6 +580,8 @@ fn albums_and_artists_group_the_library_and_select_it_back() {
             String::new(),
             String::new(),
             0,
+            String::new(),
+            String::new(),
         ))
         .unwrap();
     }
@@ -662,6 +672,8 @@ fn an_album_is_in_the_works_order_and_not_the_librarys() {
             String::new(),
             String::new(),
             0,
+            String::new(),
+            String::new(),
         ))
         .unwrap();
     }
@@ -678,6 +690,8 @@ fn an_album_is_in_the_works_order_and_not_the_librarys() {
         String::new(),
         String::new(),
         0,
+        String::new(),
+        String::new(),
     ))
     .unwrap();
 
@@ -723,6 +737,8 @@ fn a_track_knows_which_playlists_it_is_on() {
             String::new(),
             String::new(),
             0,
+            String::new(),
+            String::new(),
         ))
         .unwrap();
     }
@@ -780,6 +796,8 @@ fn the_same_file_twice_is_one_song() {
             String::new(),
             String::new(),
             0,
+            String::new(),
+            String::new(),
         )
     };
     c.mutate(add("Für Elise", "beethoven/fur-elise.mp3"))
@@ -812,14 +830,19 @@ fn the_same_file_twice_is_one_song() {
     );
 }
 
-/// A cover reaches `albums()` and `artists()`, and `set_artwork` is dispatched
-/// at all.
+/// A cover reaches `albums()` and `artists()`, carried by the song that names
+/// them — and the rules for what a second entry does to one.
 ///
-/// The second half is the one that had to be learnt. `#[mutation]` writes the
-/// authoring function and the schema section, so a verb left out of `peer!`
-/// compiles, type-checks at every call site and appears in `mutations.txt` —
-/// and is refused at apply time as an unknown mutation. `set_artwork` shipped
-/// that way, and what it looked like was covers that never loaded.
+/// Two things this is holding down. The first is that the verb is *dispatched*
+/// at all: `#[mutation]` writes the authoring function and the schema section,
+/// so a verb left out of `peer!` compiles, type-checks at every call site and
+/// appears in `mutations.txt`, and is then refused at apply time as an unknown
+/// mutation. `set_artwork` shipped that way for its whole life, and what it
+/// looked like was covers that never loaded — which is why every `mutate` here
+/// is unwrapped rather than discarded.
+///
+/// The second is `art_to_write`, which is the one last-write-wins rule in the
+/// domain and has three cases that a reading cannot tell apart.
 #[test]
 fn artwork_reaches_the_lists_it_is_drawn_on() {
     let mut c = Client::<harken::HarkenApp>::open(
@@ -829,33 +852,30 @@ fn artwork_reaches_the_lists_it_is_drawn_on() {
     )
     .unwrap();
 
-    c.mutate(harken::add_song(
-        "Alla Hornpipe".into(),
-        "George Frideric Handel".into(),
-        "Water Music".into(),
-        0,
-        "music/a.mp3".into(),
-        1,
-        String::new(),
-        String::new(),
-        String::new(),
-        0,
-    ))
-    .unwrap();
+    // One track, carrying a cover for its record and one for its composer.
+    let handel = |file: &str, album_art: &str, artist_art: &str| {
+        harken::add_song(
+            "Alla Hornpipe".into(),
+            "George Frideric Handel".into(),
+            "Water Music".into(),
+            0,
+            file.into(),
+            1,
+            String::new(),
+            String::new(),
+            String::new(),
+            0,
+            album_art.into(),
+            artist_art.into(),
+        )
+    };
 
-    // Unwrapped, not discarded: a refusal here is the whole bug.
-    c.mutate(harken::set_artwork(
-        "album".into(),
-        "Water Music".into(),
-        "https://example.com/thames.jpg".into(),
+    c.mutate(handel(
+        "music/a.mp3",
+        "https://example.com/thames.jpg",
+        "https://example.com/denner.jpg",
     ))
-    .expect("set_artwork has to be a verb this build can apply");
-    c.mutate(harken::set_artwork(
-        "artist".into(),
-        "George Frideric Handel".into(),
-        "https://example.com/denner.jpg".into(),
-    ))
-    .unwrap();
+    .expect("add_song has to be a verb this build can apply");
 
     let albums = harken::albums(&mut c.store()).unwrap();
     assert_eq!(albums.len(), 1);
@@ -865,23 +885,46 @@ fn artwork_reaches_the_lists_it_is_drawn_on() {
     assert_eq!(artists.len(), 1);
     assert_eq!(artists[0].art, "https://example.com/denner.jpg");
 
-    // Last write wins, which is the opposite of `add_song` and the point of
-    // the verb: replacing a cover is what it is for.
-    c.mutate(harken::set_artwork(
-        "album".into(),
-        "Water Music".into(),
-        "https://example.com/better.jpg".into(),
-    ))
-    .unwrap();
+    // A second track of the same record with *no* picture leaves the one that
+    // is there. This is the case the scanner is in on every rescan, and
+    // getting it wrong wipes a library's covers one track at a time.
+    c.mutate(handel("music/b.mp3", "", "")).unwrap();
+    assert_eq!(
+        harken::albums(&mut c.store()).unwrap()[0].art,
+        "https://example.com/thames.jpg",
+        "an entry with no picture must not clear one"
+    );
+
+    // A picture replaces a picture, which is the opposite of what `add_song`
+    // does with a file — because somebody who picks a better cover means the
+    // newer one, and the log being ordered is what makes "newer" a fact.
+    c.mutate(handel("music/c.mp3", "https://example.com/better.jpg", ""))
+        .unwrap();
     assert_eq!(
         harken::albums(&mut c.store()).unwrap()[0].art,
         "https://example.com/better.jpg"
     );
 
-    // A third subject is refused rather than stored where nothing reads it.
-    assert!(
-        c.mutate(harken::set_artwork("sleeve".into(), "x".into(), "y".into()))
-            .is_err(),
-        "artwork is of an album or an artist"
-    );
+    // And a record with no cover at all is still a record: the row exists
+    // because a song pointed at it, and `albums()` answers with the empty
+    // string a client draws its derived square for.
+    c.mutate(harken::add_song(
+        "Clair de lune".into(),
+        "Claude Debussy".into(),
+        "Suite bergamasque".into(),
+        0,
+        "music/d.mp3".into(),
+        3,
+        String::new(),
+        String::new(),
+        String::new(),
+        0,
+        String::new(),
+        String::new(),
+    ))
+    .unwrap();
+    let albums = harken::albums(&mut c.store()).unwrap();
+    assert_eq!(albums.len(), 2);
+    let bergamasque = albums.iter().find(|a| a.name == "Suite bergamasque");
+    assert_eq!(bergamasque.map(|a| a.art.as_str()), Some(""));
 }
