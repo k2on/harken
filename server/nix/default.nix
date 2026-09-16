@@ -99,6 +99,12 @@
                   by the service through systemd's credentials, so it can
                   live wherever the machine keeps secrets — never in the
                   store, which is world-readable.
+
+                  It has to *exist by the time the unit starts*, and the
+                  failure when it does not names nothing (see `tokenFile`
+                  below). A secret under `/run` is put there by something
+                  else — sops-nix, agenix — so order this unit after
+                  whatever that is.
                 '';
               };
               scopes = lib.mkOption {
@@ -183,6 +189,21 @@
                   than a string for the reason the OpenID Connect secret is
                   one: systemd hands it over as a credential, so it is never
                   in a process listing, a unit file or the store.
+
+                  Missing when the unit starts, it takes the whole server
+                  down before the binary runs, and says only
+
+                  ```
+                  harken.service: Failed to set up credentials: No such file or directory
+                  harken.service: Failed at step CREDENTIALS spawning …/harken-server
+                  ```
+
+                  which names neither the credential nor the path. Both this
+                  and `oidc.clientSecretFile` load the same way, so
+                  `systemctl show harken -p LoadCredential` and then `ls`
+                  each source is what tells them apart. Setting this is what
+                  makes a speaker's token able to stop the music, so it is
+                  worth knowing that is the trade.
                 '';
               };
 

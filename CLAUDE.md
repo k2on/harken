@@ -1570,6 +1570,30 @@ Six things that are each a decision:
   signed one-shot URL minted by the bridge so the speaker still needs no
   token.
 
+**A missing token file takes the whole server down, before the binary runs.**
+`tokenFile` is loaded by systemd as a credential, exactly as the OpenID
+Connect secret is — and `LoadCredential` whose source is not there fails the
+unit at `step CREDENTIALS`, naming neither the credential nor the path:
+
+```
+harken.service: Failed to set up credentials: No such file or directory
+harken.service: Failed at step CREDENTIALS spawning …/harken-server
+```
+
+Two things make that hard to read. It looks like the *binary* is missing,
+because the path in the message is the binary's. And there are two credentials
+on this unit, so the message is the same whichever is at fault —
+`systemctl show harken -p LoadCredential` lists both sources and `ls` on each
+is what tells them apart. A secret under `/run` is written by sops-nix or
+agenix rather than by the module, so the unit has to be ordered after
+whatever writes it; a secret that is simply not there yet is a file to create.
+
+It is also worth stating the trade plainly: configuring `homeAssistant` is
+what makes a speaker's access token able to stop the music. There is no
+optional credential in systemd, and the alternative — falling back to an empty
+token through `SetCredential` — would start the server and then get 401s from
+the house, which is a worse answer than not starting.
+
 `Bridge` owns no socket, for the reason `Desk` does not: every rule above is
 tested against values rather than a network, and the thread that polls Home
 Assistant is the thin part. Blocking `ureq` on a thread of its own, the same
