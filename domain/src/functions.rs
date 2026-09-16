@@ -1125,6 +1125,12 @@ pub fn track_details(db: &mut Db) -> Result<Vec<crate::schema::TrackDetail>> {
         .map(|m| (m.id, (m.part, m.work_id)))
         .collect();
     let credits = performers_of(db);
+    let licences: BTreeMap<String, String> = db
+        .select(Recording::all())
+        .into_iter()
+        .filter(|r| !r.licence.is_empty())
+        .map(|r| (r.id, r.licence))
+        .collect();
     Ok(db
         .select(Song::all())
         .into_iter()
@@ -1140,6 +1146,7 @@ pub fn track_details(db: &mut Db) -> Result<Vec<crate::schema::TrackDetail>> {
                     .cloned()
                     .unwrap_or_default(),
                 performer: credits.get(&s.recording_id).cloned().unwrap_or_default(),
+                licence: licences.get(&s.recording_id).cloned().unwrap_or_default(),
                 bpm: s.bpm,
             }
         })
@@ -1349,6 +1356,34 @@ pub fn recordings(db: &mut Db, work_id: String) -> Result<Vec<crate::schema::Rec
             .then_with(|| a.recorded.cmp(&b.recorded))
             .then_with(|| a.id.cmp(&b.id))
     });
+    Ok(out)
+}
+
+/// Who is on one recording, with their roles kept.
+///
+/// `recordings()` joins these into one line because a table column is one
+/// column; this is the list a recording's own page draws, and the only read
+/// that can tell an orchestra from its conductor.
+///
+/// The lumped fallback is skipped here rather than preferred-against, for the
+/// same reason `performers_of` displaces it: a row at `pos: 0` is what the
+/// track said before anybody split it, and listing it beside the people it was
+/// split into would name the orchestra twice.
+#[query]
+pub fn credits(db: &mut Db, recording_id: String) -> Result<Vec<crate::schema::Credit>> {
+    let rows = db.select(Credit::all().filter(Credit::recording_id.eq(recording_id)));
+    let real = rows.iter().any(|c| c.pos > 0);
+    let mut out: Vec<crate::schema::Credit> = rows
+        .into_iter()
+        .filter(|c| !real || c.pos > 0)
+        .map(|c| crate::schema::Credit {
+            name: c.person_name,
+            role: c.role,
+            instrument: c.instrument,
+            pos: c.pos,
+        })
+        .collect();
+    out.sort_by(|a, b| a.pos.cmp(&b.pos).then_with(|| a.name.cmp(&b.name)));
     Ok(out)
 }
 

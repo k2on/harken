@@ -116,6 +116,16 @@ petros_schema::row! {
         /// Who played it. `Item::creator` is who *wrote* it, and for this
         /// repertoire they are three hundred years apart.
         performer: String,
+        /// The terms the *recording* was offered on, where they are not "none
+        /// reserved" — `CC BY-SA 3.0`. Empty for almost everything.
+        ///
+        /// Beside the performer rather than folded into it, which is where it
+        /// was: the demo used to write `"{performer} ({licence})"` into one
+        /// column, so a recording nobody was credited on was credited to a
+        /// person called `(CC BY-SA 3.0)`. It is a fact about the performance,
+        /// it lives on `recording`, and a client draws it next to whoever gave
+        /// it — because a credit nobody draws is a condition nobody met.
+        licence: String,
         /// Beats per minute; 0 when nobody said. See `schema.sql` for what
         /// counts as somebody saying.
         bpm: i64,
@@ -192,6 +202,24 @@ petros_schema::row! {
         licence: String,
         tracks: i64,
         art: String,
+    };
+
+    /// One person on a recording, and what they did on it.
+    ///
+    /// What a recording page lists under the performers line. `Recording` joins
+    /// these into one string because a table has one column for "who";
+    /// this is the same people with the roles kept, which is what an
+    /// instrument or a conductor can be browsed by.
+    Credit => {
+        name: String,
+        /// `orchestra`, `conductor`, `soloist`, `ensemble`, `choir`, `artist`.
+        role: String,
+        /// "Piano". Empty unless the role is `soloist`, and empty plenty of
+        /// times then too — the source often does not say.
+        instrument: String,
+        /// Billing order. 0 marks the lumped string `add_song` falls back to
+        /// when nobody has said who is who, and a real credit starts at 1.
+        pos: i64,
     };
 
     /// A playlist. "Favorites" is one of these and nothing more — which

@@ -1853,9 +1853,18 @@ Three things that are each a decision:
   `covers::BOUND` is 384, a shade under 3× the largest square this program
   draws, and `Handle::from_rgba` is what reaches the renderer. Natively that is
   the `image` crate on the thread the blocking fetch is already on — no new
-  crate, since iced's own `image` feature already put it in `Cargo.lock`, so
-  `cargoVendorHash` does not move. In a browser it is `createImageBitmap`,
-  the platform's decoder, off the main thread.
+  *crate*, since iced's own `image` feature already put it in `Cargo.lock`. In
+  a browser it is `createImageBitmap`, the platform's decoder, off the main
+  thread.
+
+  **It moves `cargoVendorHash` anyway, and the commit that added it said
+  otherwise.** "No new crate, so the vendored set is identical" is the obvious
+  reasoning and it is wrong: `nix/app/workspace.nix` ends its vendor derivation
+  with `cp Cargo.lock $out/Cargo.lock`, so the *lockfile is part of the output*
+  and a dependency edge added to a crate already in the tree moves the hash
+  like anything else. `domain/nix/default.nix` says exactly this, in a comment
+  written the last time somebody learned it. Read the comment next to the
+  number before reasoning about the number.
 
   **Decoded from the fetched blob, never from the URL.** A canvas that has
   drawn a cross-origin image is *tainted* and `getImageData` on it throws a
@@ -1984,15 +1993,51 @@ belongs and moving it is one line — but the album page deliberately *draws* th
 licence beside the track ("a credit nobody draws is a condition nobody met"), so
 the seed and the client have to move together or the credit is simply lost.
 
+### The demo says all of it, and the seed is where that is said
+
+`seed.rs` carries three small tables beside the tracks, because a track cannot
+carry any of this:
+
+- **`WORKS`**, keyed by catalogue number, with the work's own name, its form,
+  its period and the year. This is what the album-name fallback could not do:
+  before it, Book I of the Well-Tempered Clavier was twenty-four works all
+  called "The Well-Tempered Clavier" and the six Brandenburgs were six called
+  "Brandenburg Concertos", because a work with no name of its own takes the
+  record's and this library puts a whole collection on one record.
+- **`CREDITS`**, keyed by the exact lumped performer string, saying which half
+  of "London Symphony Orchestra, Hermann Scherchen" is the orchestra. An
+  instrument is left empty where the source does not say one — Kimiko Ishizaka's
+  Open Goldberg is piano and Vince DiMartino plays the trumpet part Brandenburg
+  No. 2 is famous for, and the rest are named without one.
+- **`COMPOSERS`**, with sort names and dates.
+
+**The seed computes the same keys `apply` does, from the same two functions**,
+because `describe_recording` needs an id and the only way to have one is to
+derive it. That is a guard rather than a duplication: if the two ever disagreed,
+the verb refuses an id it does not have and the seed's `debug_assert!` says so
+on the first run of any test. Falsifying one of these tests tripped exactly that
+assertion rather than the test's own — which is the mechanism working.
+
+**The licence moved to `recording.licence`** and `TrackDetail` carries it, so
+`credit(performer, licence)` in `iced/src/main.rs` puts the two back together
+for the one column a table has. The wart stage one left standing is gone:
+nobody is called `(CC BY-SA 3.0)` any more. Both halves are asserted, because
+moving the licence out without drawing it again would have been a regression
+dressed as a cleanup — the demo's Brandenburgs are CC BY and CC BY-SA.
+
+Water Music's first suite is still credited to nobody, with its licence shown
+and no performer: Commons does not say who played it, and an empty credit is
+the honest answer rather than a guess.
+
 ### What is not done yet
 
-Stage one is the domain: the schema, the verbs, the queries and the tests.
-`composers()`, `works()`, `recordings()` and `recording()` exist and nothing
-draws them — the sidebar is still Songs / Albums / Artists, and `albums()`,
-`artists()`, `album()`, `artist()` and `track_details()` keep their exact
-signatures so both clients are untouched. `track_details` now joins `part` and
-`catalogue` out of the work and rebuilds `performer` from the credits, which is
-what makes that possible.
+The domain and the demo's data are done; the *clients* are not. `composers()`,
+`works()`, `recordings()`, `recording()` and `credits()` exist and nothing draws
+them — the sidebar is still Songs / Albums / Artists, and `albums()`,
+`artists()`, `album()`, `artist()` and `track_details()` keep their signatures
+so both clients still work. `track_details` joins `part` and `catalogue` out of
+the work and rebuilds `performer` from the credits, which is what makes that
+true.
 
 A library with no works has no Composers page and no Works page to draw, so the
 sidebar will have to show a line only when there are rows behind it — the rule

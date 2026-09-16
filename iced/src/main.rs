@@ -692,6 +692,20 @@ fn row_style(theme: &iced::Theme, on_cursor: bool, focused: bool, odd: bool) -> 
 }
 
 /// Seconds as `m:ss`, which is how long a piece of music is written down.
+/// Who played it and on what terms, as one line.
+///
+/// The two are separate facts on separate rows — `credit` and
+/// `recording.licence` — and this is the only place they are put back together,
+/// because a table has one column for "who". A recording that reserves nothing
+/// is just the names; one that asks for attribution says so in the same breath.
+fn credit(performer: &str, licence: &str) -> String {
+    match (performer.is_empty(), licence.is_empty()) {
+        (_, true) => performer.to_string(),
+        (true, false) => format!("({licence})"),
+        (false, false) => format!("{performer} ({licence})"),
+    }
+}
+
 fn clock(secs: f64) -> String {
     if !secs.is_finite() || secs < 0.0 {
         return String::new();
@@ -1077,6 +1091,7 @@ impl Peer {
                 part: String::new(),
                 catalogue: String::new(),
                 performer: String::new(),
+                licence: String::new(),
                 bpm: 0,
             })
     }
@@ -3140,7 +3155,14 @@ impl App {
                             // that differs down the page — two recordings of
                             // one work are two performers, not two albums.
                             if album_page {
-                                detail.performer.clone()
+                                // …and the terms it was given on, beside
+                                // whoever gave it. `recording.licence` is where
+                                // that fact lives now; this is the one place it
+                                // is drawn, and it has to *be* drawn — the
+                                // demo's Brandenburgs are CC BY and CC BY-SA,
+                                // and a credit nobody draws is a condition
+                                // nobody met.
+                                credit(&detail.performer, &detail.licence)
                             } else {
                                 detail.album.clone()
                             },
@@ -3999,10 +4021,175 @@ mod demo_works {
 
         let takes = harken::recordings(store, goldbergs.id.clone()).unwrap();
         assert_eq!(takes.len(), 1);
-        assert!(
-            !takes[0].performers.is_empty(),
-            "a recording nobody is credited on is a recording nothing tells \
-             apart from another"
+        assert_eq!(takes[0].performers, "Kimiko Ishizaka");
+    }
+
+    /// A work has a name of its own, not the record's.
+    ///
+    /// Twenty-four preludes and fugues on one record were twenty-four works all
+    /// called "The Well-Tempered Clavier", because a work with no name falls
+    /// back to the album it is on and this library puts a whole collection on
+    /// one. `WORKS` is what says otherwise. Falsify it by dropping `work_title`
+    /// from the seed's `add_song`: the set of titles collapses to one.
+    #[test]
+    fn a_work_is_named_for_itself() {
+        let mut peer = fresh("named");
+        let store = &mut peer.client.store();
+        let works = harken::works(store, "Johann Sebastian Bach".into()).unwrap();
+
+        let wtc: Vec<&str> = works
+            .iter()
+            .filter(|w| w.form == "Prelude and Fugue")
+            .map(|w| w.title.as_str())
+            .collect();
+        assert_eq!(wtc.len(), 24, "Book I is twenty-four of them");
+        let distinct: std::collections::BTreeSet<&&str> = wtc.iter().collect();
+        assert_eq!(
+            distinct.len(),
+            24,
+            "…and twenty-four names, not one name twenty-four times: {wtc:?}"
         );
+        assert!(wtc.contains(&"Prelude and Fugue No. 1 in C Major"));
+
+        // The six Brandenburgs, which had the same problem.
+        let brandenburgs: Vec<&str> = works
+            .iter()
+            .filter(|w| w.catalogue.starts_with("BWV 10"))
+            .map(|w| w.title.as_str())
+            .collect();
+        assert_eq!(brandenburgs.len(), 6);
+        assert!(brandenburgs.contains(&"Brandenburg Concerto No. 4 in G Major"));
+    }
+
+    /// **Nobody is called `(CC BY-SA 3.0)`.**
+    ///
+    /// The wart stage one left standing: the seed wrote `"{performer}
+    /// ({licence})"` into one column, so a recording nobody was credited on was
+    /// credited to a person named after a licence. The terms are on
+    /// `recording.licence` now. Falsify it by putting the licence back in the
+    /// performer string — the name turns up in `artists()`.
+    #[test]
+    fn nobody_is_named_after_a_licence() {
+        let mut peer = fresh("licence");
+        let store = &mut peer.client.store();
+
+        // Every credited name in the library. `artists()` is the wrong place to
+        // look and this test asked it first: that one reads `media.creator`,
+        // which is the *composer*, so the junk person sat in `credit` where it
+        // could not see it — and the test passed with the bug reinstated.
+        let mut credited: Vec<String> = Vec::new();
+        for composer in harken::composers(store).unwrap() {
+            for work in harken::works(store, composer.name.clone()).unwrap() {
+                for take in harken::recordings(store, work.id.clone()).unwrap() {
+                    for credit in harken::credits(store, take.id.clone()).unwrap() {
+                        credited.push(credit.name);
+                    }
+                }
+            }
+        }
+        assert!(
+            credited.len() > 5,
+            "this has to be looking at something: {credited:?}"
+        );
+        let wrong: Vec<&String> = credited
+            .iter()
+            .filter(|n| n.contains("CC BY") || n.contains('('))
+            .collect();
+        assert!(wrong.is_empty(), "a licence is not a person: {wrong:?}");
+    }
+
+    /// …and the licence is still on the screen, which is the other half.
+    ///
+    /// Moving it out of the performer column would have been a regression
+    /// dressed as a cleanup: the demo's Brandenburgs are CC BY and CC BY-SA, and
+    /// a credit nobody draws is a condition nobody met. `TrackDetail.licence`
+    /// carries it and `credit` puts the two back together for the one column a
+    /// table has. Falsify it by dropping the field from `track_details`.
+    #[test]
+    fn the_terms_are_still_drawn_beside_whoever_gave_them() {
+        let mut peer = fresh("terms");
+        let store = &mut peer.client.store();
+        let details = harken::track_details(store).unwrap();
+
+        let licensed: Vec<&harken::TrackDetail> =
+            details.iter().filter(|d| !d.licence.is_empty()).collect();
+        assert!(
+            licensed.len() > 5,
+            "the Brandenburgs alone are more than five licensed tracks; {} found",
+            licensed.len()
+        );
+        let drawn = super::credit(&licensed[0].performer, &licensed[0].licence);
+        assert!(
+            drawn.contains("CC BY"),
+            "the column a person reads has to carry the terms: {drawn:?}"
+        );
+
+        // And a recording that reserves nothing says only who played it.
+        let free = details
+            .iter()
+            .find(|d| d.licence.is_empty() && !d.performer.is_empty())
+            .expect("most of the demo reserves nothing");
+        assert_eq!(
+            super::credit(&free.performer, &free.licence),
+            free.performer
+        );
+    }
+
+    /// One lumped string becomes two people with two roles, in billing order.
+    ///
+    /// "London Symphony Orchestra, Hermann Scherchen" is all `add_song` gets and
+    /// splitting it is a guess, so `CREDITS` is where the demo says which half
+    /// is the orchestra. Falsify it by removing the Messiah rows from `CREDITS`:
+    /// the fallback survives and the assertion still reads the same string —
+    /// which is why this checks the *roles* rather than the joined line.
+    #[test]
+    fn the_messiah_has_an_orchestra_and_a_conductor() {
+        let mut peer = fresh("credits");
+        let store = &mut peer.client.store();
+        let works = harken::works(store, "George Frideric Handel".into()).unwrap();
+        let messiah = works
+            .iter()
+            .find(|w| w.catalogue == "HWV 56")
+            .expect("the Messiah is in the demo");
+        let takes = harken::recordings(store, messiah.id.clone()).unwrap();
+        assert_eq!(
+            takes[0].performers, "London Symphony Orchestra, Hermann Scherchen",
+            "billing order: the orchestra is first on the record"
+        );
+
+        // The part that says they are two rows and not one string: two people,
+        // holding the two roles a classical service browses by.
+        let credits = harken::credits(store, takes[0].id.clone()).unwrap();
+        assert_eq!(
+            credits
+                .iter()
+                .map(|c| (c.name.as_str(), c.role.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("London Symphony Orchestra", "orchestra"),
+                ("Hermann Scherchen", "conductor"),
+            ],
+            "two rows with two roles, in billing order — and the lumped \
+             fallback displaced rather than left beside them"
+        );
+    }
+
+    /// `WORKS` is keyed by the catalogue number alone, so two of them sharing
+    /// one would silently give a work somebody else's title.
+    ///
+    /// The log's key includes the composer; this table's does not, because
+    /// nothing here needs it and repeating the composer on forty-three rows is
+    /// forty-three chances to mistype one.
+    #[test]
+    fn the_catalogue_is_the_key() {
+        let mut seen = std::collections::BTreeSet::new();
+        for w in super::seed::WORKS {
+            assert!(
+                seen.insert(w.catalogue),
+                "two works both claim {}: {}",
+                w.catalogue,
+                w.title
+            );
+        }
     }
 }

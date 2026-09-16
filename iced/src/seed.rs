@@ -21,6 +21,8 @@
 //! carry a `licence` and the credit is drawn beside the performer — a
 //! condition met, rather than a licence quietly ignored.
 
+use std::collections::BTreeMap;
+
 use crate::{Peer, Source};
 use harken::{self as mutators};
 
@@ -78,6 +80,204 @@ pub struct Seed {
 /// not performers: no movement there appears twice, and Nos. 1 and 4 are two
 /// recordings between them because that is the only way either is complete.
 // BACH-START
+pub const LIBRARY: &[Seed] = &[
+    Seed {
+        title: "Toccata and Fugue in D minor, BWV 565",
+        composer: "Johann Sebastian Bach",
+        album: "Organ Works",
+        part: "",
+        track: 0,
+        catalogue: "BWV 565",
+        performer: "",
+        licence: "",
+        bpm: 0,
+        ms: 514000,
+        file: "https://upload.wikimedia.org/wikipedia/commons/transcoded/b/be/Toccata_et_Fugue_BWV565.ogg/Toccata_et_Fugue_BWV565.ogg.mp3",
+    },
+    Seed {
+        title: "Für Elise",
+        composer: "Ludwig van Beethoven",
+        album: "Bagatelles",
+        part: "",
+        track: 0,
+        catalogue: "WoO 59",
+        performer: "",
+        licence: "",
+        bpm: 0,
+        ms: 177000,
+        file: "https://upload.wikimedia.org/wikipedia/commons/transcoded/7/7b/FurElise.ogg/FurElise.ogg.mp3",
+    },
+    Seed {
+        title: "Ballade No. 1 in G minor, Op. 23",
+        composer: "Frédéric Chopin",
+        album: "Ballades",
+        part: "",
+        track: 1,
+        catalogue: "Op. 23",
+        performer: "",
+        licence: "",
+        bpm: 0,
+        ms: 679000,
+        file: "https://upload.wikimedia.org/wikipedia/commons/transcoded/3/33/Frederic_Chopin_-_ballade_no._1_in_g_minor%2C_op._23.ogg/Frederic_Chopin_-_ballade_no._1_in_g_minor%2C_op._23.ogg.mp3",
+    },
+    Seed {
+        title: "Ballade No. 2 in F major, Op. 38",
+        composer: "Frédéric Chopin",
+        album: "Ballades",
+        part: "",
+        track: 2,
+        catalogue: "Op. 38",
+        performer: "",
+        licence: "",
+        bpm: 0,
+        ms: 420000,
+        file: "https://upload.wikimedia.org/wikipedia/commons/transcoded/c/cf/Frederic_Chopin_-_ballade_no._2_in_f_major%2C_op._38.ogg/Frederic_Chopin_-_ballade_no._2_in_f_major%2C_op._38.ogg.mp3",
+    },
+    Seed {
+        title: "Alla Hornpipe",
+        composer: "George Frideric Handel",
+        album: "Water Music",
+        part: "Suite No. 2 in D major",
+        track: 12,
+        catalogue: "HWV 349",
+        performer: "United States Marine Band",
+        licence: "",
+        bpm: 120,
+        ms: 229000,
+        file: "https://upload.wikimedia.org/wikipedia/commons/transcoded/5/5c/Handel%27s_Water_Music_-_12._Alla_hornpipe_-_Chamber_Orchestra_-_United_States_Marine_Band.opus/Handel%27s_Water_Music_-_12._Alla_hornpipe_-_Chamber_Orchestra_-_United_States_Marine_Band.opus.mp3",
+    },
+    Seed {
+        title: "Minuet",
+        composer: "George Frideric Handel",
+        album: "Water Music",
+        part: "Suite No. 2 in D major",
+        track: 13,
+        catalogue: "HWV 349",
+        performer: "United States Marine Band",
+        licence: "",
+        bpm: 120,
+        ms: 195000,
+        file: "https://upload.wikimedia.org/wikipedia/commons/transcoded/c/c9/Handel%27s_Water_Music_-_13._Minuet_-_Chamber_Orchestra_-_United_States_Marine_Band.opus/Handel%27s_Water_Music_-_13._Minuet_-_Chamber_Orchestra_-_United_States_Marine_Band.opus.mp3",
+    },
+    Seed {
+        title: "Lentement",
+        composer: "George Frideric Handel",
+        album: "Water Music",
+        part: "Suite No. 2 in D major",
+        track: 14,
+        catalogue: "HWV 349",
+        performer: "United States Marine Band",
+        licence: "",
+        bpm: 60,
+        ms: 136000,
+        file: "https://upload.wikimedia.org/wikipedia/commons/transcoded/7/75/Handel%27s_Water_Music_-_14._Lentement_-_Chamber_Orchestra_-_United_States_Marine_Band.opus/Handel%27s_Water_Music_-_14._Lentement_-_Chamber_Orchestra_-_United_States_Marine_Band.opus.mp3",
+    },
+    Seed {
+        title: "Bourrée",
+        composer: "George Frideric Handel",
+        album: "Water Music",
+        part: "Suite No. 2 in D major",
+        track: 15,
+        catalogue: "HWV 349",
+        performer: "United States Marine Band",
+        licence: "",
+        bpm: 132,
+        ms: 76000,
+        file: "https://upload.wikimedia.org/wikipedia/commons/transcoded/2/2d/Handel%27s_Water_Music_-_15._Bourree_-_Chamber_Orchestra_-_United_States_Marine_Band.opus/Handel%27s_Water_Music_-_15._Bourree_-_Chamber_Orchestra_-_United_States_Marine_Band.opus.mp3",
+    },
+    Seed {
+        title: "Sarabande",
+        composer: "George Frideric Handel",
+        album: "Water Music",
+        part: "Suite No. 3 in G major",
+        track: 16,
+        catalogue: "HWV 350",
+        performer: "United States Marine Band",
+        licence: "",
+        bpm: 60,
+        ms: 168000,
+        file: "https://upload.wikimedia.org/wikipedia/commons/transcoded/e/e8/Handel%27s_Water_Music_-_16._Sarabande_-_Chamber_Orchestra_-_United_States_Marine_Band.opus/Handel%27s_Water_Music_-_16._Sarabande_-_Chamber_Orchestra_-_United_States_Marine_Band.opus.mp3",
+    },
+    Seed {
+        title: "Rigaudon",
+        composer: "George Frideric Handel",
+        album: "Water Music",
+        part: "Suite No. 3 in G major",
+        track: 17,
+        catalogue: "HWV 350",
+        performer: "United States Marine Band",
+        licence: "",
+        bpm: 132,
+        ms: 156000,
+        file: "https://upload.wikimedia.org/wikipedia/commons/transcoded/c/c7/Handel%27s_Water_Music_-_17._%26_18._Rigaudon_-_Chamber_Orchestra_-_United_States_Marine_Band.opus/Handel%27s_Water_Music_-_17._%26_18._Rigaudon_-_Chamber_Orchestra_-_United_States_Marine_Band.opus.mp3",
+    },
+    Seed {
+        title: "Menuet",
+        composer: "George Frideric Handel",
+        album: "Water Music",
+        part: "Suite No. 3 in G major",
+        track: 19,
+        catalogue: "HWV 350",
+        performer: "United States Marine Band",
+        licence: "",
+        bpm: 120,
+        ms: 227000,
+        file: "https://upload.wikimedia.org/wikipedia/commons/transcoded/a/ac/Handel%27s_Water_Music_-_19._%26_20._Menuet_-_Chamber_Orchestra_-_United_States_Marine_Band.opus/Handel%27s_Water_Music_-_19._%26_20._Menuet_-_Chamber_Orchestra_-_United_States_Marine_Band.opus.mp3",
+    },
+    Seed {
+        title: "Gigue",
+        composer: "George Frideric Handel",
+        album: "Water Music",
+        part: "Suite No. 3 in G major",
+        track: 21,
+        catalogue: "HWV 350",
+        performer: "United States Marine Band",
+        licence: "",
+        bpm: 120,
+        ms: 85000,
+        file: "https://upload.wikimedia.org/wikipedia/commons/transcoded/f/fe/Handel%27s_Water_Music_-_21._%26_22._Gigue_-_Chamber_Orchestra_-_United_States_Marine_Band.opus/Handel%27s_Water_Music_-_21._%26_22._Gigue_-_Chamber_Orchestra_-_United_States_Marine_Band.opus.mp3",
+    },
+    Seed {
+        title: "Impromptu in G-flat major, D. 899",
+        composer: "Franz Schubert",
+        album: "Impromptus",
+        part: "",
+        track: 3,
+        catalogue: "D. 899",
+        performer: "",
+        licence: "",
+        bpm: 0,
+        ms: 301000,
+        file: "https://upload.wikimedia.org/wikipedia/commons/transcoded/0/0b/Schubert_Gb_Impromptu_Andriy_Bondarenko_%28Live%29.ogg/Schubert_Gb_Impromptu_Andriy_Bondarenko_%28Live%29.ogg.mp3",
+    },
+    Seed {
+        title: "Hungarian Dance No. 5",
+        composer: "Johannes Brahms",
+        album: "Hungarian Dances",
+        part: "",
+        track: 5,
+        catalogue: "WoO 1",
+        performer: "",
+        licence: "",
+        bpm: 0,
+        ms: 175000,
+        file: "https://upload.wikimedia.org/wikipedia/commons/transcoded/0/0a/Brahms_nikisch_hd5.ogg/Brahms_nikisch_hd5.ogg.mp3",
+    },
+    Seed {
+        title: "Clair de lune",
+        composer: "Claude Debussy",
+        album: "Suite bergamasque",
+        part: "",
+        track: 3,
+        catalogue: "L. 75",
+        performer: "",
+        licence: "",
+        bpm: 0,
+        ms: 304000,
+        file: "https://upload.wikimedia.org/wikipedia/commons/transcoded/b/be/Clair_de_lune_%28Claude_Debussy%29_Suite_bergamasque.ogg/Clair_de_lune_%28Claude_Debussy%29_Suite_bergamasque.ogg.mp3",
+    },
+];
+
 pub const BACH: &[Seed] = &[
     Seed {
         title: "Aria",
@@ -2428,10 +2628,583 @@ fn art_of(subject: &str, name: &str) -> String {
         .unwrap_or_default()
 }
 
+/// What a work is, beyond the catalogue number every one of its tracks carries.
+///
+/// Keyed by the catalogue number alone, which is unique across this library —
+/// `the_catalogue_is_the_key` asserts it, because two composers sharing one
+/// would silently give one of them the other's title. The real key in the log
+/// is `work_key(composer, catalogue, …)` and includes the composer, for the
+/// reason `Op. 23` belongs to everybody.
+///
+/// **This is what the album name could not say.** Before it, the twenty-four
+/// preludes and fugues of Book I were twenty-four works all called "The
+/// Well-Tempered Clavier" and the six Brandenburgs were six called "Brandenburg
+/// Concertos" — because a work with no name of its own falls back to the record
+/// it is on, and this library puts a whole collection on one record.
+pub struct WorkSeed {
+    pub catalogue: &'static str,
+    pub title: &'static str,
+    /// "Concerto", "Prelude and Fugue". What a classical service calls a genre
+    /// and browses by.
+    pub form: &'static str,
+    /// The era, which is not the style: Debussy in 1890 is Romantic by period
+    /// and Impressionist by everything else. The period is what the browse axis
+    /// is, so the period is what is here.
+    pub period: &'static str,
+    /// In Apple's English forms — "C Minor", "E-Flat Major".
+    pub key_sig: &'static str,
+    /// The year it was written, 0 where a work was written over several and
+    /// nobody picks one.
+    pub composed: i64,
+}
+
+/// The forty-three works this library holds something of.
+pub const WORKS: &[WorkSeed] = &[
+    // Bach
+    WorkSeed {
+        catalogue: "BWV 565",
+        title: "Toccata and Fugue in D Minor",
+        form: "Toccata and Fugue",
+        period: "Baroque",
+        key_sig: "D Minor",
+        composed: 0,
+    },
+    WorkSeed {
+        catalogue: "BWV 846",
+        title: "Prelude and Fugue No. 1 in C Major",
+        form: "Prelude and Fugue",
+        period: "Baroque",
+        key_sig: "C Major",
+        composed: 1722,
+    },
+    WorkSeed {
+        catalogue: "BWV 847",
+        title: "Prelude and Fugue No. 2 in C Minor",
+        form: "Prelude and Fugue",
+        period: "Baroque",
+        key_sig: "C Minor",
+        composed: 1722,
+    },
+    WorkSeed {
+        catalogue: "BWV 848",
+        title: "Prelude and Fugue No. 3 in C-Sharp Major",
+        form: "Prelude and Fugue",
+        period: "Baroque",
+        key_sig: "C-Sharp Major",
+        composed: 1722,
+    },
+    WorkSeed {
+        catalogue: "BWV 849",
+        title: "Prelude and Fugue No. 4 in C-Sharp Minor",
+        form: "Prelude and Fugue",
+        period: "Baroque",
+        key_sig: "C-Sharp Minor",
+        composed: 1722,
+    },
+    WorkSeed {
+        catalogue: "BWV 850",
+        title: "Prelude and Fugue No. 5 in D Major",
+        form: "Prelude and Fugue",
+        period: "Baroque",
+        key_sig: "D Major",
+        composed: 1722,
+    },
+    WorkSeed {
+        catalogue: "BWV 851",
+        title: "Prelude and Fugue No. 6 in D Minor",
+        form: "Prelude and Fugue",
+        period: "Baroque",
+        key_sig: "D Minor",
+        composed: 1722,
+    },
+    WorkSeed {
+        catalogue: "BWV 852",
+        title: "Prelude and Fugue No. 7 in E-Flat Major",
+        form: "Prelude and Fugue",
+        period: "Baroque",
+        key_sig: "E-Flat Major",
+        composed: 1722,
+    },
+    WorkSeed {
+        catalogue: "BWV 853",
+        title: "Prelude and Fugue No. 8 in E-Flat Minor",
+        form: "Prelude and Fugue",
+        period: "Baroque",
+        key_sig: "E-Flat Minor",
+        composed: 1722,
+    },
+    WorkSeed {
+        catalogue: "BWV 854",
+        title: "Prelude and Fugue No. 9 in E Major",
+        form: "Prelude and Fugue",
+        period: "Baroque",
+        key_sig: "E Major",
+        composed: 1722,
+    },
+    WorkSeed {
+        catalogue: "BWV 855",
+        title: "Prelude and Fugue No. 10 in E Minor",
+        form: "Prelude and Fugue",
+        period: "Baroque",
+        key_sig: "E Minor",
+        composed: 1722,
+    },
+    WorkSeed {
+        catalogue: "BWV 856",
+        title: "Prelude and Fugue No. 11 in F Major",
+        form: "Prelude and Fugue",
+        period: "Baroque",
+        key_sig: "F Major",
+        composed: 1722,
+    },
+    WorkSeed {
+        catalogue: "BWV 857",
+        title: "Prelude and Fugue No. 12 in F Minor",
+        form: "Prelude and Fugue",
+        period: "Baroque",
+        key_sig: "F Minor",
+        composed: 1722,
+    },
+    WorkSeed {
+        catalogue: "BWV 858",
+        title: "Prelude and Fugue No. 13 in F-Sharp Major",
+        form: "Prelude and Fugue",
+        period: "Baroque",
+        key_sig: "F-Sharp Major",
+        composed: 1722,
+    },
+    WorkSeed {
+        catalogue: "BWV 859",
+        title: "Prelude and Fugue No. 14 in F-Sharp Minor",
+        form: "Prelude and Fugue",
+        period: "Baroque",
+        key_sig: "F-Sharp Minor",
+        composed: 1722,
+    },
+    WorkSeed {
+        catalogue: "BWV 860",
+        title: "Prelude and Fugue No. 15 in G Major",
+        form: "Prelude and Fugue",
+        period: "Baroque",
+        key_sig: "G Major",
+        composed: 1722,
+    },
+    WorkSeed {
+        catalogue: "BWV 861",
+        title: "Prelude and Fugue No. 16 in G Minor",
+        form: "Prelude and Fugue",
+        period: "Baroque",
+        key_sig: "G Minor",
+        composed: 1722,
+    },
+    WorkSeed {
+        catalogue: "BWV 862",
+        title: "Prelude and Fugue No. 17 in A-Flat Major",
+        form: "Prelude and Fugue",
+        period: "Baroque",
+        key_sig: "A-Flat Major",
+        composed: 1722,
+    },
+    WorkSeed {
+        catalogue: "BWV 863",
+        title: "Prelude and Fugue No. 18 in G-Sharp Minor",
+        form: "Prelude and Fugue",
+        period: "Baroque",
+        key_sig: "G-Sharp Minor",
+        composed: 1722,
+    },
+    WorkSeed {
+        catalogue: "BWV 864",
+        title: "Prelude and Fugue No. 19 in A Major",
+        form: "Prelude and Fugue",
+        period: "Baroque",
+        key_sig: "A Major",
+        composed: 1722,
+    },
+    WorkSeed {
+        catalogue: "BWV 865",
+        title: "Prelude and Fugue No. 20 in A Minor",
+        form: "Prelude and Fugue",
+        period: "Baroque",
+        key_sig: "A Minor",
+        composed: 1722,
+    },
+    WorkSeed {
+        catalogue: "BWV 866",
+        title: "Prelude and Fugue No. 21 in B-Flat Major",
+        form: "Prelude and Fugue",
+        period: "Baroque",
+        key_sig: "B-Flat Major",
+        composed: 1722,
+    },
+    WorkSeed {
+        catalogue: "BWV 867",
+        title: "Prelude and Fugue No. 22 in B-Flat Minor",
+        form: "Prelude and Fugue",
+        period: "Baroque",
+        key_sig: "B-Flat Minor",
+        composed: 1722,
+    },
+    WorkSeed {
+        catalogue: "BWV 868",
+        title: "Prelude and Fugue No. 23 in B Major",
+        form: "Prelude and Fugue",
+        period: "Baroque",
+        key_sig: "B Major",
+        composed: 1722,
+    },
+    WorkSeed {
+        catalogue: "BWV 869",
+        title: "Prelude and Fugue No. 24 in B Minor",
+        form: "Prelude and Fugue",
+        period: "Baroque",
+        key_sig: "B Minor",
+        composed: 1722,
+    },
+    WorkSeed {
+        catalogue: "BWV 988",
+        title: "Goldberg Variations",
+        form: "Variations",
+        period: "Baroque",
+        key_sig: "G Major",
+        composed: 1741,
+    },
+    WorkSeed {
+        catalogue: "BWV 1046",
+        title: "Brandenburg Concerto No. 1 in F Major",
+        form: "Concerto",
+        period: "Baroque",
+        key_sig: "F Major",
+        composed: 1721,
+    },
+    WorkSeed {
+        catalogue: "BWV 1047",
+        title: "Brandenburg Concerto No. 2 in F Major",
+        form: "Concerto",
+        period: "Baroque",
+        key_sig: "F Major",
+        composed: 1721,
+    },
+    WorkSeed {
+        catalogue: "BWV 1048",
+        title: "Brandenburg Concerto No. 3 in G Major",
+        form: "Concerto",
+        period: "Baroque",
+        key_sig: "G Major",
+        composed: 1721,
+    },
+    WorkSeed {
+        catalogue: "BWV 1049",
+        title: "Brandenburg Concerto No. 4 in G Major",
+        form: "Concerto",
+        period: "Baroque",
+        key_sig: "G Major",
+        composed: 1721,
+    },
+    WorkSeed {
+        catalogue: "BWV 1050",
+        title: "Brandenburg Concerto No. 5 in D Major",
+        form: "Concerto",
+        period: "Baroque",
+        key_sig: "D Major",
+        composed: 1721,
+    },
+    WorkSeed {
+        catalogue: "BWV 1051",
+        title: "Brandenburg Concerto No. 6 in B-Flat Major",
+        form: "Concerto",
+        period: "Baroque",
+        key_sig: "B-Flat Major",
+        composed: 1721,
+    },
+    // Handel
+    WorkSeed {
+        catalogue: "HWV 56",
+        title: "Messiah",
+        form: "Oratorio",
+        period: "Baroque",
+        key_sig: "",
+        composed: 1741,
+    },
+    WorkSeed {
+        catalogue: "HWV 348",
+        title: "Water Music Suite No. 1 in F Major",
+        form: "Suite",
+        period: "Baroque",
+        key_sig: "F Major",
+        composed: 1717,
+    },
+    WorkSeed {
+        catalogue: "HWV 349",
+        title: "Water Music Suite No. 2 in D Major",
+        form: "Suite",
+        period: "Baroque",
+        key_sig: "D Major",
+        composed: 1717,
+    },
+    WorkSeed {
+        catalogue: "HWV 350",
+        title: "Water Music Suite No. 3 in G Major",
+        form: "Suite",
+        period: "Baroque",
+        key_sig: "G Major",
+        composed: 1717,
+    },
+    WorkSeed {
+        catalogue: "HWV 351",
+        title: "Music for the Royal Fireworks",
+        form: "Suite",
+        period: "Baroque",
+        key_sig: "D Major",
+        composed: 1749,
+    },
+    // …and the rest
+    WorkSeed {
+        catalogue: "WoO 59",
+        title: "Für Elise",
+        form: "Bagatelle",
+        period: "Classical",
+        key_sig: "A Minor",
+        composed: 1810,
+    },
+    WorkSeed {
+        catalogue: "Op. 23",
+        title: "Ballade No. 1 in G Minor",
+        form: "Ballade",
+        period: "Romantic",
+        key_sig: "G Minor",
+        composed: 1835,
+    },
+    WorkSeed {
+        catalogue: "Op. 38",
+        title: "Ballade No. 2 in F Major",
+        form: "Ballade",
+        period: "Romantic",
+        key_sig: "F Major",
+        composed: 1839,
+    },
+    WorkSeed {
+        catalogue: "D. 899",
+        title: "Four Impromptus",
+        form: "Impromptu",
+        period: "Romantic",
+        key_sig: "",
+        composed: 1827,
+    },
+    WorkSeed {
+        catalogue: "WoO 1",
+        title: "Hungarian Dances",
+        form: "Dance",
+        period: "Romantic",
+        key_sig: "",
+        composed: 0,
+    },
+    WorkSeed {
+        catalogue: "L. 75",
+        title: "Suite bergamasque",
+        form: "Suite",
+        period: "Romantic",
+        key_sig: "",
+        composed: 1890,
+    },
+];
+
+/// One person on a recording, and what they did on it.
+///
+/// Keyed by the exact `performer` string the tracks carry, because that string
+/// is all `add_song` has and splitting it is a guess — "London Symphony
+/// Orchestra, Hermann Scherchen" is an orchestra and a conductor, and nothing
+/// in the string says which half is which. This table is where the demo says.
+///
+/// **An instrument is left empty where the source does not say one.** Kimiko
+/// Ishizaka's Open Goldberg is piano and Vince DiMartino plays the trumpet part
+/// Brandenburg No. 2 is famous for; the rest are named without one, and
+/// guessing would be inventing a fact about somebody.
+pub struct CreditSeed {
+    /// The lumped string, exactly as a `Seed` spells it.
+    pub performer: &'static str,
+    pub name: &'static str,
+    /// `orchestra`, `ensemble`, `conductor`, `soloist`, `artist`.
+    pub role: &'static str,
+    pub instrument: &'static str,
+    /// Billing order. The first name on a record is not an alphabetical
+    /// accident, which is why this is here and not a sort.
+    pub pos: i64,
+}
+
+pub const CREDITS: &[CreditSeed] = &[
+    CreditSeed {
+        performer: "Advent Chamber Orchestra",
+        name: "Advent Chamber Orchestra",
+        role: "orchestra",
+        instrument: "",
+        pos: 1,
+    },
+    CreditSeed {
+        performer: "Busch Chamber Players",
+        name: "Busch Chamber Players",
+        role: "ensemble",
+        instrument: "",
+        pos: 1,
+    },
+    CreditSeed {
+        performer: "Kevin MacLeod",
+        name: "Kevin MacLeod",
+        role: "artist",
+        instrument: "",
+        pos: 1,
+    },
+    CreditSeed {
+        performer: "Kimiko Ishizaka",
+        name: "Kimiko Ishizaka",
+        role: "soloist",
+        instrument: "Piano",
+        pos: 1,
+    },
+    CreditSeed {
+        performer: "London Symphony Orchestra, Hermann Scherchen",
+        name: "London Symphony Orchestra",
+        role: "orchestra",
+        instrument: "",
+        pos: 1,
+    },
+    CreditSeed {
+        performer: "London Symphony Orchestra, Hermann Scherchen",
+        name: "Hermann Scherchen",
+        role: "conductor",
+        instrument: "",
+        pos: 2,
+    },
+    CreditSeed {
+        performer: "Paul Ayres",
+        name: "Paul Ayres",
+        role: "soloist",
+        instrument: "",
+        pos: 1,
+    },
+    CreditSeed {
+        performer: "United States Marine Band",
+        name: "United States Marine Band",
+        role: "ensemble",
+        instrument: "",
+        pos: 1,
+    },
+    CreditSeed {
+        performer: "Vince DiMartino and the Lexington Bach Choir Orchestra",
+        name: "Vince DiMartino",
+        role: "soloist",
+        instrument: "Trumpet",
+        pos: 1,
+    },
+    CreditSeed {
+        performer: "Vince DiMartino and the Lexington Bach Choir Orchestra",
+        name: "Lexington Bach Choir Orchestra",
+        role: "ensemble",
+        instrument: "",
+        pos: 2,
+    },
+];
+
+/// Who wrote it: the name a list draws, the name an index is ordered by, and
+/// the two years that make a composer index readable at a glance.
+pub struct ComposerSeed {
+    pub name: &'static str,
+    pub sort_name: &'static str,
+    pub born: i64,
+    pub died: i64,
+}
+
+pub const COMPOSERS: &[ComposerSeed] = &[
+    ComposerSeed {
+        name: "Johann Sebastian Bach",
+        sort_name: "Bach, Johann Sebastian",
+        born: 1685,
+        died: 1750,
+    },
+    ComposerSeed {
+        name: "George Frideric Handel",
+        sort_name: "Handel, George Frideric",
+        born: 1685,
+        died: 1759,
+    },
+    ComposerSeed {
+        name: "Ludwig van Beethoven",
+        sort_name: "Beethoven, Ludwig van",
+        born: 1770,
+        died: 1827,
+    },
+    ComposerSeed {
+        name: "Franz Schubert",
+        sort_name: "Schubert, Franz",
+        born: 1797,
+        died: 1828,
+    },
+    ComposerSeed {
+        name: "Frédéric Chopin",
+        sort_name: "Chopin, Frédéric",
+        born: 1810,
+        died: 1849,
+    },
+    ComposerSeed {
+        name: "Johannes Brahms",
+        sort_name: "Brahms, Johannes",
+        born: 1833,
+        died: 1897,
+    },
+    ComposerSeed {
+        name: "Claude Debussy",
+        sort_name: "Debussy, Claude",
+        born: 1862,
+        died: 1918,
+    },
+];
+
+/// The work a catalogue number names, if this library says.
+fn work_of(catalogue: &str) -> Option<&'static WorkSeed> {
+    WORKS.iter().find(|w| w.catalogue == catalogue)
+}
+
 pub fn seed(peer: &mut Peer) {
     if !peer.items.is_empty() {
         return;
     }
+    // One place to say "this cannot be refused". A seed mutation can only be
+    // turned down by a mistake in this repository — a verb missing from
+    // `peer!`, an argument that moved, a key computed two different ways — and
+    // every one of those presents on the page as something silently absent: a
+    // song that is not there, a cover that falls back to the derived square,
+    // a work with no period. `let _ =` here hid `set_artwork` being
+    // undispatched for two whole commits.
+    macro_rules! author {
+        ($peer:expr, $what:expr, $mutation:expr) => {{
+            let done = $peer.client.mutate($mutation);
+            debug_assert!(
+                done.is_ok(),
+                "the demo could not author {}: {:?}",
+                $what,
+                done.err()
+            );
+        }};
+    }
+
+    // People first, because a work's composer and a recording's credits both
+    // need a `person` row and `describe_person` is the one verb that makes one
+    // rather than refusing — somebody can be described before their music
+    // arrives.
+    for c in COMPOSERS {
+        author!(
+            peer,
+            c.name,
+            mutators::describe_person(
+                c.name.into(),
+                c.sort_name.into(),
+                c.born,
+                c.died,
+                art_of("artist", c.name),
+            )
+        );
+    }
+
     // Public-domain recordings on Wikimedia Commons, by way of the mp3
     // Commons transcodes every audio file gets: a browser plays mp3
     // everywhere, and Vorbis in an `.ogg` does not play in Safari at all.
@@ -2444,203 +3217,13 @@ pub fn seed(peer: &mut Peer) {
     // licence field, and a transcode that answers with `audio/mpeg` and a
     // range request. A dead link here is a silent demo, so they are not
     // taken on trust.
-    const LIBRARY: &[Seed] = &[
-        Seed {
-            title: "Toccata and Fugue in D minor, BWV 565",
-            composer: "Johann Sebastian Bach",
-            album: "Organ Works",
-            part: "",
-            track: 0,
-            catalogue: "BWV 565",
-            performer: "",
-            licence: "",
-            bpm: 0,
-            ms: 514000,
-            file: "https://upload.wikimedia.org/wikipedia/commons/transcoded/b/be/Toccata_et_Fugue_BWV565.ogg/Toccata_et_Fugue_BWV565.ogg.mp3",
-        },
-        Seed {
-            title: "Für Elise",
-            composer: "Ludwig van Beethoven",
-            album: "Bagatelles",
-            part: "",
-            track: 0,
-            catalogue: "WoO 59",
-            performer: "",
-            licence: "",
-            bpm: 0,
-            ms: 177000,
-            file: "https://upload.wikimedia.org/wikipedia/commons/transcoded/7/7b/FurElise.ogg/FurElise.ogg.mp3",
-        },
-        Seed {
-            title: "Ballade No. 1 in G minor, Op. 23",
-            composer: "Frédéric Chopin",
-            album: "Ballades",
-            part: "",
-            track: 1,
-            catalogue: "Op. 23",
-            performer: "",
-            licence: "",
-            bpm: 0,
-            ms: 679000,
-            file: "https://upload.wikimedia.org/wikipedia/commons/transcoded/3/33/Frederic_Chopin_-_ballade_no._1_in_g_minor%2C_op._23.ogg/Frederic_Chopin_-_ballade_no._1_in_g_minor%2C_op._23.ogg.mp3",
-        },
-        Seed {
-            title: "Ballade No. 2 in F major, Op. 38",
-            composer: "Frédéric Chopin",
-            album: "Ballades",
-            part: "",
-            track: 2,
-            catalogue: "Op. 38",
-            performer: "",
-            licence: "",
-            bpm: 0,
-            ms: 420000,
-            file: "https://upload.wikimedia.org/wikipedia/commons/transcoded/c/cf/Frederic_Chopin_-_ballade_no._2_in_f_major%2C_op._38.ogg/Frederic_Chopin_-_ballade_no._2_in_f_major%2C_op._38.ogg.mp3",
-        },
-        Seed {
-            title: "Alla Hornpipe",
-            composer: "George Frideric Handel",
-            album: "Water Music",
-            part: "Suite No. 2 in D major",
-            track: 12,
-            catalogue: "HWV 349",
-            performer: "United States Marine Band",
-            licence: "",
-            bpm: 120,
-            ms: 229000,
-            file: "https://upload.wikimedia.org/wikipedia/commons/transcoded/5/5c/Handel%27s_Water_Music_-_12._Alla_hornpipe_-_Chamber_Orchestra_-_United_States_Marine_Band.opus/Handel%27s_Water_Music_-_12._Alla_hornpipe_-_Chamber_Orchestra_-_United_States_Marine_Band.opus.mp3",
-        },
-        Seed {
-            title: "Minuet",
-            composer: "George Frideric Handel",
-            album: "Water Music",
-            part: "Suite No. 2 in D major",
-            track: 13,
-            catalogue: "HWV 349",
-            performer: "United States Marine Band",
-            licence: "",
-            bpm: 120,
-            ms: 195000,
-            file: "https://upload.wikimedia.org/wikipedia/commons/transcoded/c/c9/Handel%27s_Water_Music_-_13._Minuet_-_Chamber_Orchestra_-_United_States_Marine_Band.opus/Handel%27s_Water_Music_-_13._Minuet_-_Chamber_Orchestra_-_United_States_Marine_Band.opus.mp3",
-        },
-        Seed {
-            title: "Lentement",
-            composer: "George Frideric Handel",
-            album: "Water Music",
-            part: "Suite No. 2 in D major",
-            track: 14,
-            catalogue: "HWV 349",
-            performer: "United States Marine Band",
-            licence: "",
-            bpm: 60,
-            ms: 136000,
-            file: "https://upload.wikimedia.org/wikipedia/commons/transcoded/7/75/Handel%27s_Water_Music_-_14._Lentement_-_Chamber_Orchestra_-_United_States_Marine_Band.opus/Handel%27s_Water_Music_-_14._Lentement_-_Chamber_Orchestra_-_United_States_Marine_Band.opus.mp3",
-        },
-        Seed {
-            title: "Bourrée",
-            composer: "George Frideric Handel",
-            album: "Water Music",
-            part: "Suite No. 2 in D major",
-            track: 15,
-            catalogue: "HWV 349",
-            performer: "United States Marine Band",
-            licence: "",
-            bpm: 132,
-            ms: 76000,
-            file: "https://upload.wikimedia.org/wikipedia/commons/transcoded/2/2d/Handel%27s_Water_Music_-_15._Bourree_-_Chamber_Orchestra_-_United_States_Marine_Band.opus/Handel%27s_Water_Music_-_15._Bourree_-_Chamber_Orchestra_-_United_States_Marine_Band.opus.mp3",
-        },
-        Seed {
-            title: "Sarabande",
-            composer: "George Frideric Handel",
-            album: "Water Music",
-            part: "Suite No. 3 in G major",
-            track: 16,
-            catalogue: "HWV 350",
-            performer: "United States Marine Band",
-            licence: "",
-            bpm: 60,
-            ms: 168000,
-            file: "https://upload.wikimedia.org/wikipedia/commons/transcoded/e/e8/Handel%27s_Water_Music_-_16._Sarabande_-_Chamber_Orchestra_-_United_States_Marine_Band.opus/Handel%27s_Water_Music_-_16._Sarabande_-_Chamber_Orchestra_-_United_States_Marine_Band.opus.mp3",
-        },
-        Seed {
-            title: "Rigaudon",
-            composer: "George Frideric Handel",
-            album: "Water Music",
-            part: "Suite No. 3 in G major",
-            track: 17,
-            catalogue: "HWV 350",
-            performer: "United States Marine Band",
-            licence: "",
-            bpm: 132,
-            ms: 156000,
-            file: "https://upload.wikimedia.org/wikipedia/commons/transcoded/c/c7/Handel%27s_Water_Music_-_17._%26_18._Rigaudon_-_Chamber_Orchestra_-_United_States_Marine_Band.opus/Handel%27s_Water_Music_-_17._%26_18._Rigaudon_-_Chamber_Orchestra_-_United_States_Marine_Band.opus.mp3",
-        },
-        Seed {
-            title: "Menuet",
-            composer: "George Frideric Handel",
-            album: "Water Music",
-            part: "Suite No. 3 in G major",
-            track: 19,
-            catalogue: "HWV 350",
-            performer: "United States Marine Band",
-            licence: "",
-            bpm: 120,
-            ms: 227000,
-            file: "https://upload.wikimedia.org/wikipedia/commons/transcoded/a/ac/Handel%27s_Water_Music_-_19._%26_20._Menuet_-_Chamber_Orchestra_-_United_States_Marine_Band.opus/Handel%27s_Water_Music_-_19._%26_20._Menuet_-_Chamber_Orchestra_-_United_States_Marine_Band.opus.mp3",
-        },
-        Seed {
-            title: "Gigue",
-            composer: "George Frideric Handel",
-            album: "Water Music",
-            part: "Suite No. 3 in G major",
-            track: 21,
-            catalogue: "HWV 350",
-            performer: "United States Marine Band",
-            licence: "",
-            bpm: 120,
-            ms: 85000,
-            file: "https://upload.wikimedia.org/wikipedia/commons/transcoded/f/fe/Handel%27s_Water_Music_-_21._%26_22._Gigue_-_Chamber_Orchestra_-_United_States_Marine_Band.opus/Handel%27s_Water_Music_-_21._%26_22._Gigue_-_Chamber_Orchestra_-_United_States_Marine_Band.opus.mp3",
-        },
-        Seed {
-            title: "Impromptu in G-flat major, D. 899",
-            composer: "Franz Schubert",
-            album: "Impromptus",
-            part: "",
-            track: 3,
-            catalogue: "D. 899",
-            performer: "",
-            licence: "",
-            bpm: 0,
-            ms: 301000,
-            file: "https://upload.wikimedia.org/wikipedia/commons/transcoded/0/0b/Schubert_Gb_Impromptu_Andriy_Bondarenko_%28Live%29.ogg/Schubert_Gb_Impromptu_Andriy_Bondarenko_%28Live%29.ogg.mp3",
-        },
-        Seed {
-            title: "Hungarian Dance No. 5",
-            composer: "Johannes Brahms",
-            album: "Hungarian Dances",
-            part: "",
-            track: 5,
-            catalogue: "WoO 1",
-            performer: "",
-            licence: "",
-            bpm: 0,
-            ms: 175000,
-            file: "https://upload.wikimedia.org/wikipedia/commons/transcoded/0/0a/Brahms_nikisch_hd5.ogg/Brahms_nikisch_hd5.ogg.mp3",
-        },
-        Seed {
-            title: "Clair de lune",
-            composer: "Claude Debussy",
-            album: "Suite bergamasque",
-            part: "",
-            track: 3,
-            catalogue: "L. 75",
-            performer: "",
-            licence: "",
-            bpm: 0,
-            ms: 304000,
-            file: "https://upload.wikimedia.org/wikipedia/commons/transcoded/b/be/Clair_de_lune_%28Claude_Debussy%29_Suite_bergamasque.ogg/Clair_de_lune_%28Claude_Debussy%29_Suite_bergamasque.ogg.mp3",
-        },
-    ];
+    //
+    // Which recordings exist falls out of the tracks rather than being a table
+    // of its own: a recording is one work as played by one set of people, so
+    // collecting the pairs while authoring is the same answer `apply` reaches,
+    // computed from the same two functions.
+    let mut takes: BTreeMap<String, (&'static str, &'static str)> = BTreeMap::new();
+    let mut work_ids: BTreeMap<&'static str, String> = BTreeMap::new();
     for s in LIBRARY
         .iter()
         .chain(BACH)
@@ -2649,56 +3232,119 @@ pub fn seed(peer: &mut Peer) {
         .chain(FIREWORKS)
         .chain(MESSIAH)
     {
-        let done = peer.client.mutate(mutators::add_song(
-            s.title.into(),
-            s.composer.into(),
-            s.album.into(),
-            s.ms,
-            s.file.into(),
-            s.track,
-            s.part.into(),
-            s.catalogue.into(),
-            // The credit and the terms it was given on, in the one field
-            // that is already on screen beside the track. A recording that
-            // reserved nothing says only who played it.
-            if s.licence.is_empty() {
-                s.performer.into()
-            } else {
-                format!("{} ({})", s.performer, s.licence)
-            },
-            s.bpm,
-            // The pictures, carried by the entry that names the album and the
-            // composer rather than authored separately afterwards. `ART` is
-            // the seed's own table because a cover belongs to a record and not
-            // to each of its fifty tracks — repeating the URL on every `Seed`
-            // row would be the same string fifty times and fifty chances for
-            // two of them to disagree. What reaches the log is still per
-            // track, and `apply` reads the repeats as one row.
-            art_of("album", s.album),
-            art_of("artist", s.composer),
-            // Nothing said about the disc, the work or the movement — and the
-            // demo still comes out with works, because `add_song` reads an
-            // entry that names a catalogue number as being *of* a work whose
-            // name is the record's. That is a rule about replaying old entries
-            // rather than a shortcut for this file, and it happens to be
-            // exactly true here: this library is one record per work.
-            0,
-            String::new(),
-            0,
-        ));
-        // Asserted rather than discarded. A seed mutation can only be refused
-        // by a mistake in this repository — a verb missing from `peer!`, an
-        // argument that moved — and a refusal presents on the page as a song
-        // that is simply not there, or a cover that silently falls back to the
-        // derived square, which is what eight of the twelve albums correctly
-        // do. `let _ =` here hid `set_artwork` being undispatched for two
-        // commits.
-        debug_assert!(
-            done.is_ok(),
-            "the demo could not author {}: {:?}",
+        // The work's own name where this library knows one, and the record's
+        // where it does not. That difference is the whole of stage two on
+        // screen: twenty-four preludes and fugues stop being twenty-four works
+        // all called "The Well-Tempered Clavier".
+        let work = work_of(s.catalogue);
+        let work_title = work.map(|w| w.title).unwrap_or(s.album);
+        author!(
+            peer,
             s.title,
-            done.err()
+            mutators::add_song(
+                s.title.into(),
+                s.composer.into(),
+                s.album.into(),
+                s.ms,
+                s.file.into(),
+                s.track,
+                s.part.into(),
+                s.catalogue.into(),
+                // Just who played it. The terms it was given on used to be
+                // jammed into this string — `"{performer} ({licence})"` — which
+                // made a track nobody was credited on a track by somebody
+                // called `(CC BY-SA 3.0)`. It is `recording.licence` now, set
+                // below, and the album page draws the two together.
+                s.performer.into(),
+                s.bpm,
+                // The pictures, carried by the entry that names the album and
+                // the composer rather than authored separately afterwards.
+                // `ART` is the seed's own table because a cover belongs to a
+                // record and not to each of its fifty tracks — repeating the
+                // URL on every `Seed` row would be the same string fifty times
+                // and fifty chances for two of them to disagree. What reaches
+                // the log is still per track, and `apply` reads the repeats as
+                // one row.
+                art_of("album", s.album),
+                art_of("artist", s.composer),
+                // No boxed sets here. The movement number is the track number,
+                // which is true of this library and is exactly what `add_song`
+                // would have assumed — said out loud rather than left to a rule
+                // about replaying entries written before the column existed.
+                1,
+                work_title.into(),
+                s.track,
+            )
         );
+
+        // The same two functions `apply` used, so the key cannot be a second
+        // opinion. If it ever were, `describe_recording` refuses an id it does
+        // not have and the assertion above says so on the first run.
+        let work_id = harken::work_key(s.composer, s.catalogue, work_title);
+        let who = match s.performer.is_empty() {
+            true => s.composer,
+            false => s.performer,
+        };
+        takes.insert(
+            harken::recording_key(&work_id, who),
+            (s.performer, s.licence),
+        );
+        work_ids.insert(s.catalogue, work_id);
+    }
+
+    // What a track could not carry: the key, the form, the period and the year.
+    for w in WORKS {
+        let Some(id) = work_ids.get(w.catalogue) else {
+            // A work this library describes and holds nothing of. Not an error
+            // — `WORKS` is allowed to know about music the demo dropped — but
+            // `describe_work` would refuse it, rightly.
+            continue;
+        };
+        author!(
+            peer,
+            w.title,
+            mutators::describe_work(
+                id.clone(),
+                String::new(),
+                w.key_sig.into(),
+                w.form.into(),
+                w.period.into(),
+                w.composed,
+                String::new(),
+            )
+        );
+    }
+
+    // …and what the one lumped performer string could not: the terms, and the
+    // people with their roles.
+    for (id, (performer, licence)) in &takes {
+        if !licence.is_empty() {
+            author!(
+                peer,
+                licence,
+                mutators::describe_recording(
+                    id.clone(),
+                    0,
+                    String::new(),
+                    String::new(),
+                    (*licence).into(),
+                    String::new(),
+                )
+            );
+        }
+        for c in CREDITS.iter().filter(|c| c.performer == *performer) {
+            author!(
+                peer,
+                c.name,
+                mutators::credit_recording(
+                    id.clone(),
+                    c.name.into(),
+                    c.role.into(),
+                    c.instrument.into(),
+                    c.pos,
+                )
+            );
+        }
     }
     peer.refresh();
     // A few of them hearted, so the playlist is not empty either.
