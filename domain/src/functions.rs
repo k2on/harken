@@ -1323,6 +1323,52 @@ pub fn works(db: &mut Db, composer: String) -> Result<Vec<crate::schema::Work>> 
     Ok(out)
 }
 
+/// One work, by its key.
+///
+/// A `Vec` of nought or one, because that is what a query returns and an
+/// `Option` across the foreign boundary is one more shape for no gain. It
+/// exists because a client can be handed a work's key without knowing whose it
+/// is — a link somebody sent, a page opened cold — and `works()` wants a
+/// composer to ask about.
+#[query]
+pub fn work(db: &mut Db, id: String) -> Result<Vec<crate::schema::Work>> {
+    let Some(row) = db
+        .select(Work::all().filter(Work::id.eq(id)))
+        .into_iter()
+        .next()
+    else {
+        return Ok(Vec::new());
+    };
+    let takes = db
+        .select(Recording::all().filter(Recording::work_id.eq(Some(row.id.clone()))))
+        .len() as i64;
+    let movements: BTreeSet<String> = db
+        .select(Movement::all().filter(Movement::work_id.eq(row.id.clone())))
+        .into_iter()
+        .map(|m| m.id)
+        .collect();
+    let tracks = db
+        .select(Song::all())
+        .into_iter()
+        .filter(|s| {
+            s.movement_id
+                .as_ref()
+                .is_some_and(|id| movements.contains(id))
+        })
+        .count() as i64;
+    Ok(vec![crate::schema::Work {
+        recordings: takes,
+        tracks,
+        id: row.id,
+        title: row.title,
+        composer: row.composer,
+        catalogue: row.catalogue,
+        form: row.form,
+        period: row.period,
+        art: row.art,
+    }])
+}
+
 /// Every performance of one work that this library holds.
 ///
 /// The list an Apple Music Classical work page is: one row per recording, told

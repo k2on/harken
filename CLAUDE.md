@@ -2029,19 +2029,46 @@ Water Music's first suite is still credited to nobody, with its licence shown
 and no performer: Commons does not say who played it, and an empty credit is
 the honest answer rather than a guess.
 
-### What is not done yet
+### The desktop browses it, five pages deep
 
-The domain and the demo's data are done; the *clients* are not. `composers()`,
-`works()`, `recordings()`, `recording()` and `credits()` exist and nothing draws
-them — the sidebar is still Songs / Albums / Artists, and `albums()`,
-`artists()`, `album()`, `artist()` and `track_details()` keep their signatures
-so both clients still work. `track_details` joins `part` and `catalogue` out of
-the work and rebuilds `performer` from the credits, which is what makes that
-true.
+Composers → a composer → a work → a recording → its tracks, which is Apple
+Music Classical's path and now this one's. The sidebar gains one line rather
+than four, because a composer is the entry and everything else is reached from
+a page — the same argument that turned albums and artists from sidebar rows
+into pages.
 
-A library with no works has no Composers page and no Works page to draw, so the
-sidebar will have to show a line only when there are rows behind it — the rule
-`Playlists` already follows.
+- **A sidebar line is drawn only when there are rows behind it.** This is what
+  lets one schema serve every genre: a library of pop has no works, so it has
+  no Composers line, and a library of podcasts has no Albums either. Songs is
+  unconditional because it is the library. `the_sidebar_only_offers_what_there_is`
+  asserts both halves, and an empty library comes out as Songs and the
+  Favorites playlist every peer makes on its first run.
+- **A work's recordings are rows, not cards.** Every recording of one work has
+  the same title and the same picture, so a grid of them is a grid of identical
+  squares; what tells them apart is text — who played it, when, on what terms.
+- **A route carries the derived key**, `#work/johann-sebastian-bach/bwv-988`
+  and `#recording/…@kimiko-ishizaka`. That is still a *name* in the sense
+  `route.rs` means: the rule forbids a uuid because nobody can type one, and
+  these are built out of the composer, the catalogue number and whoever
+  played it. The slash inside one is why `Route::parse` splits on the first
+  separator only.
+- **A page reached by key loads its own row.** `works` holds one composer's
+  works and `recordings` holds one work's, and `reload_shown` clears both
+  before filling the new one — so a work page reached from a link had an empty
+  list to look itself up in and drew a header with no catalogue, no period and
+  no cover. `harken::work(id)` is the read that fixes it, and
+  `the_whole_path_from_a_composer_to_a_movement` is what found it: each of
+  these pages is right on its own and the bug is in the *transition*.
+
+**And the cards are all one size now**, which they were not. `columns_in`
+divides the pane's width by a card to decide how many fit, and it subtracted
+the sidebar and the page padding but not the *scrollbar* — ten pixels. At the
+widths where N cards needed every one of them the row came out over-full, and
+iced clamps a `Fixed` child to the space left, so the last card in each row was
+drawn narrower than the others. One card in five at the wrong size reads as a
+rendering fault and is an off-by-ten. `cards_never_overflow_their_row` walks
+every width from 320 to 4000 and `a_card_that_fits_is_drawn` is its other half,
+because "subtract more" passes the first one and wastes a column.
 
 ## The square when there is no cover
 

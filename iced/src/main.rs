@@ -225,9 +225,23 @@ enum Source {
     /// four fixed places plus whatever lists you made.
     Albums,
     Artists,
+    /// Everyone this library has a work *by*, which is not the same list as
+    /// `Artists`: that one is every `media.creator` for every kind, and this
+    /// one is exactly the people some `work` is by. A library of pop and
+    /// podcasts has none of them, and the sidebar then draws no such line.
+    Composers,
     Playlist(harken::Id<harken::tables::Playlist>, String),
     Album(String),
     Artist(String),
+    /// One composer's works. Reached from a card on `Composers`.
+    Works(String),
+    /// One work, and the performances of it this library holds. The first is
+    /// the derived key `work_key` made and the second is the title to draw —
+    /// carried together because a page needs both and the key is not a name.
+    Work(String, String),
+    /// One performance, in the order the work goes. The label is who played
+    /// it, which is the only thing that tells two of them apart.
+    Recording(String, String),
 }
 
 impl Source {
@@ -237,9 +251,18 @@ impl Source {
             Source::Library => route::Route::Library,
             Source::Albums => route::Route::Albums,
             Source::Artists => route::Route::Artists,
+            Source::Composers => route::Route::Composers,
             Source::Playlist(_, name) => route::Route::Playlist(name.clone()),
             Source::Album(name) => route::Route::Album(name.clone()),
             Source::Artist(name) => route::Route::Artist(name.clone()),
+            Source::Works(name) => route::Route::Composer(name.clone()),
+            // The key, not the title — and it is still a name in the sense
+            // `route.rs` means, because `work_key` builds it out of the
+            // composer and the catalogue number:
+            // `#work/johann-sebastian-bach/bwv-988` is a link somebody can
+            // read and type. What that rule forbids is a uuid.
+            Source::Work(id, _) => route::Route::Work(id.clone()),
+            Source::Recording(id, _) => route::Route::Recording(id.clone()),
         }
     }
 
@@ -249,12 +272,16 @@ impl Source {
     /// line N without counting past decoration.
     fn heading(&self) -> Option<&'static str> {
         match self {
-            Source::Library | Source::Albums | Source::Artists => Some("Music"),
+            Source::Library | Source::Albums | Source::Artists | Source::Composers => Some("Music"),
             Source::Playlist(..) => Some("Playlists"),
             // Reached from a page rather than from the sidebar, so there is no
             // line to put a heading over. `Choice::heading` is only ever asked
             // about a line the sidebar actually draws.
-            Source::Album(_) | Source::Artist(_) => None,
+            Source::Album(_)
+            | Source::Artist(_)
+            | Source::Works(_)
+            | Source::Work(..)
+            | Source::Recording(..) => None,
         }
     }
 
@@ -263,7 +290,29 @@ impl Source {
             Source::Library => "Songs",
             Source::Albums => "Albums",
             Source::Artists => "Artists",
-            Source::Playlist(_, name) | Source::Album(name) | Source::Artist(name) => name,
+            Source::Composers => "Composers",
+            Source::Playlist(_, name)
+            | Source::Album(name)
+            | Source::Artist(name)
+            | Source::Works(name)
+            | Source::Work(_, name)
+            | Source::Recording(_, name) => name,
+        }
+    }
+
+    /// What a page of this kind is called, above its title.
+    ///
+    /// The one word that says which of the five things you are looking at,
+    /// because "Goldberg Variations" is a work and a record and neither is
+    /// obvious from the name alone.
+    fn kind(&self) -> &'static str {
+        match self {
+            Source::Album(_) => "Album",
+            Source::Artist(_) => "Artist",
+            Source::Works(_) => "Composer",
+            Source::Work(..) => "Work",
+            Source::Recording(..) => "Recording",
+            _ => "",
         }
     }
 }
@@ -534,6 +583,12 @@ struct Choice {
 /// other row leaves empty. A fixed width, so the titles line up whatever is
 /// or is not playing.
 const TRANSPORT: Length = Length::Fixed(31.0);
+/// iced's default scrollbar, which takes its width out of the content's.
+///
+/// It has to be in `columns_in`'s arithmetic: a page of cards is inside a
+/// `scrollable`, so what a row of cards actually gets is this much narrower
+/// than the pane it is in.
+const SCROLLBAR: f32 = 10.0;
 const TRACK: Length = Length::Fixed(30.0);
 const NAME: Length = Length::FillPortion(5);
 const ARTIST: Length = Length::FillPortion(3);
@@ -706,6 +761,36 @@ fn credit(performer: &str, licence: &str) -> String {
     }
 }
 
+/// How many cards fit across an index page, at this window width.
+///
+/// A free function so it can be tested: `cards_never_overflow_their_row` walks
+/// every width a window can be and checks the answer actually fits, which is
+/// the only way to know, because getting it wrong is silent.
+///
+/// **And it was wrong.** The room a card has is the window less the sidebar,
+/// less the page's padding — and less the *scrollbar*, which this did not
+/// subtract. Ten pixels, and at the widths where N cards needed every one of
+/// them the row came out over-full; iced clamps a `Fixed` child to the space
+/// left, so the last card in the row was drawn smaller than the rest. One card
+/// out of five at the wrong size reads as a rendering bug and is arithmetic.
+fn columns_in(width: f32) -> usize {
+    let room = (width - App::SIDEBAR_WIDTH - App::PAGE_PADDING * 2.0 - SCROLLBAR).max(0.0);
+    (((room + App::CARD_GAP) / (App::CARD + App::CARD_GAP)) as usize).max(1)
+}
+
+/// "1685–1750", or "1685–" for somebody still alive, or nothing at all.
+///
+/// Empty rather than a dash where a date should be: a composer nobody has
+/// described yet gets the tally under their name instead, which is a fact.
+fn lifespan(born: i64, died: i64) -> String {
+    match (born, died) {
+        (0, 0) => String::new(),
+        (0, d) => format!("–{d}"),
+        (b, 0) => format!("{b}–"),
+        (b, d) => format!("{b}–{d}"),
+    }
+}
+
 fn clock(secs: f64) -> String {
     if !secs.is_finite() || secs < 0.0 {
         return String::new();
@@ -810,6 +895,16 @@ struct Peer {
     /// `#album/…` link against, now that no sidebar line carries one.
     albums: Vec<harken::Album>,
     artists: Vec<harken::Artist>,
+    /// Everyone this library has a *work* by, which is not `artists`: that one
+    /// is every `media.creator` for every kind and this one is exactly the
+    /// people some `work` is by. Empty for a library of pop and podcasts, and
+    /// the sidebar then draws no Composers line at all.
+    composers: Vec<harken::Composer>,
+    /// What the current page shows when it is not a list of tracks: one
+    /// composer's works, or one work's recordings. Read by `reload_shown`
+    /// beside `shown`, for the same reason and at the same moment.
+    works: Vec<harken::Work>,
+    recordings: Vec<harken::Recording>,
     /// Bumped whenever the two lists above are rebuilt.
     ///
     /// The App watches it to know when to ask for covers. It used to ask when
@@ -946,6 +1041,9 @@ impl Peer {
             choices: Vec::new(),
             albums: Vec::new(),
             artists: Vec::new(),
+            composers: Vec::new(),
+            works: Vec::new(),
+            recordings: Vec::new(),
             art_gen: 0,
             items: Vec::new(),
             pending: 0,
@@ -1019,6 +1117,7 @@ impl Peer {
         let playlists = harken::playlists(&mut store).unwrap_or_default();
         let albums = harken::albums(&mut store).unwrap_or_default();
         let artists = harken::artists(&mut store).unwrap_or_default();
+        let composers = harken::composers(&mut store).unwrap_or_default();
         drop(store);
 
         // The playlist the view is read against can stop existing, and now
@@ -1051,23 +1150,31 @@ impl Peer {
         // now: it was one line per album and one per artist, which is readable
         // at twenty albums and is a second scrolling list at two hundred.
         // Where those went is a page, which is what the first three lines are.
-        let mut choices = vec![
-            Choice {
-                source: Source::Library,
-                label: "Songs".into(),
-                count: Some(self.items.len() as i64),
-            },
-            Choice {
-                source: Source::Albums,
-                label: "Albums".into(),
-                count: Some(albums.len() as i64),
-            },
-            Choice {
-                source: Source::Artists,
-                label: "Artists".into(),
-                count: Some(artists.len() as i64),
-            },
-        ];
+        //
+        // **A line is drawn only when it has rows behind it**, which is what
+        // lets one schema serve every genre without every library growing
+        // pages about nothing. A pop library has no works, so it has no
+        // Composers line; a library of podcasts has no albums either. Songs is
+        // unconditional because it is the library, and an empty library is
+        // still the thing you are looking at.
+        let mut choices = vec![Choice {
+            source: Source::Library,
+            label: "Songs".into(),
+            count: Some(self.items.len() as i64),
+        }];
+        for (source, label, count) in [
+            (Source::Albums, "Albums", albums.len()),
+            (Source::Artists, "Artists", artists.len()),
+            (Source::Composers, "Composers", composers.len()),
+        ] {
+            if count > 0 {
+                choices.push(Choice {
+                    source,
+                    label: label.into(),
+                    count: Some(count as i64),
+                });
+            }
+        }
         choices.extend(playlists.into_iter().map(|p| Choice {
             source: Source::Playlist(p.id, p.name.clone()),
             label: p.name,
@@ -1076,6 +1183,7 @@ impl Peer {
         self.choices = choices;
         self.albums = albums;
         self.artists = artists;
+        self.composers = composers;
         self.art_gen = self.art_gen.wrapping_add(1);
     }
 
@@ -1102,29 +1210,93 @@ impl Peer {
     /// a query, because a filtered list is not what the view is maintaining —
     /// and a selection is a click, so paying for it there is the right place.
     fn reload_shown(&mut self) {
+        // The two lists a page of cards or of recordings draws. Cleared first,
+        // so a page that is neither cannot show the last one's — the same rule
+        // `shown` follows and for the same reason.
+        self.works.clear();
+        self.recordings.clear();
         self.shown = match self.source.clone() {
             Source::Library => return,
-            // An index page draws `albums`/`artists`, not a list of tracks.
-            // Cleared rather than left alone so that `rows()` cannot hand the
-            // transport the previous page's queue.
-            Source::Albums | Source::Artists => {
+            // An index page draws a grid, not a list of tracks. Cleared rather
+            // than left alone so that `rows()` cannot hand the transport the
+            // previous page's queue.
+            Source::Albums | Source::Artists | Source::Composers => {
+                self.shown.clear();
+                return;
+            }
+            Source::Works(composer) => {
+                self.works = harken::works(&mut self.client.store(), composer).unwrap_or_default();
+                self.shown.clear();
+                return;
+            }
+            // Both halves: the work itself, for the header, and its
+            // performances, for the page. `works` is one composer's list and
+            // this page may have been reached without opening a composer at
+            // all — a link somebody sent — so the row is read by key.
+            Source::Work(id, _) => {
+                let mut store = self.client.store();
+                self.works = harken::work(&mut store, id.clone()).unwrap_or_default();
+                self.recordings = harken::recordings(&mut store, id).unwrap_or_default();
                 self.shown.clear();
                 return;
             }
             Source::Playlist(id, _) => harken::playlist(&mut self.client.store(), id),
             Source::Album(name) => harken::album(&mut self.client.store(), self.playlist, name),
             Source::Artist(name) => harken::artist(&mut self.client.store(), self.playlist, name),
+            // The one list in the domain ordered by the *work* rather than by
+            // the release: a compilation puts the Moonlight's first movement
+            // at track nine and a page about the sonata has to put it first.
+            Source::Recording(id, _) => {
+                // Every recording of the same work, so the header can find
+                // this one — `recording_key` puts the work's key before the
+                // `@`, which is what makes that askable from the id alone.
+                if let Some((work, _)) = id.split_once('@') {
+                    let mut store = self.client.store();
+                    self.works = harken::work(&mut store, work.to_string()).unwrap_or_default();
+                    self.recordings =
+                        harken::recordings(&mut store, work.to_string()).unwrap_or_default();
+                }
+                // A link arriving cold carries the key and no label, so the
+                // page would be titled with an empty string. The row knows who
+                // played it; this is where the two meet.
+                if let Source::Recording(id, who) = &mut self.source {
+                    if who.is_empty() {
+                        if let Some(take) = self.recordings.iter().find(|r| r.id == *id) {
+                            who.clone_from(&take.performers);
+                        }
+                    }
+                }
+                let id = match &self.source {
+                    Source::Recording(id, _) => id.clone(),
+                    _ => unreachable!("matched just above"),
+                };
+                harken::recording(&mut self.client.store(), self.playlist, id)
+            }
         }
         .unwrap_or_default();
     }
 
     /// What the main list is showing, whichever side it came from.
+    /// The title of a work, by its key, or `None` if this peer has no such
+    /// work.
+    ///
+    /// A read rather than a lookup in `works`, because that list is one
+    /// composer's and a `#work/…` link can arrive before any composer has been
+    /// opened — which is exactly what a link somebody sent does.
+    fn work_named(&mut self, id: &str) -> Option<String> {
+        harken::work(&mut self.client.store(), id.to_string())
+            .unwrap_or_default()
+            .into_iter()
+            .next()
+            .map(|w| w.title)
+    }
+
     /// The source a route names, against what this peer actually has.
     ///
     /// A link to a playlist that has since been renamed, or to an album this
     /// peer has not received yet, lands on the library — which is a page, and
     /// better than a heading with nothing under it.
-    fn source_of(&self, route: &route::Route) -> Source {
+    fn source_of(&mut self, route: &route::Route) -> Source {
         // An album and an artist are no longer sidebar lines, so the lists
         // they *are* have to be what a link resolves against. Same rule as
         // before — a name this peer does not have lands on the library, which
@@ -1141,6 +1313,34 @@ impl Peer {
                     true => Source::Artist(name.clone()),
                     false => Source::Library,
                 }
+            }
+            route::Route::Composer(name) => {
+                return match self.composers.iter().any(|c| c.name == *name) {
+                    true => Source::Works(name.clone()),
+                    false => Source::Library,
+                }
+            }
+            // A work and a recording are resolved by *querying*, not against a
+            // list this peer holds: the lists here are the current page's, and
+            // a link arriving cold has no page yet. The key is enough to ask
+            // with, which is the other half of what makes it a good route.
+            route::Route::Work(id) => {
+                return match self.work_named(id) {
+                    Some(title) => Source::Work(id.clone(), title),
+                    None => Source::Library,
+                }
+            }
+            route::Route::Recording(id) => {
+                // The work's key is everything before the `@` — see
+                // `recording_key`. A recording nobody has is the library, the
+                // same as a renamed playlist.
+                let Some((work, _)) = id.split_once('@') else {
+                    return Source::Library;
+                };
+                return match self.work_named(work) {
+                    Some(_) => Source::Recording(id.clone(), String::new()),
+                    None => Source::Library,
+                };
             }
             _ => {}
         }
@@ -1215,6 +1415,17 @@ impl App {
     /// A `Login` is what `Peer::open` wants, and the demo has no server to get
     /// one from — so it makes one up, with an empty token and session. Nothing
     /// ever sends them, because the demo never opens a socket.
+    /// The same login against a database of its own, which is what a test
+    /// wants: the path is `petros-demo-{id}.db` and cargo runs a binary's
+    /// tests on several threads, so two of them sharing one name fail only
+    /// when run *together*.
+    #[cfg(all(test, feature = "demo"))]
+    fn demo_login_for(who: &str) -> Login {
+        let mut login = Self::demo_login();
+        login.user.id = who.to_string();
+        login
+    }
+
     #[cfg(feature = "demo")]
     fn demo_login() -> Login {
         Login {
@@ -1450,6 +1661,18 @@ impl App {
                     cells: p.artists.len(),
                     columns: self.columns(),
                 },
+                Some((Source::Composers, p)) => vim::Grid {
+                    cells: p.composers.len(),
+                    columns: self.columns(),
+                },
+                Some((Source::Works(_), p)) => vim::Grid {
+                    cells: p.works.len(),
+                    columns: self.columns(),
+                },
+                // A column, because a work's recordings are rows: `h` and `l`
+                // refuse there and hand the cursor back to the sidebar, which
+                // is what one column has always meant.
+                Some((Source::Work(..), p)) => vim::Grid::column(p.recordings.len()),
                 _ => vim::Grid::column(peer.map_or(0, |p| p.rows().len())),
             },
         }
@@ -1463,8 +1686,7 @@ impl App {
     /// window size — and the two agreeing is what keeps the cursor under the
     /// card it is drawn on.
     fn columns(&self) -> usize {
-        let room = (self.window.width - Self::SIDEBAR_WIDTH - Self::PAGE_PADDING * 2.0).max(0.0);
-        (((room + Self::CARD_GAP) / (Self::CARD + Self::CARD_GAP)) as usize).max(1)
+        columns_in(self.window.width)
     }
 
     /// The text `/` searches, for whichever pane has the cursor.
@@ -1910,6 +2132,23 @@ impl App {
         match peer.source {
             Source::Albums => peer.albums.get(at).map(|a| Source::Album(a.name.clone())),
             Source::Artists => peer.artists.get(at).map(|a| Source::Artist(a.name.clone())),
+            Source::Composers => peer
+                .composers
+                .get(at)
+                .map(|c| Source::Works(c.name.clone())),
+            Source::Works(_) => peer
+                .works
+                .get(at)
+                .map(|w| Source::Work(w.id.clone(), w.title.clone())),
+            // Not a card, and it opens all the same: a work page is a list of
+            // recordings and `<Enter>` on one has to mean the obvious thing.
+            // Which is why this is `card_under_cursor` in name only — what it
+            // answers is "what does the cursor open", and a page where the
+            // answer is `None` is a page where `<Enter>` plays.
+            Source::Work(..) => peer
+                .recordings
+                .get(at)
+                .map(|r| Source::Recording(r.id.clone(), r.performers.clone())),
             _ => None,
         }
     }
@@ -2379,7 +2618,7 @@ impl App {
                     .is_some_and(|peer| !peer.choices.is_empty());
                 if ready && fragment != self.routed {
                     self.routed = fragment.clone();
-                    if let (Some(route), Some(peer)) = (fragment, &self.peer) {
+                    if let (Some(route), Some(peer)) = (fragment, &mut self.peer) {
                         let wanted = peer.source_of(&route);
                         if wanted != peer.source {
                             return self.update(Message::Select(wanted));
@@ -2842,10 +3081,140 @@ impl App {
                 let header = self.view_record(
                     name,
                     album.map(|a| a.creator.as_str()).unwrap_or_default(),
-                    "Album",
+                    peer.source.kind(),
                     peer.rows(),
                     None,
                     album.map(|a| a.art.as_str()).unwrap_or_default(),
+                );
+                column![header, self.view_list(peer)]
+                    .spacing(0)
+                    .width(Length::Fill)
+                    .into()
+            }
+            // Everyone this library has a work by. Circles, because these are
+            // people and a person is a circle wherever one is drawn.
+            Source::Composers => self.view_cards(
+                peer.composers
+                    .iter()
+                    .map(|c| Card {
+                        seed: c.name.clone(),
+                        title: c.name.clone(),
+                        // The years, which is what makes a composer index
+                        // readable at a glance — and the tally when nobody has
+                        // said, rather than a dash where a date should be.
+                        under: lifespan(c.born, c.died),
+                        tally: c.works,
+                        open: Source::Works(c.name.clone()),
+                        round: true,
+                        art: c.art.clone(),
+                    })
+                    .collect(),
+                "Nobody yet.",
+            ),
+            // One composer's works.
+            Source::Works(name) => {
+                let composer = peer.composers.iter().find(|c| c.name == *name);
+                let works = peer.works.len();
+                let tracks: i64 = peer.works.iter().map(|w| w.tracks).sum();
+                let facts = format!(
+                    "{works} {}  ·  {tracks} {}",
+                    plural(works as i64, "work"),
+                    plural(tracks, "track")
+                );
+                let header = self.view_header(
+                    name,
+                    &lifespan(
+                        composer.map(|c| c.born).unwrap_or_default(),
+                        composer.map(|c| c.died).unwrap_or_default(),
+                    ),
+                    peer.source.kind(),
+                    &facts,
+                    composer.map(|c| c.art.as_str()).unwrap_or_default(),
+                    true,
+                );
+                let cards = peer
+                    .works
+                    .iter()
+                    .map(|w| Card {
+                        seed: w.title.clone(),
+                        title: w.title.clone(),
+                        // The catalogue number, which is the one name a work
+                        // has that survives translation — and the thing that
+                        // tells two "Ballades" apart.
+                        under: w.catalogue.clone(),
+                        tally: w.tracks,
+                        open: Source::Work(w.id.clone(), w.title.clone()),
+                        round: false,
+                        art: w.art.clone(),
+                    })
+                    .collect();
+                column![header, self.view_cards(cards, "Nothing by them yet.")]
+                    .spacing(0)
+                    .width(Length::Fill)
+                    .into()
+            }
+            // One work, and every performance of it this library holds. The
+            // page this whole shape exists for: the rows are the same music
+            // and what tells them apart is who played it.
+            Source::Work(id, title) => {
+                let work = peer.works.iter().find(|w| w.id == *id);
+                let takes = peer.recordings.len();
+                let mut facts = match work.map(|w| w.catalogue.clone()).unwrap_or_default() {
+                    c if c.is_empty() => String::new(),
+                    c => format!("{c}  ·  "),
+                };
+                facts.push_str(&format!("{takes} {}", plural(takes as i64, "recording")));
+                if let Some(w) = work {
+                    for fact in [&w.form, &w.period] {
+                        if !fact.is_empty() {
+                            facts.push_str("  ·  ");
+                            facts.push_str(fact);
+                        }
+                    }
+                }
+                let header = self.view_header(
+                    title,
+                    work.map(|w| w.composer.as_str()).unwrap_or_default(),
+                    peer.source.kind(),
+                    &facts,
+                    work.map(|w| w.art.as_str()).unwrap_or_default(),
+                    false,
+                );
+                column![header, self.view_takes(peer)]
+                    .spacing(0)
+                    .width(Length::Fill)
+                    .into()
+            }
+            // One performance, in the order the work goes.
+            Source::Recording(id, who) => {
+                let take = peer.recordings.iter().find(|r| r.id == *id);
+                let rows = peer.rows();
+                let ms: i64 = rows.iter().map(|i| i.duration_ms).sum();
+                let mut facts = format!("{} {}", rows.len(), plural(rows.len() as i64, "track"));
+                if ms > 0 {
+                    facts.push_str("  ·  ");
+                    facts.push_str(&spell(ms));
+                }
+                if let Some(r) = take {
+                    for fact in [
+                        (r.recorded > 0).then(|| r.recorded.to_string()),
+                        (!r.label.is_empty()).then(|| r.label.clone()),
+                        (!r.licence.is_empty()).then(|| r.licence.clone()),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    {
+                        facts.push_str("  ·  ");
+                        facts.push_str(&fact);
+                    }
+                }
+                let header = self.view_header(
+                    who,
+                    "",
+                    peer.source.kind(),
+                    &facts,
+                    take.map(|r| r.art.as_str()).unwrap_or_default(),
+                    false,
                 );
                 column![header, self.view_list(peer)]
                     .spacing(0)
@@ -2860,7 +3229,14 @@ impl App {
                     .find(|a| a.name == *name)
                     .map(|a| a.art.as_str())
                     .unwrap_or_default();
-                let header = self.view_record(name, "", "Artist", peer.rows(), Some(by.len()), art);
+                let header = self.view_record(
+                    name,
+                    "",
+                    peer.source.kind(),
+                    peer.rows(),
+                    Some(by.len()),
+                    art,
+                );
                 column![header, self.view_list(peer)]
                     .spacing(0)
                     .width(Length::Fill)
@@ -2868,6 +3244,95 @@ impl App {
             }
             _ => self.view_list(peer),
         }
+    }
+
+    /// The recordings of one work, as rows.
+    ///
+    /// Rows rather than cards, and that is the one place this page departs
+    /// from the two index pages: every recording of a work has the same
+    /// picture and the same title, so a grid of them would be a grid of
+    /// identical squares. What tells them apart is text — who played it, when,
+    /// on what terms — so text is what the page is.
+    fn view_takes(&self, peer: &'_ Peer) -> Element<'_, Message> {
+        if peer.recordings.is_empty() {
+            return container(text("No recordings of it yet.").size(13).style(
+                |theme: &iced::Theme| text::Style {
+                    color: Some(palette::of(theme).background.base.text.scale_alpha(0.5)),
+                },
+            ))
+            .padding(Self::PAGE_PADDING)
+            .into();
+        }
+        let focused = self.pane == Pane::Tracks;
+        let cursor = focused.then_some(self.at(Pane::Tracks));
+        let mut list = column![];
+        for (at, take) in peer.recordings.iter().enumerate() {
+            let on_cursor = Some(at) == cursor;
+            let who = match take.performers.is_empty() {
+                // A recording nobody is credited on, which the demo has: the
+                // honest answer, rather than a guess at who played it.
+                true => "Performer not named".to_string(),
+                false => take.performers.clone(),
+            };
+            let mut facts = format!("{} {}", take.tracks, plural(take.tracks, "track"));
+            for fact in [
+                (take.recorded > 0).then(|| take.recorded.to_string()),
+                (!take.label.is_empty()).then(|| take.label.clone()),
+                (!take.licence.is_empty()).then(|| take.licence.clone()),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                facts.push_str("  ·  ");
+                facts.push_str(&fact);
+            }
+            list = list.push(
+                mouse_area(
+                    container(
+                        column![
+                            text(who).size(13).style(move |theme: &iced::Theme| {
+                                text::Style {
+                                    color: Some(if on_cursor {
+                                        palette::of(theme).primary.base.text
+                                    } else {
+                                        palette::of(theme).background.base.text
+                                    }),
+                                }
+                            }),
+                            text(facts).size(11).style(move |theme: &iced::Theme| {
+                                let palette = palette::of(theme);
+                                text::Style {
+                                    color: Some(match on_cursor {
+                                        true => palette.primary.base.text.scale_alpha(0.7),
+                                        false => palette.background.base.text.scale_alpha(0.5),
+                                    }),
+                                }
+                            }),
+                        ]
+                        .spacing(2),
+                    )
+                    .padding(iced::Padding {
+                        top: 8.0,
+                        right: Self::PAGE_PADDING,
+                        bottom: 8.0,
+                        left: Self::PAGE_PADDING,
+                    })
+                    .width(Length::Fill)
+                    .style(move |theme: &iced::Theme| {
+                        row_style(theme, on_cursor, focused, at % 2 == 1)
+                    }),
+                )
+                .on_enter(Message::HoverAt(at))
+                .on_press(Message::Select(Source::Recording(
+                    take.id.clone(),
+                    take.performers.clone(),
+                ))),
+            );
+        }
+        container(scrollable(list).id(Self::TRACKS))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
     }
 
     /// One index page: a grid of cards, and the cursor on one of them.
@@ -3012,7 +3477,27 @@ impl App {
             facts.push_str(&spell(ms));
         }
 
-        let round = albums.is_some();
+        self.view_header(name, under, kind, &facts, art, albums.is_some())
+    }
+
+    /// The header every page that is *about* something opens with: the
+    /// square, what kind of thing it is, its name, one line of whatever is
+    /// under it, and the numbers true of the whole of it.
+    ///
+    /// Shared, because there are five such pages now — an album, an artist, a
+    /// composer, a work and a recording — and five copies of this would be
+    /// five chances for one of them to draw the square at a different size.
+    #[allow(clippy::too_many_arguments)]
+    fn view_header(
+        &self,
+        name: &str,
+        under: &str,
+        kind: &'static str,
+        facts: &str,
+        art: &str,
+        round: bool,
+    ) -> Element<'_, Message> {
+        let facts = facts.to_string();
         let side = 116.0;
         container(
             row![
@@ -3908,6 +4393,14 @@ mod demo_covers {
     /// when they are run *together*: each passes alone and the suite fails,
     /// which is the worst way to find out. One name each and they cannot meet.
     pub fn fresh(who: &str) -> Peer {
+        let mut peer = blank(who);
+        seed::seed(&mut peer);
+        peer
+    }
+
+    /// …and the same with nothing in it, for the tests about what a library
+    /// with no music offers.
+    pub fn blank(who: &str) -> Peer {
         let db = std::env::temp_dir().join(format!("petros-demo-{who}.db"));
         // `-intents` is the one that matters and is the one easily forgotten:
         // a client's pending mutations live in a file of their own, so
@@ -3917,11 +4410,7 @@ mod demo_covers {
         for suffix in ["", "-wal", "-shm", "-intents"] {
             let _ = std::fs::remove_file(format!("{}{}", db.display(), suffix));
         }
-        let mut login = App::demo_login();
-        login.user.id = who.to_string();
-        let mut peer = Peer::open(&login);
-        seed::seed(&mut peer);
-        peer
+        Peer::open(&App::demo_login_for(who))
     }
 
     #[test]
@@ -4174,6 +4663,122 @@ mod demo_works {
         );
     }
 
+    /// The whole path a person takes: Composers → a composer → a work → a
+    /// recording → its tracks, with every page's own state loaded.
+    ///
+    /// Each of these pages reads a *different* list, and `reload_shown` clears
+    /// three of them before filling the new one — so the way to get this wrong
+    /// is for a page to draw the last page's rows, or none. That is invisible
+    /// in a screenshot of any one page and obvious from a walk.
+    ///
+    /// It caught two. The work page looked its row up in `works`, which holds
+    /// one *composer's* works and is empty on a page reached by key; the
+    /// recording page did the same with `recordings`. Both drew a header with
+    /// no catalogue, no period and no cover, which reads as missing data.
+    #[test]
+    fn the_whole_path_from_a_composer_to_a_movement() {
+        let mut peer = fresh("walk");
+
+        peer.source = super::Source::Composers;
+        peer.reload_sidebar();
+        peer.reload_shown();
+        assert!(
+            peer.composers
+                .iter()
+                .any(|c| c.name == "Johann Sebastian Bach"),
+            "the composers page has to have composers on it"
+        );
+
+        peer.source = super::Source::Works("Johann Sebastian Bach".into());
+        peer.reload_shown();
+        let goldbergs = peer
+            .works
+            .iter()
+            .find(|w| w.catalogue == "BWV 988")
+            .expect("Bach's page lists the Goldbergs")
+            .clone();
+        assert_eq!(goldbergs.title, "Goldberg Variations");
+
+        peer.source = super::Source::Work(goldbergs.id.clone(), goldbergs.title.clone());
+        peer.reload_shown();
+        assert_eq!(
+            peer.works.len(),
+            1,
+            "the work's own row, for the header — not the composer's list, \
+             which is empty on a page reached by key"
+        );
+        assert_eq!(peer.works[0].catalogue, "BWV 988");
+        assert_eq!(peer.recordings.len(), 1);
+        let take = peer.recordings[0].clone();
+        assert_eq!(take.performers, "Kimiko Ishizaka");
+
+        peer.source = super::Source::Recording(take.id.clone(), String::new());
+        peer.reload_shown();
+        assert!(peer.rows().len() > 20, "tracks: {}", peer.rows().len());
+        assert_eq!(
+            peer.recordings
+                .iter()
+                .find(|r| r.id == take.id)
+                .map(|r| r.tracks),
+            Some(peer.rows().len() as i64),
+            "the recording's own row has to be loaded too, or its header has \
+             no year, no label and no licence"
+        );
+        match &peer.source {
+            super::Source::Recording(_, who) => {
+                assert_eq!(who, "Kimiko Ishizaka", "a page titled with nothing")
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    /// A work link resolves by its key, and one naming nothing lands on the
+    /// library rather than on an empty page.
+    #[test]
+    fn a_work_link_resolves_by_its_key() {
+        let mut peer = fresh("links");
+        peer.reload_sidebar();
+        let id = harken::work_key("Johann Sebastian Bach", "BWV 988", "Goldberg Variations");
+
+        // The key has a slash in it — composer then catalogue — which is why
+        // `Route::parse` splits on the first separator only.
+        assert!(id.contains('/'), "the key is composer/catalogue: {id}");
+        let route = super::route::Route::parse(&super::route::Route::Work(id.clone()).fragment());
+        assert_eq!(route, super::route::Route::Work(id.clone()), "round trip");
+
+        assert_eq!(
+            peer.source_of(&route),
+            super::Source::Work(id, "Goldberg Variations".into())
+        );
+        assert_eq!(
+            peer.source_of(&super::route::Route::Work("nobody/nothing".into())),
+            super::Source::Library
+        );
+    }
+
+    /// The sidebar draws a line only when there are rows behind it.
+    ///
+    /// The rule that lets one schema serve every genre: a library of pop has
+    /// no works, so it has no Composers page — and a client that drew the line
+    /// anyway would offer a page for a question the library cannot answer.
+    #[test]
+    fn the_sidebar_only_offers_what_there_is() {
+        let mut peer = fresh("sidebar");
+        peer.reload_sidebar();
+        let lines: Vec<&str> = peer.choices.iter().map(|c| c.label.as_str()).collect();
+        assert!(lines.contains(&"Composers"), "{lines:?}");
+        assert!(lines.contains(&"Albums"), "{lines:?}");
+
+        // …and an empty library offers the library and the playlist every peer
+        // makes on its first run, and nothing else. No albums, no artists, no
+        // composers — there is nothing to browse *by* until something is added,
+        // and three empty pages is three ways to find out the hard way.
+        let mut bare = super::demo_covers::blank("bare");
+        bare.reload_sidebar();
+        let lines: Vec<&str> = bare.choices.iter().map(|c| c.label.as_str()).collect();
+        assert_eq!(lines, vec!["Songs", "Favorites"], "an empty library");
+    }
+
     /// `WORKS` is keyed by the catalogue number alone, so two of them sharing
     /// one would silently give a work somebody else's title.
     ///
@@ -4189,6 +4794,56 @@ mod demo_works {
                 "two works both claim {}: {}",
                 w.catalogue,
                 w.title
+            );
+        }
+    }
+}
+
+/// The card grid's arithmetic, which nothing on screen can check for you.
+#[cfg(test)]
+mod cards {
+    use super::{columns_in, App, SCROLLBAR};
+
+    /// Every width a window can be, and the row it produces has to fit.
+    ///
+    /// The bug this is written for: `columns_in` did not subtract the
+    /// scrollbar, so at the widths where N cards needed the whole pane the row
+    /// came out ten pixels over. iced clamps a `Fixed` child to the space that
+    /// is left, so the *last* card in the row was drawn narrower than the
+    /// others — one card in five at the wrong size, which reads as a rendering
+    /// fault and is an off-by-ten.
+    ///
+    /// Falsify it by removing `SCROLLBAR` from the subtraction: it fails at
+    /// 964 and at every width where a row is exactly full.
+    #[test]
+    fn cards_never_overflow_their_row() {
+        for width in 320..=4000 {
+            let width = width as f32;
+            let n = columns_in(width) as f32;
+            let needed = n * App::CARD + (n - 1.0) * App::CARD_GAP;
+            let room = width - App::SIDEBAR_WIDTH - App::PAGE_PADDING * 2.0 - SCROLLBAR;
+            assert!(
+                n == 1.0 || needed <= room,
+                "at {width}px the page draws {n} cards needing {needed}px in {room}px — \
+                 the last one is clamped and comes out a different size from the rest"
+            );
+        }
+    }
+
+    /// …and it must not be needlessly stingy either: whenever another card
+    /// would fit, it is drawn. Without this half, "subtract more" passes the
+    /// test above and wastes a column.
+    #[test]
+    fn a_card_that_fits_is_drawn() {
+        for width in 320..=4000 {
+            let width = width as f32;
+            let n = columns_in(width) as f32;
+            let one_more = (n + 1.0) * App::CARD + n * App::CARD_GAP;
+            let room = width - App::SIDEBAR_WIDTH - App::PAGE_PADDING * 2.0 - SCROLLBAR;
+            assert!(
+                one_more > room,
+                "at {width}px there is room for {} cards and only {n} are drawn",
+                n + 1.0
             );
         }
     }

@@ -35,9 +35,25 @@ pub enum Route {
     /// are the two fragments with no `/` in them.
     Albums,
     Artists,
+    Composers,
     Playlist(String),
     Album(String),
     Artist(String),
+    /// One composer's works. `#composer/…` rather than `#works/…`, because the
+    /// name after the slash is the composer's and a fragment should read as
+    /// what it names.
+    Composer(String),
+    /// A work and a recording, by the keys `work_key` and `recording_key`
+    /// derive — `johann-sebastian-bach/bwv-988` and that with
+    /// `@kimiko-ishizaka` after it.
+    ///
+    /// **Still names, in the sense this file means.** The rule is that a uuid
+    /// has no place in an address bar because nobody can type one; these are
+    /// built out of the composer, the catalogue number and whoever played it,
+    /// so they are readable, typeable and stable. The slash inside one is why
+    /// `parse` splits on the *first* separator only.
+    Work(String),
+    Recording(String),
 }
 
 // Only a browser reads or writes an address bar, so on the desktop these are
@@ -53,9 +69,13 @@ impl Route {
             Route::Library => return "#library".to_string(),
             Route::Albums => return "#albums".to_string(),
             Route::Artists => return "#artists".to_string(),
+            Route::Composers => return "#composers".to_string(),
             Route::Playlist(name) => ("playlist", name),
             Route::Album(name) => ("album", name),
             Route::Artist(name) => ("artist", name),
+            Route::Composer(name) => ("composer", name),
+            Route::Work(name) => ("work", name),
+            Route::Recording(name) => ("recording", name),
         };
         let mut out = format!("#{kind}/");
         crate::encode(name, &mut out);
@@ -74,6 +94,7 @@ impl Route {
                 return match body {
                     "albums" => Route::Albums,
                     "artists" => Route::Artists,
+                    "composers" => Route::Composers,
                     _ => Route::Library,
                 }
             }
@@ -83,6 +104,9 @@ impl Route {
             "playlist" => Route::Playlist(name),
             "album" => Route::Album(name),
             "artist" => Route::Artist(name),
+            "composer" => Route::Composer(name),
+            "work" => Route::Work(name),
+            "recording" => Route::Recording(name),
             _ => Route::Library,
         }
     }
