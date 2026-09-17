@@ -1081,8 +1081,31 @@ every row is one line. Four things about it are load-bearing:
   it.
 
   **All three are one component, down to the corner.** `panel` is the ground,
-  the border, the radius and the padding; `entry_fill` and `entry_text` are
-  what a row inside one is painted. They were three copies, and the copies had
+  the border, the radius and the padding; `panel_entry` is a row inside one,
+  and `entry_fill` and `entry_text` are what it is painted.
+
+  `panel_entry` is two rules that are the same rule: **the glyph column is
+  there whether or not there is a glyph, and the row is a fixed height rather
+  than whatever its contents came to.** What a row *is* must not be decided by
+  what happens to be in it. A playlist with no tick put its name where a ticked
+  one's icon was, so a panel of three playlists was three indents; and a row
+  whose glyph was absent came out shorter than its neighbours, which is the
+  empty-container trap the transport column already pays for one list over.
+
+  That height is `PANEL_ENTRY`, and it is **declared rather than measured**,
+  which is what makes the arithmetic honest: `menu_origin`, `entry_top` and
+  `submenu_origin` all place panels *before* iced lays one out, so a row of
+  "whatever 13pt text inside 5 of padding comes to" was a number three
+  functions had to guess right — and the menu's 27 and the picker's 23 were two
+  different guesses about one shape. One constant, given to the container, and
+  they are true by construction. `MENU_TITLE` is fixed the same way.
+
+  **Which is what makes a submenu level with its parent.** Both panels draw the
+  same row at the same height, so from the entry down the two stay in step —
+  and the panel starts a `PANEL_PADDING` *above* the entry, because both inset
+  their rows by one and lining the panel's edge up with the entry would put the
+  submenu's first row a padding lower. `a_submenu_slides_to_fit…` asserts it by
+  the rows rather than by the panels, which is the thing you can see. They were three copies, and the copies had
   drifted: the menu's corner was 6 and the playlist picker's was 8, which is
   small enough that nobody would call it a bug and plain enough to see when the
   two are open beside each other — the submenu read as a different *kind* of
@@ -1170,6 +1193,14 @@ every row is one line. Four things about it are load-bearing:
     as an SVG in `icon.rs` and not typed, because U+203A is outside Latin-1 and
     "Fira Sans probably has a single guillemet" is not a thing to find out from
     a screenshot of a menu with a `?` on the end of one row.
+  - **Pointing back at the parent takes the keys back.** `menu_land` returned
+    early when the cursor was already on that entry, which is right for a mouse
+    that has not moved and wrong for one that has come back out of the submenu:
+    `PickerAt` handed the keys over on the way in, so pointing at
+    `Add to playlist` again did nothing at all — the entry stayed dim, the
+    highlight stayed in the submenu, and the only way back was the keyboard.
+    The submenu stays open through it, which is the other half: you pointed at
+    the entry that owns it, not away from it.
   - **`offered` stops it reopening.** `<Esc>` out of a submenu leaves the
     cursor on the entry it came from, and without this the next tick opens it
     again: an overlay you cannot close. It clears on moving, so leaving and

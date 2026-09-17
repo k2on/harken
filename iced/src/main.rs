@@ -879,6 +879,17 @@ fn row_style(theme: &iced::Theme, on_cursor: bool, focused: bool, odd: bool) -> 
 const PANEL_RADIUS: f32 = 6.0;
 const PANEL_PADDING: f32 = 4.0;
 const ENTRY_RADIUS: f32 = 4.0;
+/// How tall one row in a panel is, and how far in its glyph starts.
+///
+/// Declared rather than measured, which is the whole point: `menu_origin`,
+/// `entry_top` and `submenu_origin` all place panels *before* iced lays one
+/// out, so a row of "whatever 13pt text inside 5 of padding comes to" is a
+/// number three functions have to guess right. `panel_entry` gives the
+/// container exactly this height, so the arithmetic is true by construction
+/// and every row of every panel is the same height as every other.
+const PANEL_ENTRY: f32 = 27.0;
+const ENTRY_PAD_X: f32 = 10.0;
+const ENTRY_GAP: f32 = 8.0;
 
 /// The chrome all three context windows share: the ground, the border, the
 /// corner and the padding.
@@ -905,6 +916,52 @@ fn panel<'a>(
                 ..container::Style::default()
             }
         })
+}
+
+/// One row inside a panel: a glyph in a column of its own, a label, and
+/// whatever hangs off the right.
+///
+/// **The icon column is there whether or not there is a glyph, and the row is
+/// a fixed height rather than however tall its contents came out.** Those are
+/// one rule twice: what a row *is* must not be decided by what happens to be
+/// in it. A playlist with no tick put its name where a ticked one's icon was,
+/// so a panel of three was three indents; and a row whose glyph was absent
+/// came out shorter than its neighbours, which is the empty-container trap the
+/// transport column already pays for one list over.
+///
+/// It is also what makes a submenu *level* with the menu it laps over. Both
+/// panels draw this row at `PANEL_ENTRY`, which is the number `menu_origin`
+/// and `submenu_origin` do their arithmetic in — so the entry a submenu hangs
+/// off and the submenu's first row are the same height and start at the same
+/// y, and the two panels read as one surface. Two paddings and two guessed
+/// heights could not have done that: iced lays out after `view`, so a constant
+/// that is merely *close* to what the row measures is a panel drawn where
+/// nothing is.
+///
+/// Returns the container so a caller can still say what is its own — which is
+/// the fill, and nothing else.
+fn panel_entry<'a>(
+    glyph: Option<Element<'a, Message>>,
+    label: Element<'a, Message>,
+    trailing: Option<Element<'a, Message>>,
+) -> container::Container<'a, Message> {
+    let mut line = Row::new()
+        .spacing(ENTRY_GAP)
+        .align_y(iced::Alignment::Center)
+        .push(
+            container(glyph.unwrap_or_else(|| text("").into()))
+                .width(Length::Fixed(icon::TRANSPORT))
+                .height(Length::Fixed(icon::TRANSPORT)),
+        )
+        .push(label);
+    if let Some(end) = trailing {
+        line = line.push(end);
+    }
+    container(line)
+        .width(Length::Fill)
+        .height(Length::Fixed(PANEL_ENTRY))
+        .padding([0, ENTRY_PAD_X as u16])
+        .align_y(iced::Alignment::Center)
 }
 
 /// …and what one row inside one is painted.
@@ -1831,12 +1888,10 @@ impl App {
     /// What `view_menu` draws and `fit` has to assume: 190 of entry inside 4
     /// of padding either side.
     const MENU_WIDTH: f32 = 198.0;
-    /// A menu's title line and one of its entries, in pixels. Estimates, the
-    /// way `PER_PORTION` is and for the same reason — `view_menu` lays a row
-    /// out as 13pt text inside 5 of padding, and nothing can ask it before it
-    /// has been drawn.
-    const MENU_TITLE: f32 = 27.0;
-    const MENU_ENTRY: f32 = 27.0;
+    /// A menu's title line, which `view_menu` gives that exact height rather
+    /// than leaving to whatever 11pt text inside 4 of padding comes to. Its
+    /// entries are `PANEL_ENTRY`, the one row height every panel here draws.
+    const MENU_TITLE: f32 = 24.0;
     /// …and the picker's, which is a panel and also a submenu.
     const PICKER_WIDTH: f32 = 340.0;
     const PICKER_MAX_HEIGHT: f32 = 420.0;
@@ -1851,7 +1906,6 @@ impl App {
     /// simply not be there. It is the same shape as the flip bug below: the
     /// placement believing a height the panel does not have.
     const SUBMENU_CHROME: f32 = PANEL_PADDING * 2.0;
-    const PICKER_ROW: f32 = 23.0;
     /// How far a submenu laps over the menu it hangs off.
     ///
     /// Two panels that merely touch read as two panels; one that laps over its
@@ -2294,6 +2348,18 @@ impl App {
         };
         let at = at.min(menu.entries().len().saturating_sub(1));
         if menu.at == at {
+            // Already here — but the pointer may have come *back* from the
+            // submenu this entry owns, which is a move even though the cursor
+            // did not go anywhere. `PickerAt` handed the keys over when the
+            // pointer reached a row of the submenu; landing on the parent
+            // again takes them back, because the highlight belongs to whatever
+            // the pointer is over. Without it, pointing at `Add to playlist`
+            // after touching its submenu did nothing at all: the entry stayed
+            // dim, the submenu kept the highlight, and the only way back was
+            // the keyboard.
+            if let Some(picker) = &mut self.picker {
+                picker.keys = false;
+            }
             return;
         }
         menu.at = at;
@@ -3289,12 +3355,12 @@ impl App {
     /// to decide before it. The numbers are the panel's own — `PANEL_PADDING`
     /// top and bottom, its title line, and a row of text per entry.
     fn menu_height(entries: usize) -> f32 {
-        PANEL_PADDING * 2.0 + Self::MENU_TITLE + Self::MENU_ENTRY * entries as f32
+        PANEL_PADDING * 2.0 + Self::MENU_TITLE + PANEL_ENTRY * entries as f32
     }
 
     /// …and where the `at`th entry's own top is, down the window.
     fn entry_top(menu: &RowMenu) -> f32 {
-        menu.origin.y + PANEL_PADDING + Self::MENU_TITLE + Self::MENU_ENTRY * menu.at as f32
+        menu.origin.y + PANEL_PADDING + Self::MENU_TITLE + PANEL_ENTRY * menu.at as f32
     }
 
     /// Where a submenu goes: beside the entry it hangs off.
@@ -3324,7 +3390,12 @@ impl App {
             false => right,
         };
         let height = Self::submenu_height(rows);
-        let y = Self::entry_top(menu)
+        // Level with the entry, which means the *panel* starts a padding above
+        // it: both panels inset their rows by `PANEL_PADDING`, so lining the
+        // panel's edge up with the entry's would put the submenu's first row a
+        // padding lower and the two would read as stepped. Every row of both
+        // is `PANEL_ENTRY` tall, so from there down they stay in step.
+        let y = (Self::entry_top(menu) - PANEL_PADDING)
             .min((window.height - height - Self::EDGE).max(Self::EDGE))
             .max(Self::EDGE);
         iced::Point::new(x, y)
@@ -3339,7 +3410,7 @@ impl App {
     /// places: the one `a` opens is centred, and a centred panel's height is
     /// the layout's business rather than this function's.
     fn submenu_height(rows: usize) -> f32 {
-        (Self::SUBMENU_CHROME + Self::PICKER_ROW * rows as f32).min(Self::PICKER_MAX_HEIGHT)
+        (Self::SUBMENU_CHROME + PANEL_ENTRY * rows as f32).min(Self::PICKER_MAX_HEIGHT)
     }
 
     /// Put a panel of that size at `at`, or back the other way when it would
@@ -3382,25 +3453,23 @@ impl App {
                     // looks like everywhere — and the one thing `…` could not say:
                     // `Add to playlist…` and `Rename…` are the same three dots,
                     // and one of them opens a panel *beside* the entry.
-                    let mut line = Row::new()
-                        .spacing(8)
-                        .align_y(iced::Alignment::Center)
-                        .push(icon::line(entry.glyph, lit))
-                        .push(
-                            text(middle(&entry.label, 22))
-                                .size(13)
-                                .width(Length::Fill)
-                                .style(move |theme: &iced::Theme| text::Style {
-                                    color: Some(entry_text(theme, lit)),
-                                }),
-                        );
-                    if matches!(entry.message, Message::OpenPicker) {
-                        line = line.push(icon::chevron(lit));
-                    }
+                    let end = matches!(entry.message, Message::OpenPicker)
+                        .then(|| Element::from(icon::chevron(lit)));
+                    let line = panel_entry(
+                        Some(icon::line(entry.glyph, lit).into()),
+                        text(middle(&entry.label, 22))
+                            .size(13)
+                            .width(Length::Fill)
+                            .style(move |theme: &iced::Theme| text::Style {
+                                color: Some(entry_text(theme, lit)),
+                            })
+                            .into(),
+                        end,
+                    );
                     col.push(
-                        mouse_area(container(line).width(Length::Fill).padding([5, 10]).style(
-                            move |theme: &iced::Theme| entry_fill(theme, on_cursor, focused),
-                        ))
+                        mouse_area(line.style(move |theme: &iced::Theme| {
+                            entry_fill(theme, on_cursor, focused)
+                        }))
                         // Moving onto a row and running it are the same two
                         // messages a click is: the pointer lands the cursor where
                         // the keyboard would have walked it, so whichever you used
@@ -3418,8 +3487,13 @@ impl App {
                 // Which track this is about. A menu opened by a right click can
                 // land a row away from where the eye was, and a menu that does not
                 // say what it is for is a menu you close to check.
+                // Given the height `MENU_TITLE` claims rather than left to
+                // measure, for the reason `panel_entry` is: `menu_origin`
+                // places the panel before iced lays it out.
                 container(text(middle(&menu.title, 26)).size(11).style(style::dim))
-                    .padding([4, 10]),
+                    .height(Length::Fixed(Self::MENU_TITLE))
+                    .align_y(iced::Alignment::Center)
+                    .padding([0, ENTRY_PAD_X as u16]),
                 rows,
             ]
             .spacing(0),
@@ -4268,23 +4342,18 @@ impl App {
                 |col, (i, (_, name, on))| {
                     let on_cursor = picker.at == i;
                     let lit = on_cursor && focused;
-                    let line = Row::new()
-                        .spacing(0)
-                        .align_y(iced::Alignment::Center)
-                        .push(
-                            container(if *on {
-                                Element::from(icon::tick(lit))
-                            } else {
-                                Element::from(text(""))
-                            })
-                            .width(TRANSPORT)
-                            .height(Length::Fixed(icon::TRANSPORT)),
-                        )
-                        .push(cell(name.clone(), NAME, lit, *on, false));
+                    // The tick is the glyph column, drawn or not — a playlist
+                    // this track is not on is still a row, and its name goes
+                    // where every other name goes.
+                    let line = panel_entry(
+                        on.then(|| Element::from(icon::tick(lit))),
+                        cell(name.clone(), NAME, lit, *on, false),
+                        None,
+                    );
                     col.push(
-                        mouse_area(container(line).width(Length::Fill).padding([3, 4]).style(
-                            move |theme: &iced::Theme| entry_fill(theme, on_cursor, focused),
-                        ))
+                        mouse_area(line.style(move |theme: &iced::Theme| {
+                            entry_fill(theme, on_cursor, focused)
+                        }))
                         .on_enter(Message::PickerAt(i))
                         .on_press(Message::PickerAt(i))
                         .on_release(Message::PickerActivate),
@@ -4304,24 +4373,17 @@ impl App {
             None => {
                 let on_cursor = picker.at == last;
                 let lit = on_cursor && focused;
-                // The same two columns every playlist row has, so the words
-                // line up down the panel instead of this one starting where
-                // the ticks are — and a `+` in that column, because what it
+                // The same shape every playlist row has, so the words line up
+                // down the panel instead of this one starting where the ticks
+                // are — and a `+` in the glyph column, because what that column
                 // holds is *what this row is* and this row makes one.
-                let line = Row::new()
-                    .spacing(0)
-                    .align_y(iced::Alignment::Center)
-                    .push(
-                        container(icon::line(glyphs::PLUS, lit))
-                            .width(TRANSPORT)
-                            .height(Length::Fixed(icon::TRANSPORT)),
-                    )
-                    .push(cell("New playlist\u{2026}".into(), NAME, lit, false, true));
+                let line = panel_entry(
+                    Some(icon::line(glyphs::PLUS, lit).into()),
+                    cell("New playlist\u{2026}".into(), NAME, lit, false, true),
+                    None,
+                );
                 mouse_area(
-                    container(line)
-                        .width(Length::Fill)
-                        .padding([3, 4])
-                        .style(move |theme: &iced::Theme| entry_fill(theme, on_cursor, focused)),
+                    line.style(move |theme: &iced::Theme| entry_fill(theme, on_cursor, focused)),
                 )
                 .on_enter(Message::PickerAt(last))
                 .on_press(Message::PickerAt(last))
@@ -5586,6 +5648,45 @@ mod context {
         assert!(app.picker.is_some(), "and it is offered a second time");
     }
 
+    /// …and pointing back at the parent takes the keys back from it.
+    ///
+    /// The bug: `menu_land` returned early when the cursor was already on that
+    /// entry, which is right for a mouse that has not moved and wrong for one
+    /// that has come back out of the submenu. `PickerAt` had handed the keys
+    /// over on the way in, so pointing at `Add to playlist` again did nothing
+    /// at all — the entry stayed dim, the highlight stayed in the submenu, and
+    /// the only way back was the keyboard. Falsify it by restoring the bare
+    /// `return`.
+    ///
+    /// The submenu **stays open**, which is the other half and the reason this
+    /// is not just `menu_land` clearing the picker: you pointed back at the
+    /// entry that owns it, not away from it.
+    #[test]
+    fn pointing_back_at_the_parent_takes_the_keys_from_the_submenu() {
+        let mut app = app("back");
+        let id = app.peer.as_ref().unwrap().rows()[2].id;
+        let _ = app.update(Message::RowMenu(id, Anchor::Dots));
+        let _ = app.update(Message::MenuAt(1));
+        let _ = app.update(Message::MenuActivate);
+        assert_eq!(app.focus(), Focus::Picker, "<Enter> enters it");
+
+        // Into the submenu, which is where the pointer hands the keys over.
+        let _ = app.update(Message::PickerAt(0));
+        assert_eq!(app.focus(), Focus::Picker);
+
+        // …and back onto the entry it hangs off.
+        let _ = app.update(Message::MenuAt(1));
+        assert_eq!(
+            app.focus(),
+            Focus::Menu,
+            "pointing at the parent is pointing at the parent"
+        );
+        assert!(
+            app.picker.is_some(),
+            "and its submenu is still up, because that is what it is about"
+        );
+    }
+
     /// A submenu belongs to its parent entry, so the cursor leaving is the
     /// submenu going — which is what every menu on every desktop does, and
     /// what makes pointing at `Go to …` mean `Go to …` rather than nothing.
@@ -5808,14 +5909,20 @@ mod context {
         let mut app = app("slide");
         let id = app.peer.as_ref().unwrap().rows()[2].id;
 
-        // Room below: it opens at the entry it hangs off, full stop.
+        // Room below: it opens level with the entry it hangs off, full stop.
+        //
+        // **Level by the rows, not by the panels**, which is the thing you can
+        // actually see: both inset their rows by `PANEL_PADDING`, so a panel
+        // whose *edge* met the entry would put its first row a padding lower
+        // and the two would read as stepped. Asserted the way it is drawn.
         app.window = iced::Size::new(1280.0, 900.0);
         app.cursor.y = 120.0;
         let _ = app.update(Message::RowMenu(id, Anchor::Dots));
         let _ = app.update(Message::MenuAt(1));
         let _ = app.update(Message::MenuActivate);
         let top = App::entry_top(app.menu.as_ref().unwrap());
-        assert_eq!(app.picker.as_ref().unwrap().origin.unwrap().y, top);
+        let first_row = app.picker.as_ref().unwrap().origin.unwrap().y + PANEL_PADDING;
+        assert_eq!(first_row, top, "the submenu's first row is not level");
 
         // …and no room below: it slides, and stays whole on the glass.
         let rows = app.picker.as_ref().unwrap().lists.len() + 1;
@@ -5829,7 +5936,7 @@ mod context {
             let y = app.picker.as_ref().unwrap().origin.unwrap().y;
             assert!(y >= App::EDGE, "at {h}px tall it starts at {y}");
             assert!(
-                y <= App::entry_top(app.menu.as_ref().unwrap()),
+                y + PANEL_PADDING <= App::entry_top(app.menu.as_ref().unwrap()),
                 "it slid *down* at {h}px tall, which is not a thing to do"
             );
             if height + App::EDGE * 2.0 <= h as f32 {
