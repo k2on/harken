@@ -2756,8 +2756,23 @@ Eight things it needed:
 - **`transitionend` is not a guarantee, so a timeout has to exist at all.** A
   suppressed transition — reduced motion, a background tab — fires no event,
   and the splash would stay up over a running app. Whichever lands first
-  removes it. And reduced motion still gets the fade, because what it says —
-  *this is ready now* — is not decoration.
+  removes it.
+- **There is deliberately no `prefers-reduced-motion` rule, and finding that
+  out cost three rounds.** There was one, and it suppressed the scale outright.
+  The zoom was reported invisible three times while every measurement said it
+  worked — because every measurement was taken at the browser's default and the
+  machine looking at it had Reduce Motion on. Twice I "fixed" a curve and a
+  timing that were not broken, and the instrument agreed with me each time.
+
+  **An instrument pointed somewhere other than where the complaint is will
+  agree with you all day.** The rAF sampler was real and the numbers were real;
+  they were about a page nobody was being served. When a report and a
+  measurement disagree, the first suspect is the gap between what is measured
+  and what is seen, not the thing being measured.
+
+  What that preference is for is parallax, large motion, and motion that
+  repeats. This is a one-shot settle of twenty percent over a second on page
+  load, and the call is that it stays for everybody.
 
 
 ## Both clients maintain their list; only one of them re-reads anything

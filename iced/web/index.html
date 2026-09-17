@@ -92,11 +92,17 @@
         to   { opacity: 1; transform: none; }
       }
 
-      /* Somebody who has asked for less motion still gets the fade, because
-         the thing it is saying — "this is ready now" — is not decoration. */
-      @media (prefers-reduced-motion: reduce) {
-        #boot, #boot img, canvas.arriving { animation: none; transition: opacity 160ms linear; }
-      }
+      /* **There is deliberately no `prefers-reduced-motion` rule.** There was,
+         and it suppressed the scale outright — which is what that preference
+         is for when the motion is parallax, or large, or repeats. This is a
+         one-shot settle of twenty percent over a second on page load, and the
+         call here is that it stays. It is worth knowing how it was found: the
+         zoom was reported invisible three times running while every
+         measurement said it worked, because every measurement was taken at the
+         browser default and the machine looking at it was not. An instrument
+         pointed somewhere other than where the complaint is will agree with
+         you all day.
+      */
     </style>
   </head>
   <body>
