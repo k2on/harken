@@ -1,3 +1,19 @@
+diff --git a/wgpu/src/window/compositor.rs b/wgpu/src/window/compositor.rs
+index f0c3920..d07b30c 100644
+--- a/wgpu/src/window/compositor.rs
++++ b/wgpu/src/window/compositor.rs
+@@ -102,6 +102,11 @@ impl Compositor {
+ 
+         log::info!("{settings:#?}");
+ 
++        // Paired with the `set_var` above, which is `wayland_platform` only.
++        // Ungated this unsets a variable it never set, and on wasm
++        // `remove_var` is not merely useless but a panic:
++        // `cannot unset env vars on this platform`.
++        #[cfg(wayland_platform)]
+         unsafe {
+             std::env::remove_var("VK_LOADER_DRIVERS_DISABLE");
+         }
 diff --git a/winit/src/lib.rs b/winit/src/lib.rs
 index 791bacf..7f03ce5 100644
 --- a/winit/src/lib.rs

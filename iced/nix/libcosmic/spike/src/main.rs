@@ -58,6 +58,7 @@ impl table::ItemInterface<Column> for Track {
 
 struct App {
     core: Core,
+    opened: u32,
     tracks: table::Model<table::SingleSelect, Track, Column>,
 }
 
@@ -79,15 +80,23 @@ impl Application for App {
         tracks.insert(Track {
             name: "Goldberg Variations, BWV 988".into(),
         });
-        (App { core, tracks }, Task::none())
+        (App { core, opened: 0, tracks }, Task::none())
     }
 
-    fn update(&mut self, _message: Message) -> Task<Message> {
+    fn update(&mut self, message: Message) -> Task<Message> {
+        // Drawn below, so the screenshot says whether the widget saw the
+        // right-click at all — "no menu" and "no event" look identical.
+        if matches!(message, Message::Opened) {
+            self.opened += 1;
+        }
         Task::none()
     }
 
     fn view(&self) -> Element<'_, Message> {
-        let body = table::table(&self.tracks);
+        let body = cosmic::widget::column::with_children(vec![
+            cosmic::widget::text(format!("on_open fired {} time(s)", self.opened)).into(),
+            table::table(&self.tracks).into(),
+        ]);
         cosmic::widget::context_menu(
             body,
             Some(menu::items(
@@ -101,5 +110,10 @@ impl Application for App {
 }
 
 fn main() -> cosmic::iced::Result {
+    // Without this a Rust panic on wasm is `RuntimeError: unreachable` and
+    // nothing else — the message never reaches the console.
+    #[cfg(target_arch = "wasm32")]
+    console_error_panic_hook::set_once();
+
     cosmic::app::run::<App>(Settings::default(), ())
 }

@@ -1,3 +1,18 @@
+diff --git a/Cargo.toml b/Cargo.toml
+index 3e29f45..d4eea65 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -99,6 +99,10 @@ surface-message = []
+ multi-window = []
+ # Render with wgpu
+ wgpu = ["iced/wgpu", "iced_wgpu"]
++# WebGL rather than WebGPU, which is what a browser can actually be relied on
++# to have. Without it wgpu finds no backend at all on wasm and the compositor
++# aborts after the canvas is already on the page.
++webgl = ["wgpu", "iced/webgl"]
+ # X11 window support via winit
+ winit = ["iced/winit", "iced_winit"]
+ winit_debug = ["winit", "debug"]
 diff --git a/cosmic-config/Cargo.toml b/cosmic-config/Cargo.toml
 index 0316c70..0f8b083 100644
 --- a/cosmic-config/Cargo.toml

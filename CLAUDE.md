@@ -2938,60 +2938,75 @@ it came from, because it was three separate problems:
 Holding under spamming is the part that matters. A fast first tap is easy; a
 tap that costs the same as the four hundredth is the property.
 
-## libcosmic builds for the web, in 143 lines of patch
+## libcosmic runs in a browser, and it took four patches
 
-**This section previously said the opposite, and was wrong on its central
-claim.** It reported that `winit::platform::web` no longer exists, so iced's
-web backend would have to be ported across winit 0.31's per-platform split.
-That module is right where it always was — `pub use winit_web as web`, in
-`winit/src/platform/mod.rs`. The grep behind the claim read the *workspace
-root's* `src/platform/`, which is a different directory, found nothing, and
-the conclusion was built on it. Only the trait *names* changed.
+Not "compiles" — **runs**. `iced/nix/libcosmic/rendered.png` is a real COSMIC
+window drawn by Chromium over WebGL: their window chrome, their table with its
+header rule, their dark theme, their font. The reproducer is
+`iced/nix/libcosmic/spike/`, a `cosmic::Application` whose view is their
+`context_menu` wrapped around their `table`.
 
-What it actually took, against libcosmic master and `pop-os/iced`:
+**This section has been wrong twice, in opposite directions.** It first said
+`winit::platform::web` no longer exists and the backend needed porting across
+winit 0.31's per-platform split — the grep behind that read the wrong
+directory; the module is `pub use winit_web as web` in
+`winit/src/platform/mod.rs` and only the trait names moved. It then said the
+thing built, which was true and not the same as working. Both corrections
+have the same shape: **a claim about a build is not a claim about a program.**
 
-- **`iced_winit`, 24 lines.** `WindowAttributesExtWebSys` became the
-  `WindowAttributesWeb` struct, attached with `with_platform_attributes`;
-  `WindowExtWebSys` became `WindowExtWeb`, whose `canvas()` hands back a `Ref`
-  rather than the element; and `EventLoopExtWebSys::spawn_app` is gone because
-  `run_app` is now the one entry point on every platform — on web it registers
-  the handler and returns, which is exactly what `spawn_app` was for. So that
-  change *deleted* a `cfg` split rather than adding one.
+The four patches, in `iced-wasm.patch` and `libcosmic-wasm.patch`:
 
-  Two of their own bugs sat behind it, and both are the reason nobody had
-  noticed: the wasm-only `Runner` declares an `is_booted` field that its
-  constructor never sets, and `create_compositor` hands a future to
-  `spawn_local` without the `'static` bound that detaching requires. Neither
-  can be hit on a desktop.
-- **`cosmic-config`, 119 lines, and it is a real backend rather than a stub.**
-  Every path in that crate is a *name* — the config dir, the app, the version,
-  the key — and on a desktop that name is a file. One `store` module now holds
-  both ends: `std::fs` plus `atomicwrites` natively, `localStorage` in a
-  browser, keyed by the same path string. `system_path` is `None` there, since
-  nothing is installed system-wide in a tab, and `create_dir_all` is a no-op
-  because there are no directories to make.
+- **`iced_winit`'s web backend, against winit 0.31.**
+  `WindowAttributesExtWebSys` is the `WindowAttributesWeb` struct now, attached
+  with `with_platform_attributes`; `WindowExtWebSys` is `WindowExtWeb`, whose
+  `canvas()` hands back a `Ref`; and `spawn_app` is gone because `run_app` is
+  the one entry point on every platform — on web it registers the handler and
+  returns. That change *deletes* a `cfg` split.
+- **Two of their own bugs behind it**, neither reachable on a desktop: the
+  wasm-only `Runner` declares an `is_booted` its constructor never sets, and
+  `create_compositor` hands a future to `spawn_local` without the `'static`
+  bound detaching requires.
+- **`cosmic-config` gets a real backend rather than a stub.** Every path in
+  that crate is a *name* — config dir, app, version, key — and on a desktop
+  that name is a file. One `store` module holds both ends: `std::fs` with
+  `atomicwrites` natively, `localStorage` in a browser, keyed by the same path
+  string. `system_path` is `None` there and `create_dir_all` is a no-op.
+- **A `webgl` feature, because libcosmic had none.** Without it wgpu finds no
+  backend at all and the compositor aborts *after* the canvas is on the page.
+  This file already knew that — `iced/Cargo.toml` says "WebGL rather than
+  WebGPU, for reach" over harken's own web build — and it still cost a round,
+  because the failure arrives as `RuntimeError: unreachable` with no message.
+- **`std::env::remove_var` in `iced_wgpu`, which is the one worth keeping.**
+  Their Vulkan workaround sets `VK_LOADER_DRIVERS_DISABLE` under
+  `#[cfg(wayland_platform)]` and unsets it **ungated** — so on wasm it clears a
+  variable it never set, and there `remove_var` does not no-op, it panics:
+  `cannot unset env vars on this platform`. A `set`/`unset` pair whose two
+  halves have different `cfg`s, which is a shape to look for rather than a
+  bug to remember.
 
-The proof is `iced/nix/libcosmic/`: the two patches and a `spike/` that is a
-real `cosmic::Application` drawing their `context_menu` over their `table`. It
-**builds and links** to a wasm module for `wasm32-unknown-unknown`, and the
-same source still builds natively.
+**Finding any of that needed the panic hook.** A Rust panic on wasm is
+`RuntimeError: unreachable` and nothing else; `console_error_panic_hook` is
+what turns it into the line and the message. Two rounds were spent guessing at
+`unreachable` before installing it, and the second guess was wrong — the
+feature graph already had WebGL. *Install the hook before theorising.*
 
-**What is still true, and what is not yet.**
+**What does not work yet: the context menu does not open.** Right-click on the
+canvas, and `on_open` fires zero times — the spike draws its own count so the
+screenshot says so rather than leaving "no menu" and "no event" looking
+identical. The widget opens on right button *released*; winit-web does handle
+`contextmenu` and defaults `prevent_default` to true, so the plumbing exists
+and something between it and the widget is dropping the event. Not diagnosed.
 
-- The toolchain moves. libcosmic master declares `rust-version` 1.93 against
-  the engine's pinned 1.90, so adopting it bumps petros's toolchain for every
-  Petros app. That one has not gone away.
-- **It has never been run.** A wasm module that links is not a page that
-  draws, and this file already carries four bugs whose whole shape was
-  "something that fails to draw lays out perfectly". The web path in their
-  fork had two compile errors in code nobody executes; there is no reason to
-  think the *runtime* half of it has been exercised either. Getting a canvas
-  on screen is the next thing, and nothing in this container can open one.
-- Config does not follow changes in a browser. `subscription_web.rs` answers
-  `Subscription::none()`, because `localStorage`'s `storage` event only fires
-  for writes from *other* tabs, so a real watcher has to announce its own
-  writes too. A subscription that never fires and a watcher that is broken
-  look identical from the outside, which is why it is written down here.
+Which is the honest summary of the whole exercise: **their toolkit renders in
+a browser, and the one widget this was about has not been shown to work
+there.** Also still true — libcosmic wants rustc 1.93 against the engine's
+pinned 1.90, so adopting it moves petros's toolchain for every Petros app.
+
+**Size, measured.** 248 MB of debug wasm is 12.2 MB release, and wasm-bindgen
+leaves 11.1 MB before `wasm-opt`. harken's own module is a megabyte or two, so
+libcosmic is several times the weight — cosmic-theme, cosmic-config, ron,
+taffy and its icon handling — which matters here because the module is fetched
+over the wire and the splash exists to cover that fetch.
 
 **And their context menu is still not better than this one where it counts.**
 `menu::ItemWidth` is `Uniform(u16)` or `Static(u16)` — both a width somebody
