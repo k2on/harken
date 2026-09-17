@@ -1084,6 +1084,14 @@ every row is one line. Four things about it are load-bearing:
   the border, the radius and the padding; `panel_entry` is a row inside one,
   and `entry_fill` and `entry_text` are what it is painted.
 
+  **A row's fill is the panel's full width**, which is what `PANEL_PADDING`
+  being top-and-bottom-only buys. It was on all four sides, so every highlight
+  stopped four pixels short of the border with a stripe of unlit panel down
+  each side — and a menu's highlight spans its menu. The *words* are still
+  inset, by `ENTRY_PAD_X` inside the row. Vertically the padding stays, because
+  a square-ish row flush against a 6px rounded corner reads as a row poking out
+  of one.
+
   `panel_entry` is two rules that are the same rule: **the glyph column is
   there whether or not there is a glyph, and the row is a fixed height rather
   than whatever its contents came to.** What a row *is* must not be decided by
@@ -1163,15 +1171,30 @@ every row is one line. Four things about it are load-bearing:
     decides whether it opens left or right — and one stored number cannot be
     two. `label_chars` reads the budget back off that same width, so the
     estimate is consulted once rather than twice.
-  - **It laps over its parent, and the overlap is not a taste.**
-    `SUBMENU_OVERLAP` is both panels' `PANEL_PADDING`, so the *entries* inside
-    them meet edge to edge while the panels themselves overlap — which is what
-    makes the submenu read as having come out of the menu rather than as two
-    panels that happen to touch, and is the most it can ever be: a pixel more
-    draws this panel over a word of a menu that is still up.
-    `a_submenu_opens_beside_its_parent_and_never_over_it` asserts both halves
-    in terms of the entries, and falsifies in both directions — doubling the
-    constant crosses them, zeroing it leaves them only touching.
+  - **It laps over its parent by the two borders, and not one pixel more.**
+    `SUBMENU_OVERLAP` was `PANEL_PADDING * 2`, on the reasoning that the
+    padding was dead space either side and the entries would meet edge to edge.
+    There is no dead space any more — a row's fill is the panel's full width —
+    so that same eight pixels became eight pixels of submenu drawn over a lit
+    row of a menu that is still up, which is what "overlaps too much" looks
+    like. What is left to overlap is the chrome: each panel draws a
+    `PANEL_BORDER`, and laying one on the other is one line where two would be.
+    That is the difference between two panels that abut and one panel that came
+    out of another, and it is the most that can be taken without covering
+    something somebody can read.
+
+    **The test asserts `2.0` and not `SUBMENU_OVERLAP`**, which is the third
+    time that shape has been caught in this file. Written against the constant
+    both sides of the comparison move together, so setting the overlap to eight
+    or to zero *passes* — which is exactly what happened, and was only found by
+    falsifying it. See `SUBMENU_DWELL` and `a_menu_never_hangs_off_the_glass`
+    for the other two: **a test written in terms of the thing it is holding
+    shrinks with it.**
+
+    The two assertions it replaced went the same way one step earlier. They
+    said "the entries do not cross" and "the panels do touch", both in terms of
+    `PANEL_PADDING` — and both went on passing when that padding left the
+    sides, measuring a constant they had stopped depending on.
   - **And it draws no header, because its parent already did.** The menu it
     hangs off is still up with the track's name across its own top, so a title
     on the submenu is the same sentence twice one panel apart, and the keymap
