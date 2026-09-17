@@ -21,14 +21,20 @@
          half-way, which is what makes a slow settle legible where an ease-out
          quint (90% done in a quarter of its duration) is a jump. */
       :root {
-        --reveal: 1000ms;
-        --ease: cubic-bezier(0.33, 1, 0.68, 1);
+        --reveal: 1400ms;
+        --ease: cubic-bezier(0.22, 1, 0.36, 1);
       }
       html, body {
         margin: 0;
         height: 100%;
         color-scheme: light dark;
         font-family: system-ui, sans-serif;
+        /* A transform counts toward scrollable overflow, so the canvas at 1.2
+           is 20% wider and taller than the window for the length of the
+           reveal — which is a scrollbar down each edge that appears on load
+           and goes again a second later. The page is one canvas and never
+           scrolls; iced draws its own bars inside it. */
+        overflow: hidden;
       }
       /* iced appends its canvas to <body> and sizes it to 100%. */
       canvas { display: block; }

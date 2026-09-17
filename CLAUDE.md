@@ -2688,7 +2688,7 @@ spends a second or three on a blank page before iced paints anything. It said
 `loading harken…` in the top-left corner, which is a status line for a
 developer. It shows the trumpet in the middle of the page now, and when the
 module is up the splash **dissolves into the app, which settles out of the
-screen from 1.2 to 1 over the same second** — the way Linear opens and the way
+screen from 1.2 to 1 over the same 1.4 seconds** — the way Linear opens and the way
 a Hyprland login does. A fade alone reads as a picture being turned up; the
 scale is what makes it an arrival.
 
@@ -2718,6 +2718,14 @@ Eight things it needed:
   somebody has to pick. From 1.2 the canvas overfills the window throughout, so
   the only thing on screen is the app, and the amount of overfill stops
   mattering.
+
+  It costs one line elsewhere, though: **a transform counts toward scrollable
+  overflow**, so a canvas at 1.2 makes the document 20% wider and taller than
+  the window for as long as the reveal lasts. Measured at 640×420, mid-settle,
+  the page was 682×447 — a scrollbar down each edge that arrives on load and
+  leaves a second later. `html, body { overflow: hidden }`, which this page
+  wants anyway: it is one canvas and never scrolls, and iced draws its own
+  bars inside it.
 - **One duration and one curve, named once as `--reveal` and `--ease`.** The
   splash's fade and the app's zoom are one gesture, and tuning them apart is
   what made the zoom invisible twice:
@@ -2729,6 +2737,15 @@ Eight things it needed:
     took 420ms to fade while the canvas ran 620ms: it was at **0.997 of 1** by
     the moment you could first see it. The zoom was real, measured, and
     entirely behind an opaque panel.
+
+  It is that same ease-out quint now, at 1400ms from 1.2, which is not a
+  reversal: a curve is not fast or slow on its own, and what decides whether
+  a settle reads is **how much movement is left late**, in pixels and
+  seconds. Quint over six percent in 620ms leaves a third of a percent of
+  scale after 250ms, which is nothing. Quint over twenty percent in 1400ms
+  still has 7% of the travel to run at 580ms and spends 800ms creeping
+  through it — which is the long glide to a stop, and is what the curve was
+  the wrong tool for the first time and the right one for now.
 
 - **The canvas does not fade — only the splash does.** Fading them opposite
   each other sounds like a cross-dissolve and is not one. Two half-transparent
