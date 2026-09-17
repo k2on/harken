@@ -37,37 +37,40 @@
         display: grid;
         place-items: center;
         background: Canvas;
-        transition: opacity 420ms cubic-bezier(0.33, 1, 0.68, 1),
-                    transform 420ms cubic-bezier(0.33, 1, 0.68, 1);
+        transition: opacity 320ms ease-out, transform 320ms ease-out;
       }
       #boot img {
         width: 96px;
         height: 96px;
-        animation: settle 420ms cubic-bezier(0.33, 1, 0.68, 1) both;
+        animation: settle 420ms ease-out both;
       }
-      /* Going the same way the app does, so the two read as one movement
-         continuing rather than as a lid coming off. */
+      /* It goes the same way the app comes, and only barely — this is a
+         cross-fade into the app, not a lid coming off it. */
       #boot.done {
         opacity: 0;
-        transform: scale(1.06);
+        transform: scale(1.04);
         pointer-events: none;
       }
 
       /* The app arrives the way Linear's does and the way a Hyprland login
-         does: it grows the last three percent into place while it fades, so
-         the page resolves *towards* you. A fade alone reads as a picture
-         being turned up; the scale is what makes it an arrival. */
+         does: it grows the last ten percent into place as the splash fades
+         through it. A fade alone reads as a picture being turned up; the
+         scale is what makes it an arrival. */
       canvas.arriving {
-        animation: arrive 620ms cubic-bezier(0.33, 1, 0.68, 1) both;
+        animation: arrive 900ms ease-out both;
       }
-      /* The easing is cubic and not quintic, and the two are not
-         interchangeable here: an ease-out quint is 90% done in a quarter of
-         its duration, so six percent of scale over half a second came out as
-         a jump nobody could see. A curve that lands late is what makes a
-         small movement legible. */
+      /* **Most of the travel has to happen after the splash has gone**, and
+         getting that wrong is invisible rather than wrong-looking. The first
+         version ran 620ms of `cubic-bezier(0.33, 1, 0.68, 1)` against a 420ms
+         fade, so at the moment you could first see the canvas it was already
+         at 0.98 of 1 — the zoom was real, measurable, and entirely behind an
+         opaque splash. 900ms of plain `ease-out` against a 320ms fade leaves
+         about four percent of scale still to run in plain view, which is what
+         you actually watch. The opacity is over by 320ms to match the fade,
+         so the two cross rather than the app arriving under a hole. */
       @keyframes arrive {
-        from { opacity: 0; transform: scale(0.94); }
-        55%  { opacity: 1; }
+        from { opacity: 0; transform: scale(0.9); }
+        36%  { opacity: 1; }
         to   { opacity: 1; transform: none; }
       }
       @keyframes settle {

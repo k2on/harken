@@ -2657,9 +2657,10 @@ A wasm module is a megabyte or two to fetch and instantiate, so a browser peer
 spends a second or three on a blank page before iced paints anything. It said
 `loading harken…` in the top-left corner, which is a status line for a
 developer. It shows the trumpet in the middle of the page now, and when the
-module is up the app **fades in while it grows the last six percent into
-place** — the way Linear opens and the way a Hyprland login does. A fade alone
-reads as a picture being turned up; the scale is what makes it an arrival.
+module is up the splash **cross-fades into the app, which grows the last ten
+percent into place behind it** — the way Linear opens and the way a Hyprland
+login does. A fade alone reads as a picture being turned up; the scale is what
+makes it an arrival.
 
 Only a browser has this, for the same reason the media session and the device
 picker do: the desktop binary is already running when its window appears, so
@@ -2681,16 +2682,27 @@ Six things it needed:
   colour `Canvas`, which `color-scheme: light dark` above it already resolves:
   the app grows out of the page's own ground rather than out of a value copied
   from `branding/` that nothing would keep in step.
-- **The easing is cubic, and quintic is not a near-enough substitute.** The
-  first version used `cubic-bezier(0.22, 1, 0.36, 1)` — an ease-out quint,
-  which is the usual choice for a panel — and it is 90% finished in a quarter
-  of its duration. Three percent of scale under that curve is a jump nobody can
-  see, so it measured as working and looked like a plain fade. A curve that
-  lands late is what makes a small movement legible: `cubic-bezier(0.33, 1,
-  0.68, 1)` over 620ms, from 0.94.
-- **The splash goes the same way the app comes.** It fades out while scaling
-  *up* to 1.06, so the two read as one movement continuing rather than as a lid
-  coming off something underneath.
+- **Most of the scale has to run *after* the splash has gone, and getting that
+  wrong is invisible rather than wrong-looking.** This is the one worth keeping.
+  Two versions of it shipped looking like a plain fade:
+
+  - the first used `cubic-bezier(0.22, 1, 0.36, 1)`, an ease-out quint, which
+    is 90% finished in a quarter of its duration — three percent of scale under
+    that curve is a jump nobody can see;
+  - the second fixed the curve (`cubic-bezier(0.33, 1, 0.68, 1)`, 620ms, from
+    0.94) and was still invisible, because the splash took 420ms to fade and
+    the canvas was at **0.997** by the time you could first see it. The zoom
+    was real, measured, and entirely behind an opaque panel.
+
+  What decides it is not the curve or the delta on their own but the two
+  timings against each other. 900ms of plain `ease-out` from 0.9, against a
+  320ms fade: the splash is gone at 320ms with the canvas at 0.95, so about
+  four percent of travel is still to run in plain view. That is the number to
+  check when it next looks wrong — *how much is left at the frame the splash
+  clears*, not how far it travels in total.
+- **The splash cross-fades into the app; it does not come off it.** It scales
+  to 1.04 as it goes, barely, so the two read as one movement — a lid lifting
+  off is a different gesture and a louder one.
 - **The transform comes off the canvas when it is over.** winit reads the
   pointer out of the canvas's bounding box, and a transform moves it — so the
   class is dropped on `animationend` and a click lands exactly where it did
