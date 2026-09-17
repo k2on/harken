@@ -2938,21 +2938,25 @@ it came from, because it was three separate problems:
 Holding under spamming is the part that matters. A fast first tap is easy; a
 tap that costs the same as the four hundredth is the property.
 
-## libcosmic runs in a browser, and it took four patches
+## libcosmic runs in a browser, context menu and all
 
-Not "compiles" — **runs**. `iced/nix/libcosmic/rendered.png` is a real COSMIC
-window drawn by Chromium over WebGL: their window chrome, their table with its
-header rule, their dark theme, their font. The reproducer is
-`iced/nix/libcosmic/spike/`, a `cosmic::Application` whose view is their
-`context_menu` wrapped around their `table`.
+`iced/nix/libcosmic/rendered.png` is a COSMIC window drawn by Chromium over
+WebGL — their chrome, their table, their theme, their font — and
+`context-menu.png` is their `context_menu` open over it. The reproducer is
+`spike/`, a `cosmic::Application` whose view is one wrapped around the other.
 
-**This section has been wrong twice, in opposite directions.** It first said
-`winit::platform::web` no longer exists and the backend needed porting across
-winit 0.31's per-platform split — the grep behind that read the wrong
-directory; the module is `pub use winit_web as web` in
-`winit/src/platform/mod.rs` and only the trait names moved. It then said the
-thing built, which was true and not the same as working. Both corrections
-have the same shape: **a claim about a build is not a claim about a program.**
+**This section has now been wrong three times, and the three mistakes are one
+mistake.** It said the web backend needed porting across winit 0.31's split
+(the grep read the wrong directory). It said the thing built, which was true
+and not the same as working. It said the context menu does not open, which was
+a *false negative*: `ContextMenu` wraps content-sized children, the spike's
+column was about 210px tall, and the test right-clicked at y=400 — outside the
+widget. Clicking inside it, `on_open` fires and the panel draws.
+
+Each time the claim outran what had actually been checked, and each time the
+next check was cheap. **A negative result needs its instrument falsified the
+same way a test does** — "no menu appeared" should have prompted "was the
+click inside the widget?" before it prompted a paragraph.
 
 The four patches, in `iced-wasm.patch` and `libcosmic-wasm.patch`:
 
@@ -2974,51 +2978,63 @@ The four patches, in `iced-wasm.patch` and `libcosmic-wasm.patch`:
 - **A `webgl` feature, because libcosmic had none.** Without it wgpu finds no
   backend at all and the compositor aborts *after* the canvas is on the page.
   This file already knew that — `iced/Cargo.toml` says "WebGL rather than
-  WebGPU, for reach" over harken's own web build — and it still cost a round,
-  because the failure arrives as `RuntimeError: unreachable` with no message.
-- **`std::env::remove_var` in `iced_wgpu`, which is the one worth keeping.**
-  Their Vulkan workaround sets `VK_LOADER_DRIVERS_DISABLE` under
+  WebGPU, for reach" over harken's own web build.
+- **`std::env::remove_var` in `iced_wgpu`, the one worth keeping.** Their
+  Vulkan workaround sets `VK_LOADER_DRIVERS_DISABLE` under
   `#[cfg(wayland_platform)]` and unsets it **ungated** — so on wasm it clears a
   variable it never set, and there `remove_var` does not no-op, it panics:
-  `cannot unset env vars on this platform`. A `set`/`unset` pair whose two
-  halves have different `cfg`s, which is a shape to look for rather than a
-  bug to remember.
+  `cannot unset env vars on this platform`. **A `set`/`unset` pair whose two
+  halves carry different `cfg`s** is the shape to look for.
 
-**Finding any of that needed the panic hook.** A Rust panic on wasm is
-`RuntimeError: unreachable` and nothing else; `console_error_panic_hook` is
-what turns it into the line and the message. Two rounds were spent guessing at
-`unreachable` before installing it, and the second guess was wrong — the
-feature graph already had WebGL. *Install the hook before theorising.*
+**Install the panic hook before theorising.** A Rust panic on wasm is
+`RuntimeError: unreachable` and nothing else. Two rounds went on guessing at
+that bare word, and the second guess was wrong — the feature graph already had
+WebGL, which one `cargo tree` would have said.
 
-**What does not work yet: the context menu does not open.** Right-click on the
-canvas, and `on_open` fires zero times — the spike draws its own count so the
-screenshot says so rather than leaving "no menu" and "no event" looking
-identical. The widget opens on right button *released*; winit-web does handle
-`contextmenu` and defaults `prevent_default` to true, so the plumbing exists
-and something between it and the widget is dropping the event. Not diagnosed.
+### What it looks like, and it settles the menu argument
 
-Which is the honest summary of the whole exercise: **their toolkit renders in
-a browser, and the one widget this was about has not been shown to work
-there.** Also still true — libcosmic wants rustc 1.93 against the engine's
-pinned 1.90, so adopting it moves petros's toolchain for every Petros app.
+**Their menu is 240px wide whatever is in it, and it middle-truncates.**
+Measured off `context-menu.png`: the panel runs x=600 to x=840 — exactly the
+`ItemWidth::Uniform(240)` the source declares — and
+`Go to Goldberg Variations, BWV 988` is drawn as
+`Go to Goldberg …ions, BWV 988`.
 
-**Size, measured.** 248 MB of debug wasm is 12.2 MB release, and wasm-bindgen
-leaves 11.1 MB before `wasm-opt`. harken's own module is a megabyte or two, so
-libcosmic is several times the weight — cosmic-theme, cosmic-config, ron,
-taffy and its icon handling — which matters here because the module is fetched
-over the wire and the splash exists to cover that fetch.
+That is the bug fixed one section above, in their widget, on screen: a fixed
+width somebody picked, and a *middle* ellipsis through the one part of the
+label that identifies it. It was read in their source first and is now
+verified by looking, which is the order this file keeps asking for.
 
-**And their context menu is still not better than this one where it counts.**
-`menu::ItemWidth` is `Uniform(u16)` or `Static(u16)` — both a width somebody
-picks, defaulting to 240 — with no variant that measures the longest entry,
-which is the bug fixed one section above at 240 instead of 198. There is no
-`Duration` or `Instant` anywhere in their menu widget either, so submenus open
-the instant the pointer crosses them, where `SUBMENU_DWELL` waits a beat.
+So the menu question is settled and not in their favour: `RowMenu::width_for`
+sizes to the longest entry and `tail` takes the end off, and neither is
+available there without patching `ItemWidth`. There is no `Duration` or
+`Instant` anywhere in their menu widget either, so submenus open the instant
+the pointer crosses them, where `SUBMENU_DWELL` waits a beat.
 
 What theirs has that this cannot: a real Wayland popup *surface* (`window_id`,
 `on_surface_action`), which can extend past the edge of the window. Everything
 `fit`, `menu_origin` and `submenu_origin` do is arithmetic to avoid that edge,
 because `pin` inside a `stack!` is clipped to the window.
+
+### The costs, measured
+
+**Size.** 248 MB of debug wasm is 12.2 MB release, and wasm-bindgen leaves
+11.1 MB before `wasm-opt`. harken's own module is a megabyte or two, so
+libcosmic is several times the weight — cosmic-theme, cosmic-config, ron,
+taffy, its icon handling — which matters because the module is fetched over
+the wire and the splash exists to cover that fetch.
+
+**Toolchain.** libcosmic declares `rust-version` 1.93 against the engine's
+pinned 1.90, so adopting it moves petros's toolchain for every Petros app.
+
+**Config does not follow changes in a browser.** `subscription_web.rs` answers
+`Subscription::none()`, because `localStorage`'s `storage` event fires only for
+writes from *other* tabs, so a real watcher has to announce its own writes
+too. A subscription that never fires and a watcher that is broken look
+identical from outside, which is why it is written down rather than left.
+
+**And this is a spike, not the client.** One table, one menu, four widgets.
+Nothing here says harken's six thousand lines port cleanly, only that the
+toolkit and the two widgets this was about do work in a browser.
 
 ## Not verified
 

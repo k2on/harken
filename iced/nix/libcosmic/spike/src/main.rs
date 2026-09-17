@@ -20,6 +20,8 @@ impl menu::action::MenuAction for Action {
 enum Message {
     Play,
     Opened,
+    LeftPress,
+    RightPress,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -59,6 +61,8 @@ impl table::ItemInterface<Column> for Track {
 struct App {
     core: Core,
     opened: u32,
+    left: u32,
+    right: u32,
     tracks: table::Model<table::SingleSelect, Track, Column>,
 }
 
@@ -80,28 +84,48 @@ impl Application for App {
         tracks.insert(Track {
             name: "Goldberg Variations, BWV 988".into(),
         });
-        (App { core, opened: 0, tracks }, Task::none())
+        (App { core, opened: 0, left: 0, right: 0, tracks }, Task::none())
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
         // Drawn below, so the screenshot says whether the widget saw the
         // right-click at all — "no menu" and "no event" look identical.
-        if matches!(message, Message::Opened) {
-            self.opened += 1;
+        match message {
+            Message::Opened => self.opened += 1,
+            Message::LeftPress => self.left += 1,
+            Message::RightPress => self.right += 1,
+            Message::Play => {}
         }
         Task::none()
     }
 
     fn view(&self) -> Element<'_, Message> {
+        // Three levels, so one run says where a right-click stops: a plain
+        // button proves button events arrive at all, a `mouse_area` proves the
+        // *right* button arrives, and `on_open` is the context menu itself.
         let body = cosmic::widget::column::with_children(vec![
-            cosmic::widget::text(format!("on_open fired {} time(s)", self.opened)).into(),
+            cosmic::widget::text(format!(
+                "button(left)={}  mouse_area(right)={}  context_menu(on_open)={}",
+                self.left, self.right, self.opened
+            ))
+            .into(),
+            cosmic::widget::button::standard("press me")
+                .on_press(Message::LeftPress)
+                .into(),
+            cosmic::widget::mouse_area(
+                cosmic::widget::container(cosmic::widget::text("right-click this box"))
+                    .padding(20)
+                    .width(cosmic::iced::Length::Fill),
+            )
+            .on_right_press(Message::RightPress)
+            .into(),
             table::table(&self.tracks).into(),
         ]);
         cosmic::widget::context_menu(
             body,
             Some(menu::items(
                 &std::collections::HashMap::new(),
-                vec![menu::Item::Button(String::from("Play"), None, Action::Play)],
+                vec![menu::Item::Button(String::from("Go to Goldberg Variations, BWV 988"), None, Action::Play)],
             )),
         )
         .on_open(Message::Opened)
