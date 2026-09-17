@@ -1,0 +1,19 @@
+# The reproducer for "libcosmic builds for the web".
+#
+#   git clone --recurse-submodules https://github.com/pop-os/libcosmic
+#   git -C libcosmic apply ../cosmic-config-wasm.patch
+#   git -C libcosmic/iced apply ../../iced-winit-web.patch
+#   CC_wasm32_unknown_unknown=clang AR_wasm32_unknown_unknown=llvm-ar \
+#     cargo +1.93 build --target wasm32-unknown-unknown
+#
+# `src/main.rs` is a real `cosmic::Application` drawing their `context_menu`
+# over their `table`, so this is not a check that one widget's types resolve.
+[package]
+name = "spike"
+version = "0.0.0"
+edition = "2021"
+
+[workspace]
+
+[dependencies]
+libcosmic = { path = "../libcosmic", default-features = false, features = ["winit", "wgpu"] }

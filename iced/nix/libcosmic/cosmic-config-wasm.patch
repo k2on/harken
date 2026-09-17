@@ -1,0 +1,289 @@
+diff --git a/cosmic-config/Cargo.toml b/cosmic-config/Cargo.toml
+index 0316c70..0f8b083 100644
+--- a/cosmic-config/Cargo.toml
++++ b/cosmic-config/Cargo.toml
+@@ -12,9 +12,7 @@ subscription = ["iced_futures"]
+ [dependencies]
+ cosmic-settings-daemon = { git = "https://github.com/pop-os/dbus-settings-bindings", optional = true }
+ zbus = { workspace = true, default-features = false, optional = true }
+-atomicwrites = { git = "https://github.com/jackpot51/rust-atomicwrites" }
+ calloop = { version = "0.14.4", optional = true }
+-notify = "8.2.0"
+ ron.workspace = true
+ serde.workspace = true
+ cosmic-config-derive = { path = "../cosmic-config-derive/", optional = true }
+@@ -26,6 +24,13 @@ tokio = { workspace = true, optional = true, features = ["time"] }
+ async-std = { workspace = true, optional = true }
+ tracing.workspace = true
+ 
++[target.'cfg(target_arch = "wasm32")'.dependencies]
++web-sys = { version = "0.3", features = ["Storage", "Window"] }
++
++[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
++atomicwrites = { git = "https://github.com/jackpot51/rust-atomicwrites" }
++notify = "8.2.0"
++
+ [target.'cfg(unix)'.dependencies]
+ xdg = "3.0"
+ 
+diff --git a/cosmic-config/src/lib.rs b/cosmic-config/src/lib.rs
+index 71f3d2d..1c82ea0 100644
+--- a/cosmic-config/src/lib.rs
++++ b/cosmic-config/src/lib.rs
+@@ -1,6 +1,8 @@
+ //! Integrations for cosmic-config — the cosmic configuration system.
+ 
++#[cfg(not(target_arch = "wasm32"))]
+ use notify::event::{EventKind, ModifyKind, RenameMode};
++#[cfg(not(target_arch = "wasm32"))]
+ use notify::{RecommendedWatcher, Watcher};
+ use serde::Serialize;
+ use serde::de::DeserializeOwned;
+@@ -9,9 +11,72 @@ use std::path::{Path, PathBuf};
+ use std::sync::Mutex;
+ use std::{env, fmt, fs};
+ 
++
++/// Where a key's bytes actually live.
++///
++/// Every path in this crate is a *name* - the config dir, the app, the
++/// version, the key - and on a desktop that name is a file. A browser has no
++/// filesystem, so there the same name is a key in `localStorage`: the naming
++/// stays in one place and only the two ends of it move.
++#[cfg(not(target_arch = "wasm32"))]
++mod store {
++    use std::io::Write;
++    use std::path::Path;
++
++    pub fn create_dir_all(path: &Path) -> std::io::Result<()> {
++        std::fs::create_dir_all(path)
++    }
++
++    pub fn read_to_string(path: &Path) -> std::io::Result<String> {
++        std::fs::read_to_string(path)
++    }
++
++    pub fn write(path: &Path, data: &str) -> Result<(), super::Error> {
++        atomicwrites::AtomicFile::new(path, atomicwrites::OverwriteBehavior::AllowOverwrite)
++            .write(|file| file.write_all(data.as_bytes()))?;
++        Ok(())
++    }
++}
++
++#[cfg(target_arch = "wasm32")]
++mod store {
++    use std::path::Path;
++
++    /// Absent in a worker, and in a window whose site data is blocked - both
++    /// of which read here as "this key is not set", which is the truth.
++    fn local() -> Option<web_sys::Storage> {
++        web_sys::window()?.local_storage().ok().flatten()
++    }
++
++    /// There are no directories to make.
++    pub fn create_dir_all(_path: &Path) -> std::io::Result<()> {
++        Ok(())
++    }
++
++    pub fn read_to_string(path: &Path) -> std::io::Result<String> {
++        local()
++            .and_then(|s| s.get_item(&path.to_string_lossy()).ok().flatten())
++            .ok_or_else(|| {
++                std::io::Error::new(std::io::ErrorKind::NotFound, "no such key in localStorage")
++            })
++    }
++
++    pub fn write(path: &Path, data: &str) -> Result<(), super::Error> {
++        let storage = local().ok_or_else(|| {
++            std::io::Error::other("localStorage is unavailable in this context")
++        })?;
++        storage
++            .set_item(&path.to_string_lossy(), data)
++            // A quota failure is the usual one, and its reason is a JsValue.
++            .map_err(|_| std::io::Error::other("localStorage refused the write"))?;
++        Ok(())
++    }
++}
++
+ /// Get the config directory, with Flatpak sandbox support.
+ /// In Flatpak, HOST_XDG_CONFIG_HOME points to the real user config directory,
+ /// allowing sandboxed apps to read host config files.
++#[cfg(not(target_arch = "wasm32"))]
+ fn get_config_dir() -> Option<PathBuf> {
+     // Check if we're running in Flatpak
+     if let Some(flatpak_id) = env::var_os("FLATPAK_ID") {
+@@ -35,7 +100,19 @@ fn get_config_dir() -> Option<PathBuf> {
+     config_dir
+ }
+ 
++#[cfg(target_arch = "wasm32")]
++fn get_config_dir() -> Option<PathBuf> {
++    // A prefix rather than a directory: it only has to namespace the keys.
++    Some(PathBuf::from("cosmic-config"))
++}
++
++#[cfg(target_arch = "wasm32")]
++fn get_state_dir() -> Option<PathBuf> {
++    Some(PathBuf::from("cosmic-state"))
++}
++
+ /// Get the state directory, with Flatpak sandbox support.
++#[cfg(not(target_arch = "wasm32"))]
+ fn get_state_dir() -> Option<PathBuf> {
+     // Check if we're running in Flatpak
+     if env::var_os("FLATPAK_ID").is_some() {
+@@ -56,11 +133,16 @@ fn get_state_dir() -> Option<PathBuf> {
+     Some(home_dir.join(".local").join(".state"))
+ }
+ 
+-#[cfg(feature = "subscription")]
++#[cfg(all(feature = "subscription", not(target_arch = "wasm32")))]
+ mod subscription;
+-#[cfg(feature = "subscription")]
++#[cfg(all(feature = "subscription", not(target_arch = "wasm32")))]
+ pub use subscription::*;
+ 
++#[cfg(all(feature = "subscription", target_arch = "wasm32"))]
++mod subscription_web;
++#[cfg(all(feature = "subscription", target_arch = "wasm32"))]
++pub use subscription_web::*;
++
+ #[cfg(all(feature = "dbus", feature = "subscription"))]
+ pub mod dbus;
+ 
+@@ -72,10 +154,12 @@ pub mod calloop;
+ 
+ #[derive(Debug)]
+ pub enum Error {
++    #[cfg(not(target_arch = "wasm32"))]
+     AtomicWrites(atomicwrites::Error<std::io::Error>),
+     InvalidName(String),
+     Io(std::io::Error),
+     NoConfigDirectory,
++    #[cfg(not(target_arch = "wasm32"))]
+     Notify(notify::Error),
+     NotFound,
+     Ron(ron::Error),
+@@ -87,10 +171,12 @@ impl fmt::Display for Error {
+     #[cold]
+     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+         match self {
++            #[cfg(not(target_arch = "wasm32"))]
+             Self::AtomicWrites(err) => err.fmt(f),
+             Self::InvalidName(name) => write!(f, "invalid config name '{}'", name),
+             Self::Io(err) => err.fmt(f),
+             Self::NoConfigDirectory => write!(f, "cosmic config directory not found"),
++            #[cfg(not(target_arch = "wasm32"))]
+             Self::Notify(err) => err.fmt(f),
+             Self::NotFound => write!(f, "cosmic config key not configured"),
+             Self::Ron(err) => err.fmt(f),
+@@ -112,6 +198,7 @@ impl Error {
+     }
+ }
+ 
++#[cfg(not(target_arch = "wasm32"))]
+ impl From<atomicwrites::Error<std::io::Error>> for Error {
+     fn from(f: atomicwrites::Error<std::io::Error>) -> Self {
+         Self::AtomicWrites(f)
+@@ -124,6 +211,7 @@ impl From<std::io::Error> for Error {
+     }
+ }
+ 
++#[cfg(not(target_arch = "wasm32"))]
+ impl From<notify::Error> for Error {
+     fn from(f: notify::Error) -> Self {
+         Self::Notify(f)
+@@ -196,6 +284,14 @@ impl Config {
+             known_folders::get_known_folder_path(known_folders::KnownFolder::ProgramFilesCommon)
+                 .map(|x| x.join("COSMIC").join(&path));
+ 
++        // Nothing is installed system-wide in a browser, so every key a page
++        // reads is one the page itself wrote.
++        #[cfg(target_arch = "wasm32")]
++        let system_path = {
++            let _ = &path;
++            None
++        };
++
+         Ok(Self {
+             system_path,
+             user_path: None,
+@@ -229,13 +325,20 @@ impl Config {
+             known_folders::get_known_folder_path(known_folders::KnownFolder::ProgramFilesCommon)
+                 .map(|x| x.join("COSMIC").join(&path));
+ 
++        // Nothing is installed system-wide in a browser.
++        #[cfg(target_arch = "wasm32")]
++        let system_path = {
++            let _ = &path;
++            None
++        };
++
+         // Get libcosmic user configuration directory
+         let mut user_path = get_config_dir().ok_or(Error::NoConfigDirectory)?;
+         user_path.push("cosmic");
+         user_path.push(path);
+ 
+         // Create new configuration directory if not found.
+-        fs::create_dir_all(&user_path)?;
++        store::create_dir_all(&user_path)?;
+ 
+         // Return Config
+         Ok(Self {
+@@ -267,7 +370,7 @@ impl Config {
+         user_path.push("cosmic");
+         user_path.push(path);
+         // Create new configuration directory if not found.
+-        fs::create_dir_all(&user_path)?;
++        store::create_dir_all(&user_path)?;
+ 
+         // Return Config
+         Ok(Self {
+@@ -301,7 +404,7 @@ impl Config {
+         user_path.push("cosmic");
+         user_path.push(path);
+         // Create new state directory if not found.
+-        fs::create_dir_all(&user_path)?;
++        store::create_dir_all(&user_path)?;
+ 
+         Ok(Self {
+             system_path: None,
+@@ -329,6 +432,7 @@ impl Config {
+     // This may end up being an mpsc channel instead of a function
+     // See EventHandler in the notify crate: https://docs.rs/notify/latest/notify/trait.EventHandler.html
+     // Having a callback allows for any application abstraction to be used
++    #[cfg(not(target_arch = "wasm32"))]
+     pub fn watch<F>(&self, f: F) -> Result<RecommendedWatcher, Error>
+     // Argument is an array of all keys that changed in that specific transaction
+     //TODO: simplify F requirements
+@@ -417,7 +521,7 @@ impl ConfigGet for Config {
+         match self.key_path(key) {
+             Ok(key_path) if key_path.is_file() => {
+                 // Load user override
+-                match fs::read_to_string(key_path) {
++                match store::read_to_string(&key_path) {
+                     Ok(data) => Ok(ron::from_str(&data)?),
+                     Err(why) if why.kind() == io::ErrorKind::NotFound => Err(Error::NotFound),
+                     Err(why) => Err(Error::GetKey(key.to_string(), why)),
+@@ -437,7 +541,7 @@ impl ConfigGet for Config {
+     fn get_system_default<T: DeserializeOwned>(&self, key: &str) -> Result<T, Error> {
+         // Load system default
+         let default_path = self.default_path(key)?;
+-        match fs::read_to_string(default_path) {
++        match store::read_to_string(&default_path) {
+             Ok(data) => Ok(ron::from_str(&data)?),
+             Err(why) if why.kind() == io::ErrorKind::NotFound => Err(Error::NotFound),
+             Err(why) => Err(Error::GetKey(key.to_string(), why)),
+@@ -468,11 +572,7 @@ impl ConfigTransaction<'_> {
+     pub fn commit(self) -> Result<(), Error> {
+         let mut updates = self.updates.lock().unwrap();
+         for (key_path, data) in updates.drain(..) {
+-            atomicwrites::AtomicFile::new(
+-                key_path,
+-                atomicwrites::OverwriteBehavior::AllowOverwrite,
+-            )
+-            .write(|file| file.write_all(data.as_bytes()))?;
++            store::write(&key_path, &data)?;
+         }
+         Ok(())
+     }

@@ -1,0 +1,83 @@
+diff --git a/winit/src/lib.rs b/winit/src/lib.rs
+index 791bacf..7f03ce5 100644
+--- a/winit/src/lib.rs
++++ b/winit/src/lib.rs
+@@ -218,6 +218,8 @@ where
+         #[cfg(feature = "a11y")]
+         adapters: Default::default(),
+ 
++        #[cfg(target_arch = "wasm32")]
++        is_booted: std::rc::Rc::new(std::cell::RefCell::new(false)),
+         #[cfg(target_arch = "wasm32")]
+         canvas: None,
+     };
+@@ -424,9 +426,15 @@ where
+ 
+                                 #[cfg(target_arch = "wasm32")]
+                                 let window_attributes = {
+-                                    use winit::platform::web::WindowAttributesExtWebSys;
+-                                    window_attributes
+-                                        .with_canvas(self.canvas.take())
++                                    use winit::platform::web::WindowAttributesWeb;
++                                    window_attributes.with_platform_attributes(
++                                        Box::new(
++                                            WindowAttributesWeb::default()
++                                                .with_canvas(
++                                                    self.canvas.take(),
++                                                ),
++                                        ),
++                                    )
+                                 };
+ 
+                                 log::info!(
+@@ -454,11 +462,16 @@ where
+ 
+                                 #[cfg(target_arch = "wasm32")]
+                                 {
+-                                    use winit::platform::web::WindowExtWebSys;
++                                    use winit::platform::web::WindowExtWeb;
+ 
++                                    // A `Ref` now, borrowed from the window —
++                                    // cloned because the handle is a JsValue
++                                    // and the borrow would otherwise be held
++                                    // across everything below.
+                                     let canvas = window
+                                         .canvas()
+-                                        .expect("Get window canvas");
++                                        .expect("Get window canvas")
++                                        .clone();
+ 
+                                     let _ = canvas.set_attribute(
+                                         "style",
+@@ -679,18 +692,9 @@ where
+         }
+     }
+ 
+-    #[cfg(not(target_arch = "wasm32"))]
+-    {
+-        event_loop.run_app(runner).map_err(error::Error::EventLoop)
+-    }
+-
+-    #[cfg(target_arch = "wasm32")]
+-    {
+-        use winit::platform::web::EventLoopExtWebSys;
+-        let _ = event_loop.spawn_app(runner);
+-
+-        Ok(())
+-    }
++    // One entry point on every platform: on web `run_app` registers the
++    // handler and returns, which is what `spawn_app` used to be for.
++    event_loop.run_app(runner).map_err(error::Error::EventLoop)
+ }
+ 
+ enum Event<Message: 'static> {
+@@ -1923,6 +1927,9 @@ async fn create_compositor<'a, P>(
+ >
+ where
+     P: Program,
++    // `spawn_local` detaches the future, so on wasm the compositor it builds
++    // has to outlive this call. Native blocks on it and does not care.
++    <<P as Program>::Renderer as compositor::Default>::Compositor: 'static,
+ {
+     let (compositor_sender, compositor_receiver) = oneshot::channel();
+ 

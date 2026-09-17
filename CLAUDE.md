@@ -2938,68 +2938,72 @@ it came from, because it was three separate problems:
 Holding under spamming is the part that matters. A fast first tap is easy; a
 tap that costs the same as the four hundredth is the property.
 
-## libcosmic does not build for the web, and the blocker is not ours
+## libcosmic builds for the web, in 143 lines of patch
 
-Attempted on `claude/wizardly-cori-nkdj8u`, as the first step of swapping this
-client to libcosmic so it would draw COSMIC's own menus and tables. The swap
-was not made, because the step it was conditioned on does not pass. What was
-established, by building rather than by reading:
+**This section previously said the opposite, and was wrong on its central
+claim.** It reported that `winit::platform::web` no longer exists, so iced's
+web backend would have to be ported across winit 0.31's per-platform split.
+That module is right where it always was — `pub use winit_web as web`, in
+`winit/src/platform/mod.rs`. The grep behind the claim read the *workspace
+root's* `src/platform/`, which is a different directory, found nothing, and
+the conclusion was built on it. Only the trait *names* changed.
 
-- **libcosmic builds natively here, and its own toolkit half builds for
-  wasm.** `iced_core`, `iced_runtime`, `iced_widget`, `iced_wgpu`, `wgpu` and
-  `winit` all compiled to `wasm32-unknown-unknown` from their fork. That much
-  was never the problem.
-- **`cosmic-config` assumes a filesystem**, unconditionally: `atomicwrites`
-  and `notify` are plain `[dependencies]`, not target-gated, and
-  `cosmic-config` is a plain dependency of `libcosmic`. That one is *small* —
-  986 lines, nine `notify` uses, five `dirs`/`xdg` — and target-gating both
-  crates plus stubbing `ConfigTransaction::commit` was enough to get past it.
-  A real wasm backend for it (in-memory, or `localStorage`) is a day, not a
-  project.
-- **`iced_winit`'s web backend is stale, and that is the wall.** It imports
-  `winit::platform::web::{EventLoopExtWebSys, WindowExtWebSys,
-  WindowAttributesExtWebSys}` and calls `spawn_app`, `canvas` and
-  `with_canvas`. None of those exist in the winit their fork depends on:
-  winit `0.31.0-beta.2` split every platform into its own crate, so web is the
-  `winit-web` *crate* and `winit::platform::web` is gone. Their iced fork's
-  web code is written against winit 0.30's API.
+What it actually took, against libcosmic master and `pop-os/iced`:
 
-  Beside it, `missing field is_booted in initializer of Runner` — their own
-  wasm-only code failing against their own current struct. Two independent
-  ways of saying the same thing: **nobody compiles this path.**
+- **`iced_winit`, 24 lines.** `WindowAttributesExtWebSys` became the
+  `WindowAttributesWeb` struct, attached with `with_platform_attributes`;
+  `WindowExtWebSys` became `WindowExtWeb`, whose `canvas()` hands back a `Ref`
+  rather than the element; and `EventLoopExtWebSys::spawn_app` is gone because
+  `run_app` is now the one entry point on every platform — on web it registers
+  the handler and returns, which is exactly what `spawn_app` was for. So that
+  change *deleted* a `cfg` split rather than adding one.
 
-So getting there means porting a windowing backend across a breaking
-restructure, in a fork we do not control, against a beta of winit. That is not
-a patch; and it would have to be carried forward every time they rebase iced,
-which they do.
+  Two of their own bugs sat behind it, and both are the reason nobody had
+  noticed: the wasm-only `Runner` declares an `is_booted` field that its
+  constructor never sets, and `create_compositor` hands a future to
+  `spawn_local` without the `'static` bound that detaching requires. Neither
+  can be hit on a desktop.
+- **`cosmic-config`, 119 lines, and it is a real backend rather than a stub.**
+  Every path in that crate is a *name* — the config dir, the app, the version,
+  the key — and on a desktop that name is a file. One `store` module now holds
+  both ends: `std::fs` plus `atomicwrites` natively, `localStorage` in a
+  browser, keyed by the same path string. `system_path` is `None` there, since
+  nothing is installed system-wide in a tab, and `create_dir_all` is a no-op
+  because there are no directories to make.
 
-**And the toolchain moves.** libcosmic master declares `rust-version` 1.93;
-this workspace is on the engine's 1.90, pinned by `Cargo.toml`. Adopting it
-means bumping petros's toolchain for every Petros app, not just this one.
+The proof is `iced/nix/libcosmic/`: the two patches and a `spike/` that is a
+real `cosmic::Application` drawing their `context_menu` over their `table`. It
+**builds and links** to a wasm module for `wasm32-unknown-unknown`, and the
+same source still builds natively.
 
-**What the swap would cost if it were made desktop-only**, which is the one
-shape that works today: the web build goes, and the web build is the only one
-that can make a sound — `Player::AUDIBLE` is false on the desktop, so the
-desktop client is a remote control. Trading the build that plays music for the
-build that matches the desktop's menus is only worth it *after* the desktop
-has its own audio (`rodio`, so `cpal`, so ALSA, plus an HTTP reader), which is
-already written down above as worth doing when there is a media store to
-stream from. There now is one.
+**What is still true, and what is not yet.**
 
-**And their context menu is not better than this one where it counts.**
-`cosmic::widget::context_menu` is real and cosmic-files uses it, but
+- The toolchain moves. libcosmic master declares `rust-version` 1.93 against
+  the engine's pinned 1.90, so adopting it bumps petros's toolchain for every
+  Petros app. That one has not gone away.
+- **It has never been run.** A wasm module that links is not a page that
+  draws, and this file already carries four bugs whose whole shape was
+  "something that fails to draw lays out perfectly". The web path in their
+  fork had two compile errors in code nobody executes; there is no reason to
+  think the *runtime* half of it has been exercised either. Getting a canvas
+  on screen is the next thing, and nothing in this container can open one.
+- Config does not follow changes in a browser. `subscription_web.rs` answers
+  `Subscription::none()`, because `localStorage`'s `storage` event only fires
+  for writes from *other* tabs, so a real watcher has to announce its own
+  writes too. A subscription that never fires and a watcher that is broken
+  look identical from the outside, which is why it is written down here.
+
+**And their context menu is still not better than this one where it counts.**
 `menu::ItemWidth` is `Uniform(u16)` or `Static(u16)` — both a width somebody
-picks, defaulting to 240 — with no variant that measures the longest entry.
-That is the bug fixed one section above, at 240 instead of 198. There is no
+picks, defaulting to 240 — with no variant that measures the longest entry,
+which is the bug fixed one section above at 240 instead of 198. There is no
 `Duration` or `Instant` anywhere in their menu widget either, so submenus open
-the instant the pointer crosses them; `SUBMENU_DWELL` exists because that is a
-panel flashing under a cursor on its way to `Go to …`.
+the instant the pointer crosses them, where `SUBMENU_DWELL` waits a beat.
 
-What theirs has that this cannot: a real Wayland popup *surface*
-(`window_id`, `on_surface_action`), which can extend past the edge of the
-window. Everything `fit`, `menu_origin` and `submenu_origin` do is arithmetic
-to avoid that edge, because `pin` inside a `stack!` is clipped to the window.
-That is the one part worth wanting.
+What theirs has that this cannot: a real Wayland popup *surface* (`window_id`,
+`on_surface_action`), which can extend past the edge of the window. Everything
+`fit`, `menu_origin` and `submenu_origin` do is arithmetic to avoid that edge,
+because `pin` inside a `stack!` is clipped to the window.
 
 ## Not verified
 
