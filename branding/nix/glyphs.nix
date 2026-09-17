@@ -11,6 +11,23 @@
 #     a size in the file is a second answer;
 #   * and it is folded to one line, because it is about to be a string literal.
 #
+# And then one thing that is *not* normalising, which is worth keeping
+# separate from the list above because it is a change of look rather than of
+# container: every glyph's `stroke-linecap` and `stroke-linejoin` were Lucide's
+# `round` and are `butt` and `miter`, and the `rx` on the four glyphs built out
+# of rects is gone. Lucide draws with round caps, joins and corners throughout;
+# this program does not want that, so the ends are square and the corners are
+# sharp. Both are written out explicitly rather than deleted, even though they
+# are the SVG defaults — an attribute that is *absent* reads as one the
+# vendoring dropped, and dropping attributes is how four glyphs lost their
+# geometry the last time. Present and contradicting upstream says it was
+# chosen.
+#
+# Which also means these are modified files, not upstream's. ISC asks for
+# nothing on that count; the rule this repository follows about a vendored
+# thing — take it on the terms offered and say so where it can be seen — asks
+# for the sentence anyway, and this is it.
+#
 # `currentColor` is deliberately *kept*, which is Lucide's own convention and
 # happens to be exactly the rule `iced/src/icon.rs` has always had: a colour
 # baked into a glyph is the same colour on a dark row, a light one and the

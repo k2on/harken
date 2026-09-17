@@ -3243,6 +3243,23 @@ first. The engine's own decisions are in `../petros/docs/decisions.md`.
     one line. nix has no general text substitution, and a generator that
     cannot perform the transformation cannot be checked against the thing it
     generates — so the file *is* the literal.
+  - **The glyphs are not round, and that is a modification rather than a
+    normalisation.** Lucide draws with `stroke-linecap="round"`,
+    `stroke-linejoin="round"` and an `rx` on every rect; here the caps are
+    `butt`, the joins are `miter`, and the four glyphs built out of rects have
+    square corners. So `branding/icons/` is no longer upstream's bytes, which
+    is worth saying plainly — ISC asks nothing on that count and the rule this
+    repository follows about a vendored thing asks for the sentence anyway.
+
+    Both attributes are **written out rather than deleted**, though they are
+    the SVG defaults and the drawing is identical either way. An attribute that
+    is absent reads as one the vendoring dropped — which is exactly what
+    happened to four glyphs' `width` and `height` — and the next person to
+    diff this against Lucide should find a contradiction, not a hole.
+    `icon::tests::every_glyph_can_draw` does not hold this: `rx` is not
+    shape-defining on a `<rect>`, so the guard passes whether the corners are
+    round or square, and what says the change landed is looking at the
+    thirty-two of them.
 
     **And that strip took four glyphs' geometry with it.** `width` and `height`
     on the root `<svg>` are what the widget sets; on a `<rect>` inside one they
