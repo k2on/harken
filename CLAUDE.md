@@ -2657,16 +2657,16 @@ A wasm module is a megabyte or two to fetch and instantiate, so a browser peer
 spends a second or three on a blank page before iced paints anything. It said
 `loading harken…` in the top-left corner, which is a status line for a
 developer. It shows the trumpet in the middle of the page now, and when the
-module is up the splash **cross-fades into the app, which grows the last ten
-percent into place behind it** — the way Linear opens and the way a Hyprland
-login does. A fade alone reads as a picture being turned up; the scale is what
-makes it an arrival.
+module is up the splash **dissolves into the app, which settles out of the
+screen from 1.2 to 1 over the same second** — the way Linear opens and the way
+a Hyprland login does. A fade alone reads as a picture being turned up; the
+scale is what makes it an arrival.
 
 Only a browser has this, for the same reason the media session and the device
 picker do: the desktop binary is already running when its window appears, so
 there is nothing to wait for and nothing to reveal.
 
-Six things it needed:
+Seven things it needed:
 
 - **The splash covers the canvas; the canvas does not start invisible.** Those
   look equivalent and fail differently. A module that never resolves leaves a
@@ -2682,37 +2682,46 @@ Six things it needed:
   colour `Canvas`, which `color-scheme: light dark` above it already resolves:
   the app grows out of the page's own ground rather than out of a value copied
   from `branding/` that nothing would keep in step.
-- **Most of the scale has to run *after* the splash has gone, and getting that
-  wrong is invisible rather than wrong-looking.** This is the one worth keeping.
-  Two versions of it shipped looking like a plain fade:
+- **It zooms *out*, from 1.2, and that is not only taste.** Coming from below
+  1 means the page's own ground shows around the canvas for the whole reveal —
+  a rectangle with a seam at its edge, and how wide that border is is a number
+  somebody has to pick. From 1.2 the canvas overfills the window throughout, so
+  the only thing on screen is the app, and the amount of overfill stops
+  mattering.
+- **One duration and one curve, named once as `--reveal` and `--ease`.** The
+  splash's fade and the app's zoom are one gesture, and tuning them apart is
+  what made the zoom invisible twice:
 
-  - the first used `cubic-bezier(0.22, 1, 0.36, 1)`, an ease-out quint, which
-    is 90% finished in a quarter of its duration — three percent of scale under
-    that curve is a jump nobody can see;
-  - the second fixed the curve (`cubic-bezier(0.33, 1, 0.68, 1)`, 620ms, from
-    0.94) and was still invisible, because the splash took 420ms to fade and
-    the canvas was at **0.997** by the time you could first see it. The zoom
-    was real, measured, and entirely behind an opaque panel.
+  - the first version used `cubic-bezier(0.22, 1, 0.36, 1)`, an ease-out quint,
+    which is 90% finished in a quarter of its duration — three percent of scale
+    under that curve is a jump nobody can see;
+  - the second fixed the curve and was *still* invisible, because the splash
+    took 420ms to fade while the canvas ran 620ms: it was at **0.997 of 1** by
+    the moment you could first see it. The zoom was real, measured, and
+    entirely behind an opaque panel.
 
-  What decides it is not the curve or the delta on their own but the two
-  timings against each other. 900ms of plain `ease-out` from 0.9, against a
-  320ms fade: the splash is gone at 320ms with the canvas at 0.95, so about
-  four percent of travel is still to run in plain view. That is the number to
-  check when it next looks wrong — *how much is left at the frame the splash
-  clears*, not how far it travels in total.
-- **The splash cross-fades into the app; it does not come off it.** It scales
-  to 1.04 as it goes, barely, so the two read as one movement — a lid lifting
-  off is a different gesture and a louder one.
+  Sharing the curve is also what makes it a clean dissolve rather than a
+  cross-fade with a dip in it: the two opacities sum to 1 at every frame,
+  because one is the other subtracted from it.
+- **The splash only fades.** It has been sitting still for a second or two, so
+  giving it a transform when it goes means starting that transform *somewhere*
+  — and any value but 1 is the mark jumping before it leaves. The movement
+  belongs to the thing arriving.
+- **The fallback timeout is read off `--reveal`, not written down.** At a fixed
+  800ms it was *shorter* than the fade the moment that went to a second, so it
+  removed the splash at 2% opacity. Invisible at that value and would not have
+  been at 20% — which is the kind of constant that goes wrong silently on the
+  next tweak, so it is derived.
 - **The transform comes off the canvas when it is over.** winit reads the
   pointer out of the canvas's bounding box, and a transform moves it — so the
   class is dropped on `animationend` and a click lands exactly where it did
   before. Nobody is clicking during the reveal; leaving a transform on forever
   would be a permanent half-pixel lie.
-- **`transitionend` is not a guarantee, so the timeout is the one that has to
-  be there.** A suppressed transition — reduced motion, a background tab —
-  fires no event, and the splash would stay up over a running app. Whichever
-  lands first removes it. And reduced motion still gets the fade, because what
-  it says — *this is ready now* — is not decoration.
+- **`transitionend` is not a guarantee, so a timeout has to exist at all.** A
+  suppressed transition — reduced motion, a background tab — fires no event,
+  and the splash would stay up over a running app. Whichever lands first
+  removes it. And reduced motion still gets the fade, because what it says —
+  *this is ready now* — is not decoration.
 
 
 ## Both clients maintain their list; only one of them re-reads anything

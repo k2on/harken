@@ -15,6 +15,15 @@
          agree, or a dark window is loaded over a white flash and the boot
          line is black on black. `color-scheme` makes the default canvas and
          text follow the same preference the app is reading. */
+      /* One duration and one curve for the whole reveal, because the splash's
+         fade and the app's zoom are one gesture and tuning them apart is what
+         made the zoom invisible twice. `ease-out` cubic: still travelling at
+         half-way, which is what makes a slow settle legible where an ease-out
+         quint (90% done in a quarter of its duration) is a jump. */
+      :root {
+        --reveal: 1000ms;
+        --ease: cubic-bezier(0.33, 1, 0.68, 1);
+      }
       html, body {
         margin: 0;
         height: 100%;
@@ -37,40 +46,38 @@
         display: grid;
         place-items: center;
         background: Canvas;
-        transition: opacity 320ms ease-out, transform 320ms ease-out;
+        transition: opacity var(--reveal) var(--ease);
       }
       #boot img {
         width: 96px;
         height: 96px;
-        animation: settle 420ms ease-out both;
+        animation: settle 420ms var(--ease) both;
       }
-      /* It goes the same way the app comes, and only barely — this is a
-         cross-fade into the app, not a lid coming off it. */
+      /* The splash only fades. It has been sitting still on the page for a
+         second or two, so giving it a transform at the moment it goes means
+         starting that transform *somewhere* — and any value but 1 is the mark
+         jumping before it leaves. The movement belongs to the thing arriving. */
       #boot.done {
         opacity: 0;
-        transform: scale(1.04);
         pointer-events: none;
       }
 
-      /* The app arrives the way Linear's does and the way a Hyprland login
-         does: it grows the last ten percent into place as the splash fades
-         through it. A fade alone reads as a picture being turned up; the
-         scale is what makes it an arrival. */
+      /* The app arrives the way Linear opens and a Hyprland login does: it
+         settles *out* of the screen rather than growing into it, from 1.2 to
+         1, while the splash dissolves through it over the same window and the
+         same curve. A fade alone reads as a picture being turned up; the
+         scale is what makes it an arrival.
+
+         **Out rather than in**, which is not only taste. Coming *from* below 1
+         means the page's own ground is visible around the canvas for the whole
+         reveal — a rectangle with a seam at its edge — and how big that border
+         is is a number to tune. From 1.2 the canvas overfills the window
+         throughout and the only thing on screen is the app. */
       canvas.arriving {
-        animation: arrive 900ms ease-out both;
+        animation: arrive var(--reveal) var(--ease) both;
       }
-      /* **Most of the travel has to happen after the splash has gone**, and
-         getting that wrong is invisible rather than wrong-looking. The first
-         version ran 620ms of `cubic-bezier(0.33, 1, 0.68, 1)` against a 420ms
-         fade, so at the moment you could first see the canvas it was already
-         at 0.98 of 1 — the zoom was real, measurable, and entirely behind an
-         opaque splash. 900ms of plain `ease-out` against a 320ms fade leaves
-         about four percent of scale still to run in plain view, which is what
-         you actually watch. The opacity is over by 320ms to match the fade,
-         so the two cross rather than the app arriving under a hole. */
       @keyframes arrive {
-        from { opacity: 0; transform: scale(0.9); }
-        36%  { opacity: 1; }
+        from { opacity: 0; transform: scale(1.2); }
         to   { opacity: 1; transform: none; }
       }
       @keyframes settle {
@@ -82,7 +89,6 @@
          the thing it is saying — "this is ready now" — is not decoration. */
       @media (prefers-reduced-motion: reduce) {
         #boot, #boot img, canvas.arriving { animation: none; transition: opacity 160ms linear; }
-        #boot.done { transform: none; }
       }
     </style>
   </head>
@@ -109,11 +115,16 @@
       };
       // `transitionend` does not fire when the transition is suppressed —
       // reduced motion, a background tab — so the timeout is the one that has
-      // to be there, and whichever lands first wins.
+      // to be there, and whichever lands first wins. It is read off `--reveal`
+      // rather than written down: at a fixed 800ms it was *shorter* than the
+      // fade the moment that went to a second, so it cut the splash off at 2%
+      // opacity — which is invisible, and would not have been at 200ms.
       const dismiss = () => {
-        boot?.classList.add("done");
-        boot?.addEventListener("transitionend", () => boot.remove(), { once: true });
-        setTimeout(() => boot?.remove(), 800);
+        if (!boot) return;
+        const reveal = parseFloat(getComputedStyle(boot).transitionDuration) * 1000;
+        boot.classList.add("done");
+        boot.addEventListener("transitionend", () => boot.remove(), { once: true });
+        setTimeout(() => boot.remove(), (reveal || 1000) + 400);
       };
 
       // The keyboard only reaches the app while its canvas has the focus, and
