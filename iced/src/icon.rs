@@ -26,61 +26,25 @@
 //! rather than by geometry in a shared layer, which is exactly the part that
 //! was broken, and it needs no font and no icon asset.
 //!
+//! **The drawings are not in this file any more.** They are Lucide's, vendored
+//! once in `branding/icons/` and generated into [`crate::glyphs`] and the
+//! phone's `mobile/src/ui/glyphs.ts` from the same files — because the two
+//! clients were drawing two icon sets and calling them one program. What is
+//! left here is the half that does not generalise: which colour each glyph
+//! earns, how big it is drawn, and what it means.
+//!
 //! Their color is the theme's, applied through the `svg` style's color filter
 //! rather than written into the file. A shape with a color baked in is the
 //! same color on a white row, a dark row and the accent-colored row under the
 //! cursor — three different backgrounds, and one color that was only ever
 //! chosen against the first.
 
+use crate::glyphs;
 use iced::widget::{svg, Svg};
 use iced::Theme;
 
 /// How big a transport button is drawn in the now-playing bar.
 pub const TRANSPORT: f32 = 15.0;
-
-/// A tick, for a playlist this track is already on.
-///
-/// Drawn rather than typed for the reason at the top of this file: U+2713 is
-/// outside Latin-1, so Fira Sans has nothing for it and the row would say `?`
-/// where it meant yes.
-const TICK: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-<path d="M9.2 16.6 4.8 12.2l1.6-1.6 2.8 2.8 7.2-7.2 1.6 1.6z" fill="#000"/></svg>"##;
-
-/// Three dots, for the menu a row hides behind them. U+22EE is outside
-/// Latin-1 like everything else here, so it is drawn.
-const MORE: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-<path d="M12 4.2a2.1 2.1 0 1 1 0 4.2 2.1 2.1 0 0 1 0-4.2zm0 5.7a2.1 2.1 0 1 1 0 4.2 2.1 2.1 0 0 1 0-4.2zm0 5.7a2.1 2.1 0 1 1 0 4.2 2.1 2.1 0 0 1 0-4.2z" fill="#000"/></svg>"##;
-
-/// A right chevron, for a menu entry that opens a submenu.
-///
-/// U+203A is outside Latin-1 like everything else here, so it is drawn — and
-/// the rule at the top of this file is exactly why it is worth the six lines:
-/// a single guillemet *probably* exists in Fira Sans, which is not a thing to
-/// find out from a screenshot of a menu with a `?` on the end of one row.
-const CHEVRON: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-<path d="M9.5 5.5 16 12l-6.5 6.5" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##;
-
-/// The transport glyphs, as paths in a 24-unit box.
-const PLAY: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-<path d="M8 5l11 7-11 7z" fill="#000"/></svg>"##;
-
-const PAUSE: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-<path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z" fill="#000"/></svg>"##;
-
-const PREVIOUS: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-<path d="M6 5h2.5v14H6zM19 5l-9 7 9 7z" fill="#000"/></svg>"##;
-
-const NEXT: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-<path d="M15.5 5H18v14h-2.5zM5 5l9 7-9 7z" fill="#000"/></svg>"##;
-
-/// A speaker, for which device is making the sound.
-///
-/// The cone is filled and the two waves are stroked, which is fine together
-/// because the `svg` style's filter recolors every pixel the file draws — the
-/// same reason nothing in this file names a color it means.
-const SPEAKER: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-<path d="M3.5 9h3.6L11.5 5v14L7.1 15H3.5z" fill="#000"/>
-<path d="M14.6 9.1a4.2 4.2 0 0 1 0 5.8M17.2 6.4a7.9 7.9 0 0 1 0 11.2" fill="none" stroke="#000" stroke-width="1.8" stroke-linecap="round"/></svg>"##;
 
 /// One of the transport buttons, in the theme's own text color.
 ///
@@ -99,19 +63,19 @@ fn transport<'a>(shape: &'static [u8], dim: bool) -> Svg<'a> {
 }
 
 pub fn play<'a>() -> Svg<'a> {
-    transport(PLAY, false)
+    transport(glyphs::PLAY, false)
 }
 
 pub fn pause<'a>() -> Svg<'a> {
-    transport(PAUSE, false)
+    transport(glyphs::PAUSE, false)
 }
 
 pub fn previous<'a>() -> Svg<'a> {
-    transport(PREVIOUS, true)
+    transport(glyphs::PREVIOUS, true)
 }
 
 pub fn next<'a>() -> Svg<'a> {
-    transport(NEXT, true)
+    transport(glyphs::NEXT, true)
 }
 
 /// The transport, on the row that is playing.
@@ -126,19 +90,23 @@ pub fn next<'a>() -> Svg<'a> {
 /// the accent, so the mark takes the one color that background was paired
 /// with. Off it, the mark *is* the accent, the same as the title beside it.
 pub fn playing<'a>(paused: bool, on_cursor: bool) -> Svg<'a> {
-    svg(svg::Handle::from_memory(if paused { PLAY } else { PAUSE }))
-        .width(TRANSPORT)
-        .height(TRANSPORT)
-        .style(move |theme: &Theme, _| {
-            let palette = crate::palette::of(theme);
-            svg::Style {
-                color: Some(if on_cursor {
-                    palette.primary.base.text
-                } else {
-                    palette.primary.base.color
-                }),
-            }
-        })
+    svg(svg::Handle::from_memory(if paused {
+        glyphs::PLAY
+    } else {
+        glyphs::PAUSE
+    }))
+    .width(TRANSPORT)
+    .height(TRANSPORT)
+    .style(move |theme: &Theme, _| {
+        let palette = crate::palette::of(theme);
+        svg::Style {
+            color: Some(if on_cursor {
+                palette.primary.base.text
+            } else {
+                palette.primary.base.color
+            }),
+        }
+    })
 }
 
 /// The tick beside a playlist this track is on.
@@ -148,7 +116,7 @@ pub fn playing<'a>(paused: bool, on_cursor: bool) -> Svg<'a> {
 /// nobody chose. On the cursor's own row it is the one color that background
 /// was paired with.
 pub fn tick<'a>(on_cursor: bool) -> Svg<'a> {
-    svg(svg::Handle::from_memory(TICK))
+    svg(svg::Handle::from_memory(glyphs::TICK))
         .width(TRANSPORT)
         .height(TRANSPORT)
         .style(move |theme: &Theme, _| {
@@ -168,7 +136,7 @@ pub fn tick<'a>(on_cursor: bool) -> Svg<'a> {
 /// Drawn faintly: it is on every row, and something on every row that is as
 /// loud as the title is something that competes with a hundred titles.
 pub fn more<'a>(on_cursor: bool) -> Svg<'a> {
-    svg(svg::Handle::from_memory(MORE))
+    svg(svg::Handle::from_memory(glyphs::MORE))
         .width(TRANSPORT)
         .height(TRANSPORT)
         .style(move |theme: &Theme, _| {
@@ -193,7 +161,7 @@ pub fn more<'a>(on_cursor: bool) -> Svg<'a> {
 /// Dimmer than the label it sits beside: it says *how* this entry behaves, not
 /// what it does.
 pub fn chevron<'a>(lit: bool) -> Svg<'a> {
-    svg(svg::Handle::from_memory(CHEVRON))
+    svg(svg::Handle::from_memory(glyphs::CHEVRON))
         .width(TRANSPORT)
         .height(TRANSPORT)
         .style(move |theme: &Theme, _| {
@@ -207,6 +175,28 @@ pub fn chevron<'a>(lit: bool) -> Svg<'a> {
         })
 }
 
+/// A glyph beside a line of text — a sidebar row, a menu entry.
+///
+/// Dimmer than the words it sits beside, on both sides of the highlight: the
+/// icon is *which kind of thing this row is*, and a shape as loud as the name
+/// would compete with four names for the same glance. `lit` is the row under
+/// the cursor, where the one legible colour is the one the accent was paired
+/// with.
+pub fn line<'a>(shape: &'static [u8], lit: bool) -> Svg<'a> {
+    svg(svg::Handle::from_memory(shape))
+        .width(TRANSPORT)
+        .height(TRANSPORT)
+        .style(move |theme: &Theme, _| {
+            let palette = crate::palette::of(theme);
+            svg::Style {
+                color: Some(match lit {
+                    true => palette.primary.base.text.scale_alpha(0.9),
+                    false => palette.background.base.text.scale_alpha(0.6),
+                }),
+            }
+        })
+}
+
 /// Where the sound is coming from, in the now-playing bar.
 ///
 /// The accent when it is *this* device and plain text when it is another,
@@ -214,7 +204,7 @@ pub fn chevron<'a>(lit: bool) -> Svg<'a> {
 /// device" and "Phone" are both just words, and the color is what makes the
 /// common case need no reading.
 pub fn devices<'a>(here: bool) -> Svg<'a> {
-    svg(svg::Handle::from_memory(SPEAKER))
+    svg(svg::Handle::from_memory(glyphs::DEVICES))
         .width(TRANSPORT)
         .height(TRANSPORT)
         .style(move |theme: &Theme, _| {

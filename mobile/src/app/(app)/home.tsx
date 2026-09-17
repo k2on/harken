@@ -64,8 +64,9 @@ export default function Home() {
 }
 
 /** A row rather than a styled `Text`: a glyph nested inside `Text` is an
- *  `expo-symbols` view inside a text run, which iOS lays out and Android
- *  quietly drops. */
+ *  `<Svg>` inside a text run, which iOS lays out and Android quietly drops.
+ *  (It was an `expo-symbols` view before, with the same problem — the
+ *  mechanism changed and the layout rule did not.) */
 function Link({
   theme,
   icon,

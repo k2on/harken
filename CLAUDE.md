@@ -53,8 +53,8 @@ server/                  axum, with one Petros handler mounted on it, and the
   nix/readme.nix         its section of README.md
 iced/                    the desktop and browser client
   src/main.rs            …and how each target signs in: a loopback port, or the page
-  src/icon.rs            every glyph the font has not got, drawn as SVG:
-                         the transport, in the bar and on the playing row
+  src/glyphs.rs          generated: the drawings, from `branding/icons/`
+  src/icon.rs            …and what colour each one earns, and how big
   src/vim.rs             the keyboard: vim's grammar, and the one trait a
                          component implements to get it
   src/route.rs           what the address bar says, and the back button
@@ -93,8 +93,8 @@ mobile/                  the phone client; src/ is UI and a socket, nothing else
   src/media.ts           …and the one place a `file` becomes a URL
   src/theme.ts           the palette: light, dark, and the gold. The only place
                          in this directory a color is written down
-  src/ui/icon.tsx        every glyph, as an SF Symbol, a Material Symbol, and a
-                         character to fall back to (see below)
+  src/ui/glyphs.ts       generated: the same drawings, from the same files
+  src/ui/icon.tsx        …and what colour each one is drawn, and how big
   src/ui/player.tsx      the bar and the sheet it grows into, which are one
                          thing with two faces
   src/ui/tabbar.tsx      Home, Search, Your Library — drawn, not routed
@@ -117,6 +117,9 @@ branding/                what the program looks like, once
   font/                  the typeface: Inter, vendored, SIL OFL 1.1
   LICENSE.inter          …and its licence, kept beside it
   nix/font.nix           …copied to where each client can reach it; run: fonts
+  icons/                 the icons: Lucide, vendored, ISC
+  LICENSE.lucide         …and its licence, kept beside it
+  nix/glyphs.nix         …written out as `glyphs.rs` and `glyphs.ts`
   nix/palette.nix        the colors — AppKit's greys and the gold — and nothing else
   nix/icon.nix           the angle, the centring, the ground, and every raster
   nix/default.nix        …written out as `palette.rs` and `palette.ts`
@@ -2833,6 +2836,63 @@ first. The engine's own decisions are in `../petros/docs/decisions.md`.
     the way `nix run .#mutators` writes the module. The favicon is SVG, so it
     *is* checked — and it carries both themes in a media query, because a tab
     strip is light or dark and the page is never told which.
+
+- **One icon set, and it is Lucide.** Four, before this: iced drew its own
+  SVGs in `icon.rs`, and the phone asked `expo-symbols` for an SF Symbol on
+  iOS, a Material Symbol on Android, and a literal character where neither
+  existed. A music app whose play button is a different shape on each device
+  is not one app with three skins. `branding/icons/` is the one vendored copy
+  now — Lucide, ISC, licence beside it — generated into `iced/src/glyphs.rs`
+  and `mobile/src/ui/glyphs.ts` the way the palette already is.
+
+  What was given up, plainly: SF Symbols is the native look on iOS and this is
+  not it. What made that worth keeping was `animationSpec` — and Expo tags it
+  **iOS-only**, so Android was already getting nothing from it. One set both
+  clients draw is worth more than a native look on one platform and a
+  third-party one on the other.
+
+  Six things:
+
+  - **`currentColor` is kept rather than replaced**, which is Lucide's own
+    convention and happens to be exactly the rule `icon.rs` always had. iced
+    replaces every colour in the drawing through the `svg` style's filter, so
+    what it resolves to there never matters; `react-native-svg` resolves it
+    from the `color` prop, which is the ordinary way to tint an SVG. One
+    placeholder, two mechanisms, and neither client writes a colour into a
+    file.
+  - **The normalising happens on the way *in*, not in the generator.** What is
+    in `branding/icons/` is already stripped of Lucide's licence comment, its
+    DOM `class`, and the `width`/`height` the widget contradicts, and folded to
+    one line. nix has no general text substitution, and a generator that
+    cannot perform the transformation cannot be checked against the thing it
+    generates — so the file *is* the literal.
+  - **`#![allow(dead_code)]` on the generated Rust**, because the table is the
+    program's vocabulary rather than one client's: the phone draws `home`,
+    `search` and a tab bar's worth the desktop has no place for. Generating
+    two subsets would be two tables to keep in step, which is the thing this
+    replaced.
+  - **It found a duplicate immediately.** The desktop drew a `volume-2`
+    speaker in the play bar and the phone drew a `cast` glyph, for the one
+    control that answers "where is the sound". One key, `devices`, now.
+    Reading the unused list is what surfaced it.
+  - **The sidebar and the row menu draw from it**, and from one table:
+    `Source::glyph` says what an album looks like, and the menu's "Go to"
+    entries ask *the source they go to* rather than naming a glyph themselves
+    — so a menu entry and a sidebar line cannot come to disagree. `RowMenu`'s
+    entries are a struct rather than a tuple for the same reason a third
+    field in a tuple is a position to remember at three call sites.
+  - **Two pinned things move and neither could be computed here.**
+    `react-native-svg` is a native module, so `nodeModulesHash` is stale per
+    platform — which is the mechanism working, since the build fails and nix
+    prints the right one — and `mobile/gradle-deps.json` needs re-recording
+    with the workflow button, because an artifact nobody recorded is a build
+    that cannot reach it rather than a slow download.
+
+  And one thing worth knowing about how it was built: **nothing in the
+  container that wrote it can run nix**, so `glyphs.rs` and `glyphs.ts` were
+  written by hand to match what `branding/nix/glyphs.nix` would emit. The
+  `files` check is what proves that, and it is the reason the generator is
+  kept as dumb as it is.
 
 - **One typeface, and it is Inter.** The desktop took iced's own Fira Sans and
   the phone took whatever the system gave it, which on iOS is SF and on

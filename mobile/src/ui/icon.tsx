@@ -1,93 +1,39 @@
 /**
- * Every glyph this app draws, in one table.
+ * Every glyph this app draws — the same drawings the desktop draws.
  *
- * `iced/src/icon.rs` exists because the font iced embeds has no play and no
- * transport, and a missing glyph lays out fine and draws nothing — so the
- * button looks *broken* rather than unfontable, which is a hard thing to
- * recognise as a font problem. React Native is not immune to that; it is only
- * differently exposed. `expo-symbols` draws SF Symbols on iOS and Google's
- * Material Symbols on Android, from two different names for the same idea, and
- * a name either platform does not have draws nothing at all.
+ * It used to be `expo-symbols`: SF Symbols on iOS and Google's Material
+ * Symbols on Android, from two names per glyph, with a character to fall back
+ * to when a platform had neither. That is three icon sets for one program —
+ * four counting `iced/src/icon.rs`, which was drawing its own — and which one
+ * you saw depended on what you were holding. A music app whose play button is
+ * a different shape on each device is not one app with three skins; it is
+ * three apps.
  *
- * So every glyph here states both names *and* a character to fall back to.
- * `SymbolView`'s `fallback` is what renders when a platform has no symbol for
- * the name, and the characters below are ones the system font does have — the
- * point being that the worst case is a plain arrow rather than a blank square
- * where the play button should be.
+ * So the geometry is Lucide's, vendored once in `branding/icons/` and
+ * generated into `glyphs.ts` beside this and `iced/src/glyphs.rs`. This file
+ * is the half that does not generalise: how big, and what colour.
  *
- * Nothing here chooses a color. `tint` is passed in from the theme, for the
- * same reason the desktop's glyphs are drawn with placeholder `fill` and
- * `stroke` that the style replaces: a gold baked into the glyph is the same
- * gold on a dark row, a light one and the gold-filled one under the cursor.
+ * **What was given up, honestly.** SF Symbols is the native look on iOS and
+ * this is not it — Apple's licence forbids using the font off Apple's
+ * platforms anyway, but the *symbols* were legitimately available through
+ * `expo-symbols` and are no longer used. What was bought is that the phone and
+ * the desktop draw one set. The animations that made SF Symbols worth keeping
+ * (`animationSpec`) were iOS-only, so Android was already getting nothing from
+ * them.
+ *
+ * Nothing here chooses a colour. `tint` is passed in from the theme and
+ * resolves the `currentColor` every drawing is written with — the same rule
+ * the desktop's glyphs follow, and for the same reason: a gold baked into a
+ * glyph is the same gold on a dark row, a light one and the gold-filled one
+ * under the cursor.
  */
 
-import { Text } from 'react-native';
-import { SymbolView } from 'expo-symbols';
-import type { AndroidSymbol } from 'expo-symbols';
-import type { SFSymbol } from 'sf-symbols-typescript';
+import { SvgXml } from 'react-native-svg';
 
-type Glyph = { ios: SFSymbol; android: AndroidSymbol; text: string };
+import { GLYPHS, type IconName } from './glyphs';
 
-const GLYPHS = {
-  play: { ios: 'play.fill', android: 'play_arrow', text: '▶' },
-  pause: { ios: 'pause.fill', android: 'pause', text: '❚❚' },
-  next: { ios: 'forward.fill', android: 'skip_next', text: '⏭' },
-  previous: { ios: 'backward.fill', android: 'skip_previous', text: '⏮' },
-  // Adding a track to a playlist, and the two states of one that is on it.
-  addTo: { ios: 'text.badge.plus', android: 'playlist_add', text: '+' },
-  ticked: { ios: 'checkmark.circle.fill', android: 'check_circle', text: '●' },
-  untick: { ios: 'circle', android: 'radio_button_unchecked', text: '○' },
-  plus: { ios: 'plus', android: 'add', text: '+' },
-  note: { ios: 'music.note', android: 'music_note', text: '♪' },
-  library: { ios: 'music.note.list', android: 'library_music', text: '≡' },
-  playlist: { ios: 'list.bullet', android: 'queue_music', text: '≡' },
-  album: { ios: 'square.stack', android: 'album', text: '◎' },
-  artist: { ios: 'person', android: 'person', text: '☺' },
-  close: { ios: 'xmark', android: 'close', text: '✕' },
-  down: { ios: 'chevron.down', android: 'keyboard_arrow_down', text: '⌄' },
-  online: { ios: 'wifi', android: 'cloud_done', text: '•' },
-  offline: { ios: 'wifi.slash', android: 'cloud_off', text: '•' },
-  signOut: { ios: 'rectangle.portrait.and.arrow.right', android: 'logout', text: '⇥' },
-  playing: { ios: 'waveform', android: 'graphic_eq', text: '♪' },
-  // Where the sound is coming from, and the devices it could come from.
-  // `airplayaudio` is Apple's own word for this control, which is what people
-  // already reach for; Android's cast glyph means the same thing to the same
-  // hand.
-  devices: { ios: 'airplayaudio', android: 'cast', text: '⌁' },
-  phone: { ios: 'iphone', android: 'smartphone', text: '▯' },
-  laptop: { ios: 'laptopcomputer', android: 'computer', text: '▭' },
-  stop: { ios: 'stop.circle', android: 'stop_circle', text: '■' },
-  debug: { ios: 'ladybug', android: 'bug_report', text: '?' },
-  // The three tabs, and the two chevrons a pushed screen needs.
-  home: { ios: 'house.fill', android: 'home', text: '⌂' },
-  search: { ios: 'magnifyingglass', android: 'search', text: '⌕' },
-  back: { ios: 'chevron.left', android: 'arrow_back', text: '‹' },
-  chevron: { ios: 'chevron.right', android: 'chevron_right', text: '›' },
-  shuffle: { ios: 'shuffle', android: 'shuffle', text: '⤨' },
-} as const satisfies Record<string, Glyph>;
+export type { IconName };
 
-export type IconName = keyof typeof GLYPHS;
-
-export function Icon({
-  name,
-  size = 20,
-  tint,
-}: {
-  name: IconName;
-  size?: number;
-  tint: string;
-}) {
-  const glyph: Glyph = GLYPHS[name];
-  return (
-    <SymbolView
-      name={{ ios: glyph.ios, android: glyph.android, web: glyph.android }}
-      size={size}
-      tintColor={tint}
-      fallback={
-        <Text style={{ color: tint, fontSize: size * 0.8, lineHeight: size * 1.1 }}>
-          {glyph.text}
-        </Text>
-      }
-    />
-  );
+export function Icon({ name, size = 20, tint }: { name: IconName; size?: number; tint: string }) {
+  return <SvgXml xml={GLYPHS[name]} width={size} height={size} color={tint} />;
 }

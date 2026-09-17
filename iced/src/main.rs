@@ -28,6 +28,7 @@
 
 mod art;
 mod covers;
+mod glyphs;
 mod icon;
 mod listening;
 mod palette;
@@ -282,6 +283,24 @@ impl Source {
             | Source::Works(_)
             | Source::Work(..)
             | Source::Recording(..) => None,
+        }
+    }
+
+    /// The drawing that goes beside it in the sidebar.
+    ///
+    /// A line of a sidebar is four words in a column of four words, and which
+    /// one you want is a shape before it is a word — which is the whole of
+    /// what an icon buys here. It is on the `Source` rather than on `Choice`
+    /// because a source is the thing that has a kind: a playlist is a
+    /// playlist wherever it is named.
+    fn glyph(&self) -> &'static [u8] {
+        match self {
+            Source::Library => glyphs::NOTE,
+            Source::Albums | Source::Album(_) => glyphs::ALBUM,
+            Source::Artists | Source::Artist(_) => glyphs::ARTIST,
+            Source::Composers | Source::Works(_) => glyphs::COMPOSER,
+            Source::Work(..) | Source::Recording(..) => glyphs::LIBRARY,
+            Source::Playlist(..) => glyphs::PLAYLIST,
         }
     }
 
@@ -584,25 +603,48 @@ impl RowMenu {
     /// an entry has a submenu exactly when its message opens one, and
     /// `dwell_submenu` asks the same question the same way. A `bool` beside
     /// the label would be a second answer to keep in step with the first.
-    fn entries(&self) -> Vec<(String, Message)> {
+    fn entries(&self) -> Vec<Entry> {
         let mut out = vec![
-            ("Play".to_string(), Message::PlayItem(self.media)),
-            ("Add to playlist".to_string(), Message::OpenPicker),
+            Entry {
+                glyph: glyphs::PLAY,
+                label: "Play".to_string(),
+                message: Message::PlayItem(self.media),
+            },
+            Entry {
+                glyph: glyphs::ADD_TO,
+                label: "Add to playlist".to_string(),
+                message: Message::OpenPicker,
+            },
         ];
-        if !self.album.is_empty() {
-            out.push((
-                format!("Go to {}", self.album),
-                Message::Select(Source::Album(self.album.clone())),
-            ));
-        }
-        if !self.artist.is_empty() {
-            out.push((
-                format!("Go to {}", self.artist),
-                Message::Select(Source::Artist(self.artist.clone())),
-            ));
+        // The two "Go to" entries take the glyph of the *place* they go, which
+        // is the same one the sidebar draws beside that kind — `Source::glyph`
+        // is the one table, so a menu entry and a sidebar line cannot come to
+        // disagree about what an album looks like.
+        for (name, source) in [
+            (&self.album, Source::Album(self.album.clone())),
+            (&self.artist, Source::Artist(self.artist.clone())),
+        ] {
+            if !name.is_empty() {
+                out.push(Entry {
+                    glyph: source.glyph(),
+                    label: format!("Go to {name}"),
+                    message: Message::Select(source),
+                });
+            }
         }
         out
     }
+}
+
+/// One thing a row's menu offers: a drawing, a name, and what it does.
+///
+/// A struct rather than the tuple it was, because a third field in a tuple is
+/// a position to remember at three call sites — the view, `<Enter>`, and the
+/// dwell that asks which entry owns a submenu.
+struct Entry {
+    glyph: &'static [u8],
+    label: String,
+    message: Message,
 }
 
 /// The playlist picker, over the track it is for.
@@ -2189,7 +2231,13 @@ impl App {
         if self.picker.is_some() || menu.offered {
             return None;
         }
-        if !matches!(menu.entries().get(menu.at), Some((_, Message::OpenPicker))) {
+        if !matches!(
+            menu.entries().get(menu.at),
+            Some(Entry {
+                message: Message::OpenPicker,
+                ..
+            })
+        ) {
             return None;
         }
         menu.dwell = menu.dwell.saturating_add(1);
@@ -2663,7 +2711,7 @@ impl App {
                 let picked = self
                     .menu
                     .as_ref()
-                    .and_then(|m| m.entries().get(m.at).map(|(_, msg)| msg.clone()));
+                    .and_then(|m| m.entries().get(m.at).map(|e| e.message.clone()));
                 return match picked {
                     Some(msg) => self.update(msg),
                     None => Task::none(),
@@ -3292,23 +3340,29 @@ impl App {
     /// the next key go".
     fn view_menu(menu: &RowMenu, focused: bool) -> Element<'_, Message> {
         let rows =
-            menu.entries().into_iter().enumerate().fold(
-                column![].spacing(0),
-                |col, (i, (label, message))| {
+            menu.entries()
+                .into_iter()
+                .enumerate()
+                .fold(column![].spacing(0), |col, (i, entry)| {
                     let on_cursor = menu.at == i;
                     let lit = on_cursor && focused;
                     // A chevron rather than an ellipsis, which is what a submenu
                     // looks like everywhere — and the one thing `…` could not say:
                     // `Add to playlist…` and `Rename…` are the same three dots,
                     // and one of them opens a panel *beside* the entry.
-                    let mut line = Row::new().align_y(iced::Alignment::Center).push(
-                        text(middle(&label, 24)).size(13).width(Length::Fill).style(
-                            move |theme: &iced::Theme| text::Style {
-                                color: Some(entry_text(theme, lit)),
-                            },
-                        ),
-                    );
-                    if matches!(message, Message::OpenPicker) {
+                    let mut line = Row::new()
+                        .spacing(8)
+                        .align_y(iced::Alignment::Center)
+                        .push(icon::line(entry.glyph, lit))
+                        .push(
+                            text(middle(&entry.label, 22))
+                                .size(13)
+                                .width(Length::Fill)
+                                .style(move |theme: &iced::Theme| text::Style {
+                                    color: Some(entry_text(theme, lit)),
+                                }),
+                        );
+                    if matches!(entry.message, Message::OpenPicker) {
                         line = line.push(icon::chevron(lit));
                     }
                     col.push(
@@ -3326,8 +3380,7 @@ impl App {
                         .on_press(Message::MenuAt(i))
                         .on_release(Message::MenuActivate),
                     )
-                },
-            );
+                });
         panel(
             column![
                 // Which track this is about. A menu opened by a right click can
@@ -3381,6 +3434,7 @@ impl App {
                 mouse_area(
                     container(
                         row![
+                            icon::line(choice.source.glyph(), on_cursor && focused),
                             text(choice.label.clone())
                                 .size(13)
                                 .width(Length::Fill)
@@ -5242,7 +5296,7 @@ mod cards {
 /// whatever the mouse was doing.
 #[cfg(all(test, feature = "demo"))]
 mod context {
-    use super::{Anchor, App, Focus, Message, Pane};
+    use super::{Anchor, App, Entry, Focus, Message, Pane};
 
     /// The demo's own boot, which is a seeded peer and nothing else — on a
     /// database of this test's own, because cargo runs them on threads and
@@ -5372,7 +5426,10 @@ mod context {
         // and `entries()` is where that is said, not an index written here.
         assert!(matches!(
             app.menu.as_ref().unwrap().entries().get(1),
-            Some((_, Message::OpenPicker))
+            Some(Entry {
+                message: Message::OpenPicker,
+                ..
+            })
         ));
         let _ = app.update(Message::MenuAt(1));
         let _ = app.update(Message::Tick);
