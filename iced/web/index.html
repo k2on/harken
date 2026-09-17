@@ -94,30 +94,32 @@
          grid are the same thing, and under a blur they read as an image
          coming into focus.
 
-         **It runs the whole length of the scale, and it has a floor.** This is
-         the part that took a second go. Made proportional to the travel still
-         to come it is exactly right for the first half and useless for the
-         end: measured at 1440×900 the blur tracked a tenth of how far the edge
-         of the canvas had left to move, all the way down — 6.3px at 63px to
-         go, 0.6px at 6px, 0.04px at 0.44px. The tail was crisp again, which is
-         where the trouble actually is.
+         **It runs the whole length of the scale, and it decays more slowly
+         than the scale does.** Two attempts either side of that are worth
+         keeping, because both were wrong in a way that looked principled.
 
-         The tail is not a *motion* problem, and that is why less easing and
-         more easing had both failed. Over the last six hundred milliseconds
-         the edge moves under two pixels, so nothing appears to move at all —
-         but the sample grid is still sliding across a list whose rows are one
-         pixel tall, and a one-pixel pattern resampled at 1.004 beats against
-         itself into broad bands that crawl. It reads as the screen shaking
-         while being demonstrably still. What kills a beat like that is a blur
-         of about half the pattern's period, and the period here is a row: it
-         is a floor, not a fraction, and no curve produces one.
+         Given a short curve of its own it was gone by 520ms and the remaining
+         880ms was a crisp bitmap being resampled — the tail crawls, which is
+         where the trouble actually is. Made *proportional* to the travel still
+         to come, by sharing the scale's own curve, it was exactly right early
+         and useless late: measured at 1440×900 it tracked a tenth of how far
+         the edge of the canvas had left to move, 6.3px at 63px to go and
+         0.04px at 0.44px. A tenth of nothing is nothing, so the tail came out
+         crisp again.
 
-         So the blur is a hand-placed list of stops run at `linear`: the first
-         five track the settle's own deceleration (they are the measurements
-         above), and the last hold **0.6px** — a shade over half a row — until
-         the motion has stopped, then clear. The softness is slight and the
-         list is legible through it; what it buys is that nothing crawls while
-         anything is still moving.
+         Then a **floor** — 0.6px held flat until the motion stopped and
+         cleared over the last 56ms — which fixed the crawl and introduced a
+         worse thing: the whole screen snapping into focus at the end. A
+         settle's one job is to arrive without a moment in it, and that was a
+         moment. Anything that *holds* has to stop holding somewhere.
+
+         So it glides. The stops are hand-placed and run at `linear`: the first
+         five track the settle's own deceleration, and from there it runs down
+         to nothing across the entire tail — 0.8px at 600ms, 0.5px at 840ms,
+         0.25px at 1120ms, gone at 1400ms. That is slower than the scale's own
+         decay, which is the point: there is still softness where the crawl is,
+         and it reaches zero at the instant the motion does, with no step in it
+         anywhere.
 
          **And it ends at `none`, not at `blur(0)`.** They look identical and
          are not: `blur(0)` keeps the element on the filter rasterization path,
@@ -131,8 +133,9 @@
         14%  { filter: blur(4.2px); }
         21%  { filter: blur(2.7px); }
         30%  { filter: blur(1.5px); }
-        43%  { filter: blur(0.6px); }
-        96%  { filter: blur(0.6px); }
+        43%  { filter: blur(0.8px); }
+        60%  { filter: blur(0.5px); }
+        80%  { filter: blur(0.25px); }
         100% { filter: none; }
       }
       /* **The canvas does not fade.** It did, opposite the splash, which
