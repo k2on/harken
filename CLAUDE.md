@@ -2688,15 +2688,22 @@ spends a second or three on a blank page before iced paints anything. It said
 `loading harken…` in the top-left corner, which is a status line for a
 developer. It shows the trumpet in the middle of the page now, and when the
 module is up the splash **dissolves into the app, which settles out of the
-screen from 1.2 to 1 over the same 1.4 seconds** — the way Linear opens and the way
-a Hyprland login does. A fade alone reads as a picture being turned up; the
-scale is what makes it an arrival.
+screen from 1.2 to 1 over the same 1.4 seconds**. A fade alone reads as a
+picture being turned up; the scale is what makes it an arrival.
+
+This was asked for as "like Linear, kinda how Hyprland does it on login", and
+those two names are worth keeping only as the shape that was wanted — nobody
+here has read either implementation, and every number below came from
+measuring this page rather than from copying one. **A comparison that arrives
+in a request is a description, not a citation**, and the commits that wrote
+"the way Linear opens" into this file as though it were a finding were wrong
+to; that is the sort of thing this file is read for later.
 
 Only a browser has this, for the same reason the media session and the device
 picker do: the desktop binary is already running when its window appears, so
 there is nothing to wait for and nothing to reveal.
 
-Eight things it needed:
+Twelve things it needed:
 
 - **The splash covers the canvas; the canvas does not start invisible.** Those
   look equivalent and fail differently. A module that never resolves leaves a
@@ -2756,18 +2763,39 @@ Eight things it needed:
 
   The fix turns the artifact into the point: the softness of a magnified
   bitmap and the shimmer of a moving sample grid are the same thing, and under
-  a blur they read as an image coming into focus, which is what an iOS
-  app-open and Linear's load both are. `blur(9px)` to 0 over 520ms on its own
-  shorter ease-out, so the long tail is crisp — at 520ms the scale is 1.020
-  and the filter is already gone. A blur still on screen at rest is just a
-  soft app.
+  a blur they read as an image coming into focus.
+
+  **The tail is a beat, not a motion, and that is why two goes at the easing
+  missed it.** The blur first ran 520ms on a shorter curve of its own, which
+  left 880ms of crisp bitmap; tying it to the scale's own curve made it a
+  fixed fraction of the travel still to come — measured at 1440×900, a tenth
+  of how far the edge of the canvas had left to move, 6.3px at 63px to go and
+  0.04px at 0.44px — and the tail came out crisp again, because a tenth of
+  nothing is nothing. Over the last six hundred milliseconds that edge moves
+  under two pixels, so nothing *appears* to move; what is happening is that a
+  sample grid is sliding across rows one pixel tall, and a one-pixel pattern
+  resampled at 1.004 beats against itself into broad bands that crawl. It
+  reads as the screen shaking while being demonstrably still.
+
+  What suppresses a beat is a blur of about half the pattern's period, and the
+  period is a row — so it is a **floor**, not a fraction, and no easing
+  produces one. The keyframes are a hand-placed list run at `linear`: five
+  stops tracking the settle's own deceleration, then **0.6px** held until the
+  motion has stopped, then cleared over the last 56ms against a scale that is
+  already 1. Slight softness while anything moves, nothing crawling, and no
+  blur at rest.
+
+  **And it ends at `filter: none`, not `blur(0)`.** `blur(0)` keeps the canvas
+  on the filter rasterization path, so dropping the class afterwards re-rasters
+  it in one frame — a crispness pop at the end of a settle whose whole job is
+  not to have one.
 
   **Its cost is not measured on real hardware.** Headless Chromium here is
-  SwiftShader, where a full-screen blur is far more expensive than on a GPU,
-  and it doubled the count of frames over 20ms (28 against 15) while leaving
-  the median at 16.7ms. That says nothing useful about a real machine. If the
-  reveal ever janks, this is the first thing to take out — delete `focus` from
-  the `animation` shorthand and the rest stands.
+  SwiftShader, where a full-screen blur is far more expensive than on a GPU:
+  over the whole reveal it takes frames longer than 20ms from 11 to 34, with
+  the median unmoved at 16.7ms. That says nothing useful about a real machine.
+  If the reveal ever janks, this is the first thing to take out — delete
+  `focus` from the `animation` shorthand and the rest stands.
 - **It starts two frames after the module resolves.** `init()` returns at the
   app's busiest moment — iced is opening the database, hydrating the view and
   decoding covers — and a settle that begins there is competing for the frames

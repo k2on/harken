@@ -68,11 +68,10 @@
         pointer-events: none;
       }
 
-      /* The app arrives the way Linear opens and a Hyprland login does: it
-         settles *out* of the screen rather than growing into it, from 1.2 to
-         1, while the splash dissolves through it over the same window and the
-         same curve. A fade alone reads as a picture being turned up; the
-         scale is what makes it an arrival.
+      /* The app settles *out* of the screen rather than growing into it, from
+         1.2 to 1, while the splash dissolves through it over the same window
+         and the same curve. A fade alone reads as a picture being turned up;
+         the scale is what makes it an arrival.
 
          **Out rather than in**, which is not only taste. Coming *from* below 1
          means the page's own ground is visible around the canvas for the whole
@@ -81,7 +80,7 @@
          throughout and the only thing on screen is the app. */
       canvas.arriving {
         animation: arrive var(--reveal) var(--ease) both,
-                   focus 520ms ease-out both;
+                   focus var(--reveal) linear both;
         will-change: transform, filter;
       }
       /* **The blur is what stops it shimmering, and the shimmer was not the
@@ -90,18 +89,51 @@
          resampling on a grid that slides every frame — which on a screen made
          of one-pixel zebra rows and text antialiasing is a fizz of pixels
          crawling about. No easing fixes that; it is the resample, not the
-         motion.
+         motion. A blur that resolves turns the artifact into the point: the
+         softness of a magnified bitmap and the shimmer of a moving sample
+         grid are the same thing, and under a blur they read as an image
+         coming into focus.
 
-         A blur that resolves turns the artifact into the point. The softness
-         of a magnified bitmap and the shimmer of a moving sample grid are the
-         same thing, and under a blur they read as an image coming into focus
-         — which is what an iOS app-open and Linear's load both are. It clears
-         over the first 520ms, on its own shorter curve, so the long tail of
-         the settle is crisp: a blur still on screen at rest would just be a
-         soft app. */
+         **It runs the whole length of the scale, and it has a floor.** This is
+         the part that took a second go. Made proportional to the travel still
+         to come it is exactly right for the first half and useless for the
+         end: measured at 1440×900 the blur tracked a tenth of how far the edge
+         of the canvas had left to move, all the way down — 6.3px at 63px to
+         go, 0.6px at 6px, 0.04px at 0.44px. The tail was crisp again, which is
+         where the trouble actually is.
+
+         The tail is not a *motion* problem, and that is why less easing and
+         more easing had both failed. Over the last six hundred milliseconds
+         the edge moves under two pixels, so nothing appears to move at all —
+         but the sample grid is still sliding across a list whose rows are one
+         pixel tall, and a one-pixel pattern resampled at 1.004 beats against
+         itself into broad bands that crawl. It reads as the screen shaking
+         while being demonstrably still. What kills a beat like that is a blur
+         of about half the pattern's period, and the period here is a row: it
+         is a floor, not a fraction, and no curve produces one.
+
+         So the blur is a hand-placed list of stops run at `linear`: the first
+         five track the settle's own deceleration (they are the measurements
+         above), and the last hold **0.6px** — a shade over half a row — until
+         the motion has stopped, then clear. The softness is slight and the
+         list is legible through it; what it buys is that nothing crawls while
+         anything is still moving.
+
+         **And it ends at `none`, not at `blur(0)`.** They look identical and
+         are not: `blur(0)` keeps the element on the filter rasterization path,
+         so dropping the class afterwards changes how the canvas is rastered in
+         one frame — a crispness pop at the end of a settle whose whole job is
+         to not have one. Interpolating to `none` lands on the resting value,
+         so removing the class is a no-op. */
       @keyframes focus {
-        from { filter: blur(9px); }
-        to   { filter: blur(0); }
+        0%   { filter: blur(9px); }
+        7%   { filter: blur(6.3px); }
+        14%  { filter: blur(4.2px); }
+        21%  { filter: blur(2.7px); }
+        30%  { filter: blur(1.5px); }
+        43%  { filter: blur(0.6px); }
+        96%  { filter: blur(0.6px); }
+        100% { filter: none; }
       }
       /* **The canvas does not fade.** It did, opposite the splash, which
          sounds like a cross-dissolve and is not one: two half-transparent
