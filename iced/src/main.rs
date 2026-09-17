@@ -5328,6 +5328,67 @@ mod demo_works {
         );
     }
 
+    /// **A compilation is a release too, and a work can be one track long.**
+    ///
+    /// `CONCERTOS` is the one album here nobody published: six Vivaldi
+    /// concertos gathered under one name because that is what the demo has
+    /// left of him. It says two things no other record does.
+    ///
+    /// A release may carry recordings by *different* performers — the Four
+    /// Seasons cannot show that, because one orchestra played all twelve
+    /// movements, and the Brandenburgs only show it by accident of being
+    /// incomplete. Here it is the ordinary case a compilation is.
+    ///
+    /// And `RV 425` arrived as a single file, so the work is one track long
+    /// and has no movement to name: `part` is empty, which is the shape a pop
+    /// single already has, reached from the other end. The album page draws it
+    /// as a row rather than as a section of one.
+    ///
+    /// Falsify the first by moving `RV 425` to the Modena orchestra — the set
+    /// of performers drops to one. Falsify the second by splitting its file
+    /// over three rows — `tracks` goes to three, and the row count goes to 18.
+    #[test]
+    fn a_compilation_carries_six_works_and_two_performers() {
+        let mut peer = fresh("concertos");
+        let playlist = peer.playlist;
+        let store = &mut peer.client.store();
+
+        let record = harken::album(store, playlist, "Concertos".into()).unwrap();
+        assert_eq!(record.len(), 16, "sixteen tracks over six concertos");
+
+        let works = harken::works(store, "Antonio Vivaldi".into()).unwrap();
+        let on_it: Vec<&harken::Work> =
+            ["RV 425", "RV 498", "RV 532", "RV 536", "RV 558", "RV 580"]
+                .iter()
+                .map(|cat| {
+                    works
+                        .iter()
+                        .find(|w| w.catalogue == *cat)
+                        .unwrap_or_else(|| panic!("{cat} is a work of this library"))
+                })
+                .collect();
+
+        // One file, so one track — and no `part`, so nothing to fold it under.
+        assert_eq!(on_it[0].tracks, 1, "RV 425 arrived whole, in one file");
+        for w in &on_it[1..] {
+            assert_eq!(w.tracks, 3, "{} is three movements", w.catalogue);
+        }
+
+        let mut who = std::collections::BTreeSet::new();
+        for w in &on_it {
+            let takes = harken::recordings(store, w.id.clone()).unwrap();
+            assert_eq!(takes.len(), 1, "one performance of {}", w.catalogue);
+            who.insert(takes[0].performers.clone());
+        }
+        assert_eq!(
+            who,
+            ["The Milan Baroque Soloists", "The Modena Chamber Orchestra"]
+                .map(str::to_owned)
+                .into(),
+            "two sets of players on one release"
+        );
+    }
+
     /// **Nobody is called `(CC BY-SA 3.0)`.**
     ///
     /// The wart stage one left standing: the seed wrote `"{performer}

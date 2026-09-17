@@ -2171,6 +2171,24 @@ Seasons on Commons under a mark that reserves nothing — so unlike the
 Brandenburgs there is no `licence` to draw and the performer column carries a
 performer and nothing else.
 
+**And a compilation is a release too.** `CONCERTOS` is the rest of the Vivaldi
+this demo could take — the bassoon concerto, the two mandolins, the two oboes,
+`RV 558` for many instruments, Op. 3 No. 10, and a mandolin concerto by another
+set of players — gathered under one name because nobody published them
+together. Two things it is the only record here to say. A release may carry
+recordings by *different performers* as the ordinary case rather than by
+accident of being incomplete, the way the Brandenburgs do. And **a work can be
+one track long**: `RV 425` arrived as a single file, so it has no movement to
+name and its `part` is empty — the shape a pop single already has, reached from
+the other end, and the album page draws it as a row rather than a section of
+one. `a_compilation_carries_six_works_and_two_performers` holds both.
+
+Felix Janda's L'estro armonico Nos. 1–6 were left out for the reason the
+Brandenburg fragments were: `RV 578` is fifty-four seconds of a ten-minute
+concerto and nothing on the file page says which fifty-four. Having part of a
+piece is not having the piece — the same rule that keeps the second Goldbergs
+out, one level down.
+
 **Pop is not a second case, and that is the point.** The industry already has
 both layers — an ISWC identifies a work and an ISRC a recording — and pop hides
 them because its works have one movement and nobody quotes their catalogue

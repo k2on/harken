@@ -2680,6 +2680,237 @@ pub const FOUR_SEASONS: &[Seed] = &[
     },
 ];
 
+/// Vivaldi's other concertos — six works, two sets of players, one compilation.
+///
+/// Unlike every other album here, this one is not a record: it is what the
+/// demo has left of Vivaldi once [`FOUR_SEASONS`] is out, gathered under one
+/// name. That is an honest kind of album — a compilation is a release like any
+/// other — and it says two things the rest of the library does not:
+///
+/// - **A release can carry works nobody grouped.** The Four Seasons are four
+///   concertos that were *published* as a set; these six were not, and the
+///   album page folds them into six sections all the same, because the
+///   sections come from the works and not from anybody's intent.
+/// - **A track can be a whole work.** `RV 425` arrives as one file, so it has
+///   no movement to name and its `part` is empty — the shape a pop single
+///   already has, reached here from the other end.
+///
+/// All of it reserves no rights, so nothing carries a `licence`. Felix Janda's
+/// L'estro armonico Nos. 1–6 were left out for the reason the Brandenburg
+/// fragments were: `RV 578` is fifty-four seconds of a ten-minute concerto,
+/// and nothing on the file page says which fifty-four. Having part of a piece
+/// is not having the piece.
+pub const CONCERTOS: &[Seed] = &[
+    Seed {
+        title: "I. Allegro (ma molto moderato)",
+        composer: "Antonio Vivaldi",
+        album: "Concertos",
+        part: "Bassoon Concerto in A minor, RV 498",
+        track: 1,
+        catalogue: "RV 498",
+        performer: "The Modena Chamber Orchestra",
+        licence: "",
+        bpm: 100,
+        ms: 275724,
+        file: "https://upload.wikimedia.org/wikipedia/commons/transcoded/2/26/The_Modena_Chamber_Orchestra_-_Vivaldi%27s_Bassoon_Concerto_in_A_minor%2C_RV_498_-_I._Allegro_%28ma_molto_moderato%29.ogg/The_Modena_Chamber_Orchestra_-_Vivaldi%27s_Bassoon_Concerto_in_A_minor%2C_RV_498_-_I._Allegro_%28ma_molto_moderato%29.ogg.mp3",
+    },
+    Seed {
+        title: "II. Larghetto",
+        composer: "Antonio Vivaldi",
+        album: "Concertos",
+        part: "Bassoon Concerto in A minor, RV 498",
+        track: 2,
+        catalogue: "RV 498",
+        performer: "The Modena Chamber Orchestra",
+        licence: "",
+        bpm: 63,
+        ms: 231624,
+        file: "https://upload.wikimedia.org/wikipedia/commons/transcoded/a/a7/The_Modena_Chamber_Orchestra_-_Vivaldi%27s_Bassoon_Concerto_in_A_minor%2C_RV_498_-_II._Larghetto.ogg/The_Modena_Chamber_Orchestra_-_Vivaldi%27s_Bassoon_Concerto_in_A_minor%2C_RV_498_-_II._Larghetto.ogg.mp3",
+    },
+    Seed {
+        title: "III. Allegro",
+        composer: "Antonio Vivaldi",
+        album: "Concertos",
+        part: "Bassoon Concerto in A minor, RV 498",
+        track: 3,
+        catalogue: "RV 498",
+        performer: "The Modena Chamber Orchestra",
+        licence: "",
+        bpm: 138,
+        ms: 187524,
+        file: "https://upload.wikimedia.org/wikipedia/commons/transcoded/a/a2/The_Modena_Chamber_Orchestra_-_Vivaldi%27s_Bassoon_Concerto_in_A_minor%2C_RV_498_-_III._Allegro.ogg/The_Modena_Chamber_Orchestra_-_Vivaldi%27s_Bassoon_Concerto_in_A_minor%2C_RV_498_-_III._Allegro.ogg.mp3",
+    },
+    Seed {
+        title: "I. Allegro",
+        composer: "Antonio Vivaldi",
+        album: "Concertos",
+        part: "Concerto for 2 Mandolins in G major, RV 532",
+        track: 4,
+        catalogue: "RV 532",
+        performer: "The Modena Chamber Orchestra",
+        licence: "",
+        bpm: 138,
+        ms: 302558,
+        file: "https://upload.wikimedia.org/wikipedia/commons/transcoded/c/c7/The_Modena_Chamber_Orchestra_-_Vivaldi%27s_Concerto_for_2_Mandolins_in_G_major%2C_RV_532_-_I._Allegro.ogg/The_Modena_Chamber_Orchestra_-_Vivaldi%27s_Concerto_for_2_Mandolins_in_G_major%2C_RV_532_-_I._Allegro.ogg.mp3",
+    },
+    Seed {
+        title: "II. Andante",
+        composer: "Antonio Vivaldi",
+        album: "Concertos",
+        part: "Concerto for 2 Mandolins in G major, RV 532",
+        track: 5,
+        catalogue: "RV 532",
+        performer: "The Modena Chamber Orchestra",
+        licence: "",
+        bpm: 92,
+        ms: 183239,
+        file: "https://upload.wikimedia.org/wikipedia/commons/transcoded/b/b3/The_Modena_Chamber_Orchestra_-_Vivaldi%27s_Concerto_for_2_Mandolins_in_G_major%2C_RV_532_-_II._Andante.ogg/The_Modena_Chamber_Orchestra_-_Vivaldi%27s_Concerto_for_2_Mandolins_in_G_major%2C_RV_532_-_II._Andante.ogg.mp3",
+    },
+    Seed {
+        title: "III. Allegro",
+        composer: "Antonio Vivaldi",
+        album: "Concertos",
+        part: "Concerto for 2 Mandolins in G major, RV 532",
+        track: 6,
+        catalogue: "RV 532",
+        performer: "The Modena Chamber Orchestra",
+        licence: "",
+        bpm: 138,
+        ms: 260370,
+        file: "https://upload.wikimedia.org/wikipedia/commons/transcoded/8/8c/The_Modena_Chamber_Orchestra_-_Vivaldi%27s_Concerto_for_2_Mandolins_in_G_major%2C_RV_532_-_III._Allegro.ogg/The_Modena_Chamber_Orchestra_-_Vivaldi%27s_Concerto_for_2_Mandolins_in_G_major%2C_RV_532_-_III._Allegro.ogg.mp3",
+    },
+    Seed {
+        title: "I. Allegro",
+        composer: "Antonio Vivaldi",
+        album: "Concertos",
+        part: "Concerto for 2 Oboes in A minor, RV 536",
+        track: 7,
+        catalogue: "RV 536",
+        performer: "The Modena Chamber Orchestra",
+        licence: "",
+        bpm: 138,
+        ms: 157961,
+        file: "https://upload.wikimedia.org/wikipedia/commons/transcoded/6/6e/The_Modena_Chamber_Orchestra_-_Vivaldi%27s_Concerto_for_2_Oboes_in_A_minor%2C_RV_536_-_I._Allegro.ogg/The_Modena_Chamber_Orchestra_-_Vivaldi%27s_Concerto_for_2_Oboes_in_A_minor%2C_RV_536_-_I._Allegro.ogg.mp3",
+    },
+    Seed {
+        title: "II. Largo",
+        composer: "Antonio Vivaldi",
+        album: "Concertos",
+        part: "Concerto for 2 Oboes in A minor, RV 536",
+        track: 8,
+        catalogue: "RV 536",
+        performer: "The Modena Chamber Orchestra",
+        licence: "",
+        bpm: 50,
+        ms: 132469,
+        file: "https://upload.wikimedia.org/wikipedia/commons/transcoded/0/0a/The_Modena_Chamber_Orchestra_-_Vivaldi%27s_Concerto_for_2_Oboes_in_A_minor%2C_RV_536_-_II._Largo.ogg/The_Modena_Chamber_Orchestra_-_Vivaldi%27s_Concerto_for_2_Oboes_in_A_minor%2C_RV_536_-_II._Largo.ogg.mp3",
+    },
+    Seed {
+        title: "III. Allegro",
+        composer: "Antonio Vivaldi",
+        album: "Concertos",
+        part: "Concerto for 2 Oboes in A minor, RV 536",
+        track: 9,
+        catalogue: "RV 536",
+        performer: "The Modena Chamber Orchestra",
+        licence: "",
+        bpm: 138,
+        ms: 107887,
+        file: "https://upload.wikimedia.org/wikipedia/commons/transcoded/c/c0/The_Modena_Chamber_Orchestra_-_Vivaldi%27s_Concerto_for_2_Oboes_in_A_minor%2C_RV_536_-_III._Allegro.ogg/The_Modena_Chamber_Orchestra_-_Vivaldi%27s_Concerto_for_2_Oboes_in_A_minor%2C_RV_536_-_III._Allegro.ogg.mp3",
+    },
+    Seed {
+        title: "I. Allegro molto",
+        composer: "Antonio Vivaldi",
+        album: "Concertos",
+        part: "Concerto in C major, RV 558",
+        track: 10,
+        catalogue: "RV 558",
+        performer: "The Modena Chamber Orchestra",
+        licence: "",
+        bpm: 152,
+        ms: 334207,
+        file: "https://upload.wikimedia.org/wikipedia/commons/transcoded/b/b5/The_Modena_Chamber_Orchestra_-_Vivaldi%27s_Concerto_in_C_major%2C_RV_558_-_I._Allegro_molto.ogg/The_Modena_Chamber_Orchestra_-_Vivaldi%27s_Concerto_in_C_major%2C_RV_558_-_I._Allegro_molto.ogg.mp3",
+    },
+    Seed {
+        title: "II. Andante molto",
+        composer: "Antonio Vivaldi",
+        album: "Concertos",
+        part: "Concerto in C major, RV 558",
+        track: 11,
+        catalogue: "RV 558",
+        performer: "The Modena Chamber Orchestra",
+        licence: "",
+        bpm: 84,
+        ms: 178429,
+        file: "https://upload.wikimedia.org/wikipedia/commons/transcoded/0/03/The_Modena_Chamber_Orchestra_-_Vivaldi%27s_Concerto_in_C_major%2C_RV_558_-_II._Andante_molto.ogg/The_Modena_Chamber_Orchestra_-_Vivaldi%27s_Concerto_in_C_major%2C_RV_558_-_II._Andante_molto.ogg.mp3",
+    },
+    Seed {
+        title: "III. Allegro",
+        composer: "Antonio Vivaldi",
+        album: "Concertos",
+        part: "Concerto in C major, RV 558",
+        track: 12,
+        catalogue: "RV 558",
+        performer: "The Modena Chamber Orchestra",
+        licence: "",
+        bpm: 138,
+        ms: 182801,
+        file: "https://upload.wikimedia.org/wikipedia/commons/transcoded/1/10/The_Modena_Chamber_Orchestra_-_Vivaldi%27s_Concerto_in_C_major%2C_RV_558_-_III._Allegro.ogg/The_Modena_Chamber_Orchestra_-_Vivaldi%27s_Concerto_in_C_major%2C_RV_558_-_III._Allegro.ogg.mp3",
+    },
+    Seed {
+        title: "I. Allegro",
+        composer: "Antonio Vivaldi",
+        album: "Concertos",
+        part: "L'estro armonico, Concerto No. 10 in B minor, RV 580",
+        track: 13,
+        catalogue: "RV 580",
+        performer: "The Modena Chamber Orchestra",
+        licence: "",
+        bpm: 138,
+        ms: 251965,
+        file: "https://upload.wikimedia.org/wikipedia/commons/transcoded/6/64/The_Modena_Chamber_Orchestra_-_Vivaldi%27s_L%27estro_armonico%2C_Concerto_No._10%2C_RV_580_-_I._Allegro.ogg/The_Modena_Chamber_Orchestra_-_Vivaldi%27s_L%27estro_armonico%2C_Concerto_No._10%2C_RV_580_-_I._Allegro.ogg.mp3",
+    },
+    Seed {
+        title: "II. Largo-Larghetto",
+        composer: "Antonio Vivaldi",
+        album: "Concertos",
+        part: "L'estro armonico, Concerto No. 10 in B minor, RV 580",
+        track: 14,
+        catalogue: "RV 580",
+        performer: "The Modena Chamber Orchestra",
+        licence: "",
+        bpm: 50,
+        ms: 199613,
+        file: "https://upload.wikimedia.org/wikipedia/commons/transcoded/5/5c/The_Modena_Chamber_Orchestra_-_Vivaldi%27s_L%27estro_armonico%2C_Concerto_No._10%2C_RV_580_-_II._Largo-Larghetto.ogg/The_Modena_Chamber_Orchestra_-_Vivaldi%27s_L%27estro_armonico%2C_Concerto_No._10%2C_RV_580_-_II._Largo-Larghetto.ogg.mp3",
+    },
+    Seed {
+        title: "III. Allegro",
+        composer: "Antonio Vivaldi",
+        album: "Concertos",
+        part: "L'estro armonico, Concerto No. 10 in B minor, RV 580",
+        track: 15,
+        catalogue: "RV 580",
+        performer: "The Modena Chamber Orchestra",
+        licence: "",
+        bpm: 138,
+        ms: 207523,
+        file: "https://upload.wikimedia.org/wikipedia/commons/transcoded/0/04/The_Modena_Chamber_Orchestra_-_Vivaldi%27s_L%27estro_armonico%2C_Concerto_No._10%2C_RV_580_-_III._Allegro.ogg/The_Modena_Chamber_Orchestra_-_Vivaldi%27s_L%27estro_armonico%2C_Concerto_No._10%2C_RV_580_-_III._Allegro.ogg.mp3",
+    },
+    Seed {
+        title: "Mandolin Concerto in C major",
+        composer: "Antonio Vivaldi",
+        album: "Concertos",
+        part: "",
+        track: 16,
+        catalogue: "RV 425",
+        performer: "The Milan Baroque Soloists",
+        licence: "",
+        bpm: 0,
+        ms: 499931,
+        file: "https://upload.wikimedia.org/wikipedia/commons/transcoded/6/60/Antonio_Vivaldi%2C_Mandolin_Concerto_in_C_major%2C_RV_425.ogg/Antonio_Vivaldi%2C_Mandolin_Concerto_in_C_major%2C_RV_425.ogg.mp3",
+    },
+];
+
 /// One picture, for an album or for a person.
 pub struct Art {
     /// `"album"` or `"artist"` — which of the two lists `name` is a name in,
@@ -2836,7 +3067,7 @@ pub struct WorkSeed {
     pub composed: i64,
 }
 
-/// The forty-seven works this library holds something of.
+/// The fifty-three works this library holds something of.
 pub const WORKS: &[WorkSeed] = &[
     // Vivaldi. Four works on one record, which is what `The Four Seasons`
     // makes visible: each concerto has its own number, its own key and its own
@@ -2872,6 +3103,57 @@ pub const WORKS: &[WorkSeed] = &[
         period: "Baroque",
         key_sig: "F Minor",
         composed: 1725,
+    },
+    // …and six more on a compilation, which is where a work that nobody
+    // published in a set ends up. `RV 425` is one track long, so the album
+    // page draws it as a row rather than a section.
+    WorkSeed {
+        catalogue: "RV 425",
+        title: "Mandolin Concerto in C Major",
+        form: "Concerto",
+        period: "Baroque",
+        key_sig: "C Major",
+        composed: 0,
+    },
+    WorkSeed {
+        catalogue: "RV 498",
+        title: "Bassoon Concerto in A Minor",
+        form: "Concerto",
+        period: "Baroque",
+        key_sig: "A Minor",
+        composed: 0,
+    },
+    WorkSeed {
+        catalogue: "RV 532",
+        title: "Concerto for Two Mandolins in G Major",
+        form: "Concerto",
+        period: "Baroque",
+        key_sig: "G Major",
+        composed: 0,
+    },
+    WorkSeed {
+        catalogue: "RV 536",
+        title: "Concerto for Two Oboes in A Minor",
+        form: "Concerto",
+        period: "Baroque",
+        key_sig: "A Minor",
+        composed: 0,
+    },
+    WorkSeed {
+        catalogue: "RV 558",
+        title: "Concerto in C Major for Many Instruments",
+        form: "Concerto",
+        period: "Baroque",
+        key_sig: "C Major",
+        composed: 1740,
+    },
+    WorkSeed {
+        catalogue: "RV 580",
+        title: "L'estro armonico, Concerto No. 10 in B Minor",
+        form: "Concerto",
+        period: "Baroque",
+        key_sig: "B Minor",
+        composed: 1711,
     },
     // Bach
     WorkSeed {
@@ -3296,6 +3578,13 @@ pub const CREDITS: &[CreditSeed] = &[
         pos: 1,
     },
     CreditSeed {
+        performer: "The Milan Baroque Soloists",
+        name: "The Milan Baroque Soloists",
+        role: "ensemble",
+        instrument: "",
+        pos: 1,
+    },
+    CreditSeed {
         performer: "The Modena Chamber Orchestra",
         name: "The Modena Chamber Orchestra",
         role: "orchestra",
@@ -3458,6 +3747,7 @@ pub fn seed(peer: &mut Peer) {
         .chain(FIREWORKS)
         .chain(MESSIAH)
         .chain(FOUR_SEASONS)
+        .chain(CONCERTOS)
     {
         // The work's own name where this library knows one, and the record's
         // where it does not. That difference is the whole of stage two on
