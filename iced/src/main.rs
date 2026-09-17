@@ -912,13 +912,14 @@ fn row_style(theme: &iced::Theme, on_cursor: bool, focused: bool, odd: bool) -> 
 /// bug and plain enough to see when the two are beside each other.
 const PANEL_RADIUS: f32 = 6.0;
 const PANEL_BORDER: f32 = 1.0;
-/// The gap above the first row and below the last — and **only** there.
+/// The gap between a panel's border and the rows inside it, on all four sides.
 ///
-/// It was on all four sides, which inset every highlight from the panel's own
-/// edges by four pixels: a row lit at the left but stopping short of the
-/// border, with a stripe of unlit panel down each side. A menu's highlight
-/// spans its menu. Vertically it still earns its keep, because a square-ish
-/// row flush against a 6px rounded corner reads as a row poking out of one.
+/// It is what *contains* the highlight: a lit row is a rounded rectangle
+/// floating inside the panel rather than a stripe painted onto its edge, which
+/// is what a menu looks like everywhere and what the 6px corner is for.
+///
+/// It is also the number `SUBMENU_OVERLAP` is, and that is not a coincidence —
+/// see there.
 const PANEL_PADDING: f32 = 4.0;
 const ENTRY_RADIUS: f32 = 4.0;
 /// How tall one row in a panel is, and how far in its glyph starts.
@@ -944,7 +945,7 @@ const ENTRY_GAP: f32 = 8.0;
 const ENTRY_CHAR: f32 = 7.0;
 /// Everything in a panel row that is not the label: the panel's padding either
 /// side, the row's, the glyph column and the gap after it.
-const ENTRY_CHROME: f32 = ENTRY_PAD_X * 2.0 + icon::TRANSPORT + ENTRY_GAP;
+const ENTRY_CHROME: f32 = PANEL_PADDING * 2.0 + ENTRY_PAD_X * 2.0 + icon::TRANSPORT + ENTRY_GAP;
 
 /// The chrome all three context windows share: the ground, the border, the
 /// corner and the padding.
@@ -958,9 +959,7 @@ fn panel<'a>(
 ) -> container::Container<'a, Message> {
     container(body)
         .width(Length::Fixed(width))
-        // Top and bottom only: a row's fill is the panel's full width, and
-        // the words inside it are inset by `ENTRY_PAD_X` instead.
-        .padding([PANEL_PADDING as u16, 0])
+        .padding(PANEL_PADDING)
         .style(|theme: &iced::Theme| {
             let palette = palette::of(theme);
             container::Style {
@@ -1976,22 +1975,24 @@ impl App {
     /// simply not be there. It is the same shape as the flip bug below: the
     /// placement believing a height the panel does not have.
     const SUBMENU_CHROME: f32 = PANEL_PADDING * 2.0;
-    /// How far a submenu laps over the menu it hangs off: their two borders,
-    /// and not one pixel more.
+    /// How far a submenu laps over the menu it hangs off: **exactly the
+    /// parent's own padding, so the lit row inside it touches the submenu's
+    /// edge.**
     ///
-    /// It was `PANEL_PADDING * 2`, on the reasoning that the padding was dead
-    /// space either side and the *entries* would meet edge to edge. There is no
-    /// dead space any more — a row's fill is the panel's full width now — so
-    /// that same eight pixels became eight pixels of this panel drawn over a
-    /// lit row of a menu that is still up, which is what "overlaps too much"
-    /// looks like.
+    /// That is the whole rule, and it is the one thing to look at on screen.
+    /// A menu's highlight is a rounded rectangle inset by `PANEL_PADDING`, so
+    /// its right-hand edge is `MENU_WIDTH - PANEL_PADDING` across — and a
+    /// submenu placed there meets it. The two panels overlap, because a
+    /// submenu that merely abuts its parent reads as a second panel; what they
+    /// overlap is the strip of empty panel beside the highlight, which is the
+    /// only part of a menu there is nothing to cover.
     ///
-    /// What is left to overlap is the chrome: each panel draws a
-    /// `PANEL_BORDER`, and laying one on the other is one line where two would
-    /// be. That is the difference between two panels that abut and one panel
-    /// that came out of another, and it is the most that can be taken without
-    /// covering something somebody can read.
-    const SUBMENU_OVERLAP: f32 = PANEL_BORDER * 2.0;
+    /// It was `PANEL_PADDING * 2` for a while, which is a panel's padding
+    /// *twice* — one panel's worth too far, so the submenu's border landed
+    /// four pixels inside the parent's lit row and clipped the corner off it.
+    /// The tell is exactly that: the highlight ends under the submenu instead
+    /// of at it.
+    const SUBMENU_OVERLAP: f32 = PANEL_PADDING;
     /// A margin, so a panel that only just fits does not sit flush against
     /// the glass.
     const EDGE: f32 = 8.0;
@@ -6151,25 +6152,40 @@ mod context {
             // *panels*, because a row's fill is now the panel's full width and
             // there is no padding either side to spend.
             //
-            // **Two pixels, written as a number and not as `SUBMENU_OVERLAP`.**
-            // Against the constant this holds nothing: both sides of the
-            // comparison move together, so setting the overlap to eight or to
-            // zero passes. That is the third time this shape has been caught
-            // here — see `SUBMENU_DWELL` and `a_menu_never_hangs_off_the_glass`
-            // — and it is the same lesson every time: *a test written in terms
-            // of the thing it is holding shrinks with it.*
-            //
-            // One number rather than "they do not cross" and "they do touch",
-            // too. Those were two assertions in terms of `PANEL_PADDING`, and
-            // both went on passing when that padding left the sides — a test
-            // still measuring a constant it had stopped depending on.
+            // The thing you can see: **the menu's lit row touches the
+            // submenu's edge.** A highlight is inset by `PANEL_PADDING`, so
+            // its right-hand edge is `MENU_WIDTH - PANEL_PADDING` across, and
+            // that is where the submenu starts — or, opening leftward, its
+            // last pixel is where the highlight's left edge is.
             if width >= 600 {
+                let lit = match at.x > menu.origin.x {
+                    true => menu.origin.x + App::MENU_WIDTH - PANEL_PADDING,
+                    false => menu.origin.x + PANEL_PADDING,
+                };
+                let edge = match at.x > menu.origin.x {
+                    true => at.x,
+                    false => at.x + wide,
+                };
+                assert_eq!(
+                    edge, lit,
+                    "at {width}px the submenu's edge {edge} does not meet the \
+                     menu's highlight at {lit}"
+                );
+
+                // …and the same fact as a number, **written as a literal and
+                // not as `SUBMENU_OVERLAP`.** Against the constant this holds
+                // nothing — both sides move together, so setting the overlap
+                // to eight or to zero passes, which is exactly what happened
+                // and was only found by falsifying it. Third time this shape
+                // has been caught here; see `SUBMENU_DWELL` and
+                // `a_menu_never_hangs_off_the_glass`. *A test written in terms
+                // of the thing it is holding shrinks with it.*
                 let lap = match at.x > menu.origin.x {
                     true => menu.origin.x + App::MENU_WIDTH - at.x,
                     false => at.x + wide - menu.origin.x,
                 };
                 assert_eq!(
-                    lap, 2.0,
+                    lap, 4.0,
                     "at {width}px the submenu at {} laps the menu at {} by {lap}",
                     at.x, menu.origin.x
                 );
