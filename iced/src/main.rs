@@ -946,6 +946,23 @@ const ENTRY_CHAR: f32 = 7.0;
 /// Everything in a panel row that is not the label: the panel's padding either
 /// side, the row's, the glyph column and the gap after it.
 const ENTRY_CHROME: f32 = PANEL_PADDING * 2.0 + ENTRY_PAD_X * 2.0 + icon::TRANSPORT + ENTRY_GAP;
+/// How much of the end of a row the fade covers, for a label too long for it.
+///
+/// Wide enough to read as a fade rather than as a soft edge — under about
+/// twenty it looks like a rendering fault — and narrow enough that it is the
+/// tail of a word going and not a third of the row.
+const ENTRY_FADE: f32 = 28.0;
+
+/// The ground all three context windows are painted on.
+///
+/// Its own function because the fade at the end of a long label has to run to
+/// it, and a fade that ran to a colour the panel had since stopped using would
+/// be a band of the wrong grey down the right of every row — visible, and not
+/// obviously *this* function's fault. `entry_ground` reads it rather than
+/// naming `background.weak` a second time.
+fn panel_ground(theme: &iced::Theme) -> iced::Color {
+    palette::of(theme).background.weak.color
+}
 
 /// The chrome all three context windows share: the ground, the border, the
 /// corner and the padding.
@@ -963,7 +980,7 @@ fn panel<'a>(
         .style(|theme: &iced::Theme| {
             let palette = palette::of(theme);
             container::Style {
-                background: Some(iced::Background::Color(palette.background.weak.color)),
+                background: Some(iced::Background::Color(panel_ground(theme))),
                 border: iced::Border {
                     color: palette.background.strong.color,
                     width: PANEL_BORDER,
@@ -1028,18 +1045,105 @@ fn panel_entry<'a>(
 /// out, the same rule `row_style` has and for the same reason: the row is
 /// still the one the panel is about.
 fn entry_fill(theme: &iced::Theme, on_cursor: bool, focused: bool) -> container::Style {
-    let palette = palette::of(theme);
     container::Style {
-        background: on_cursor.then_some(iced::Background::Color(match focused {
-            true => palette.primary.base.color,
-            false => palette.background.strong.color,
-        })),
+        background: on_cursor
+            .then_some(iced::Background::Color(entry_ground(theme, true, focused))),
         border: iced::Border {
             radius: ENTRY_RADIUS.into(),
             ..iced::Border::default()
         },
         ..container::Style::default()
     }
+}
+
+/// What is actually *behind* one of those rows.
+///
+/// One answer, because two things need it and a disagreement between them is
+/// visible: `entry_fill` paints it, and the fade at the end of a label too
+/// long for its row has to run **to** it. A fade that ran to the panel's grey
+/// while the row under it was filled with the accent would be a smear across
+/// the one row you were looking at — which is the same mistake as writing a
+/// colour down, one step removed.
+fn entry_ground(theme: &iced::Theme, on_cursor: bool, focused: bool) -> iced::Color {
+    let palette = palette::of(theme);
+    match (on_cursor, focused) {
+        // Not on the cursor is not "no colour": the row draws no background of
+        // its own, so what is behind it is the panel's own ground.
+        (false, _) => panel_ground(theme),
+        (true, true) => palette.primary.base.color,
+        (true, false) => palette.background.strong.color,
+    }
+}
+
+/// A label that is one line, and runs off the end of its row into a fade
+/// rather than an ellipsis.
+///
+/// **`middle` is the wrong tool for a verb.** It takes the centre out, which
+/// is right for a track — `Prelude No. 14 in F-sharp minor, BWV 859` is told
+/// from its twenty-three siblings by the tail — and wrong for a menu entry,
+/// where the head is the whole sentence: `Go to Goldb…s, BWV 988` spends its
+/// budget on `Go to` and an ellipsis. And a count of characters is an estimate
+/// against `ENTRY_CHAR`, so a string that came out a shade too wide *wrapped*,
+/// and a fixed-height row with two lines in it drew one of them over its
+/// neighbour.
+///
+/// So the renderer decides where it ends instead of arithmetic. Two things
+/// make that work, and neither is optional:
+///
+/// * **`Wrapping::None` does not clip.** It draws the whole string at full
+///   length, over whatever is beside it — which is what `PER_PORTION` and
+///   `middle` are for everywhere else in this file. The clipping is the
+///   container's, with `clip(true)`.
+/// * **A hard clip through the middle of a glyph reads as a bug.** The fade is
+///   what makes it a decision: the row's own ground, painted over the last
+///   `ENTRY_FADE` pixels, from the same colour at zero alpha to opaque.
+///
+/// It is drawn whether or not the label is long enough to need it, because
+/// painting a row's ground over its own ground is not visible — the gradient
+/// resolves to exactly what is already there.
+fn fading_label<'a>(
+    body: String,
+    lit: bool,
+    on_cursor: bool,
+    focused: bool,
+) -> Element<'a, Message> {
+    let line =
+        text(body)
+            .size(13)
+            .wrapping(text::Wrapping::None)
+            .style(move |theme: &iced::Theme| text::Style {
+                color: Some(entry_text(theme, lit)),
+            });
+    stack![
+        container(line).width(Length::Fill).clip(true),
+        // The strip is held at the right-hand end by a filler rather than by
+        // an alignment, so it keeps its own width whatever the label does.
+        row![
+            container("").width(Length::Fill),
+            container("")
+                .width(Length::Fixed(ENTRY_FADE))
+                .height(Length::Fill)
+                .style(move |theme: &iced::Theme| {
+                    let ground = entry_ground(theme, on_cursor, focused);
+                    container::Style {
+                        background: Some(iced::Background::Gradient(
+                            iced::gradient::Linear::new(iced::Radians(std::f32::consts::FRAC_PI_2))
+                                // The transparent end is *this* colour at zero
+                                // alpha, never `Color::TRANSPARENT` — that one is
+                                // black, and a fade through it darkens before it
+                                // clears, which on a light theme is a bruise at
+                                // the end of every long row.
+                                .add_stop(0.0, iced::Color { a: 0.0, ..ground })
+                                .add_stop(1.0, ground)
+                                .into(),
+                        )),
+                        ..container::Style::default()
+                    }
+                }),
+        ],
+    ]
+    .width(Length::Fill)
+    .into()
 }
 
 /// The one colour text on such a row is legible in.
@@ -3605,13 +3709,7 @@ impl App {
                         .then(|| Element::from(icon::chevron(lit)));
                     let line = panel_entry(
                         Some(icon::line(entry.glyph, lit).into()),
-                        text(middle(&entry.label, 22))
-                            .size(13)
-                            .width(Length::Fill)
-                            .style(move |theme: &iced::Theme| text::Style {
-                                color: Some(entry_text(theme, lit)),
-                            })
-                            .into(),
+                        fading_label(entry.label.clone(), lit, on_cursor, focused),
                         end,
                     );
                     col.push(

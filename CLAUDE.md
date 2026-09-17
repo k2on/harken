@@ -1256,6 +1256,57 @@ every row is one line. Four things about it are load-bearing:
     of its parent. `submenu_origin` goes right of the parent when there is room
     and left when there is not, never over it, and slides up from the entry
     only as far as staying on the glass takes.
+  - **A long entry fades; it does not ellipsise, and it certainly does not
+    wrap.** `Go to Goldberg Variations, BWV 988` went through `middle(…, 22)`
+    and came out `Go to Goldb…s, BWV 988` — the budget spent on `Go to` and an
+    ellipsis — and then *wrapped onto two lines* inside a row whose height is
+    fixed, so the second line drew over its neighbour. Two separate mistakes
+    with one cause: a count of characters is an estimate against `ENTRY_CHAR`,
+    and an estimate that comes out a shade wide has nowhere to go.
+
+    `middle` is right where it already was and wrong here. Taking the centre
+    out of a *track* is right — `Prelude No. 14 in F-sharp minor, BWV 859` is
+    told from its twenty-three siblings by the tail — and wrong for a verb,
+    where the head is the whole sentence. So the row menu's labels are
+    `fading_label` now: one line, cut by the renderer rather than by
+    arithmetic, ending in a fade.
+
+    **`Wrapping::None` does not clip, but a clipping container does**, and the
+    difference is the whole trick. This file already said the first half —
+    it is why `PER_PORTION` and `middle` exist, since text with no wrapping
+    draws at full length straight over the column beside it. What was missing
+    is that `container(…).clip(true)` narrows the viewport it hands its child,
+    and `text::draw` passes that viewport to the renderer as `clip_bounds`.
+    So the text really is scissored at the container's edge. Read in iced's
+    source rather than assumed, because the failure if it were wrong is the
+    documented one: a title drawn across the chevron.
+
+    **The fade runs to whatever is behind that row, and there is one answer to
+    what that is.** `entry_ground` — the accent when the cursor is on the row,
+    `background.strong` when the panel's keys have gone to its submenu, and
+    `panel_ground` otherwise. `entry_fill` paints from it and the gradient runs
+    to it, so the two cannot disagree; `panel()` reads `panel_ground` too, so a
+    change to the panel's own grey cannot leave a band of the old one down the
+    right of every row. The transparent end is **that colour at zero alpha**,
+    never `Color::TRANSPARENT` — that one is black, and a fade through it
+    darkens before it clears, which on a light theme is a bruise at the end of
+    every long row.
+
+    It is drawn on every row whether or not the label needs it, because
+    painting a row's ground over its own ground is not visible.
+
+    **What macOS does here is not this, and it is worth being straight about
+    that.** AppKit sizes an `NSMenu` to its widest item and truncates with a
+    *tail* ellipsis only when it runs out of screen — the fade is not a menu
+    idiom there. This is a fixed 198px panel, so the choice was a fade or a
+    tail ellipsis, and the fade was the one asked for. Widening the menu to fit
+    its longest entry is the more AppKit-ish answer and is still available.
+
+    **Not verified on screen from here.** Nothing in this container can open a
+    window, so what holds this up is the compiler, iced's own source for the
+    clip, and the fact that the ground has one definition. The thing to look
+    at first is whether the fade reads as a fade at `ENTRY_FADE` or as a soft
+    edge.
   - **A chevron, not an ellipsis.** `Add to playlist` ends in `›` drawn at the
     right of the row, which is what a submenu looks like everywhere and the one
     thing `…` could not say: `Add to playlist…` and `Rename…` are the same
