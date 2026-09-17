@@ -23,9 +23,16 @@ in
       # machine it installs on. Both move whenever `package.json` or
       # `bun.lock` does, and each can only be computed on the machine it
       # belongs to. When one goes stale, nix prints the right one.
+      #
+      # **So only the platform that last built one has a fresh number here.**
+      # A dependency change moves both, and nothing can compute a hash for a
+      # machine it is not on — so the other fails on its first build after,
+      # names itself, and prints what to paste. That is the mechanism rather
+      # than a thing to fix before pushing, and it is why these two are
+      # allowed to disagree about how recently they were true.
       nodeModulesHash = {
         aarch64-linux = "sha256-Lo8p11fynW14olU8Sz5HAPQFrwtEe/xS/4t5v9qj5Hc=";
-        x86_64-linux = "sha256-upQqPeR+8FBsQUIhdlywD1ZzlqrgGk1zKf4RMmA2yR8=";
+        x86_64-linux = "sha256-7lhXosmf7bvVIAisLiNIxhBYkq+zg/urFku2KDzzxd8=";
       };
 
       # The generator ships no lockfile — the npm package is the built CLI and
