@@ -1256,57 +1256,48 @@ every row is one line. Four things about it are load-bearing:
     of its parent. `submenu_origin` goes right of the parent when there is room
     and left when there is not, never over it, and slides up from the entry
     only as far as staying on the glass takes.
-  - **A long entry fades; it does not ellipsise, and it certainly does not
-    wrap.** `Go to Goldberg Variations, BWV 988` went through `middle(…, 22)`
-    and came out `Go to Goldb…s, BWV 988` — the budget spent on `Go to` and an
-    ellipsis — and then *wrapped onto two lines* inside a row whose height is
-    fixed, so the second line drew over its neighbour. Two separate mistakes
-    with one cause: a count of characters is an estimate against `ENTRY_CHAR`,
-    and an estimate that comes out a shade wide has nowhere to go.
+  - **A menu is as wide as its longest entry, which is AppKit's rule and not
+    a preference.** It was a flat 198px, so `Go to Goldberg Variations, BWV
+    988` had to be cut to fit — and the cut was `middle(…, 22)`, which spends
+    the budget on `Go to` and an ellipsis and leaves `Go to Goldb…s, BWV 988`.
+    Worse, the result still *wrapped* onto two lines inside a row whose height
+    is fixed, so the second drew over its neighbour. An `NSMenu` sizes itself
+    to its widest item and truncates only when it runs out of screen; it does
+    not shorten an item to a width somebody picked.
 
-    `middle` is right where it already was and wrong here. Taking the centre
-    out of a *track* is right — `Prelude No. 14 in F-sharp minor, BWV 859` is
-    told from its twenty-three siblings by the tail — and wrong for a verb,
-    where the head is the whole sentence. So the row menu's labels are
-    `fading_label` now: one line, cut by the renderer rather than by
-    arithmetic, ending in a fade.
+    So `MENU_WIDTH` is a range now — `MENU_MIN_WIDTH` is that old fixed number
+    so nothing narrows, `MENU_MAX_WIDTH` is what stops one long album title
+    making a menu the width of the window — and `RowMenu::width_for` picks
+    within it. Exactly `Picker::width_for` one panel over, down to the
+    `ENTRY_CHAR` estimate and which way it errs: a panel sized from it is its
+    own width, so erring wide is a strip of empty panel and erring narrow is an
+    ellipsis through somebody's title. The chevron's column is added for the
+    one entry that owns a submenu, asked as `matches!(…OpenPicker)` — the same
+    question the chevron and the dwell ask, rather than a fourth field.
 
-    **`Wrapping::None` does not clip, but a clipping container does**, and the
-    difference is the whole trick. This file already said the first half —
-    it is why `PER_PORTION` and `middle` exist, since text with no wrapping
-    draws at full length straight over the column beside it. What was missing
-    is that `container(…).clip(true)` narrows the viewport it hands its child,
-    and `text::draw` passes that viewport to the renderer as `clip_bounds`.
-    So the text really is scissored at the container's edge. Read in iced's
-    source rather than assumed, because the failure if it were wrong is the
-    documented one: a title drawn across the chevron.
+    **The width is stored on the `RowMenu` because three things need it and
+    they must agree**: `view_menu` draws the panel, `menu_origin` places it,
+    and `submenu_origin` hangs the next one off its right-hand edge. One
+    number cannot be three answers. `dots_x` takes it too, so a menu opened
+    from the ⋯ still *ends* where the list ends whatever width it came out.
 
-    **The fade runs to whatever is behind that row, and there is one answer to
-    what that is.** `entry_ground` — the accent when the cursor is on the row,
-    `background.strong` when the panel's keys have gone to its submenu, and
-    `panel_ground` otherwise. `entry_fill` paints from it and the gradient runs
-    to it, so the two cannot disagree; `panel()` reads `panel_ground` too, so a
-    change to the panel's own grey cannot leave a band of the old one down the
-    right of every row. The transparent end is **that colour at zero alpha**,
-    never `Color::TRANSPARENT` — that one is black, and a fade through it
-    darkens before it clears, which on a light theme is a bruise at the end of
-    every long row.
+    **Where it does have to cut, it takes the end off.** `tail` beside
+    `middle`, because they are for different things: the ends of a track
+    identify it — a Bach movement is told from its twenty-three siblings by
+    the catalogue number in its tail — and a menu entry is a sentence, where
+    what can be lost is the end. It is only ever reached above
+    `MENU_MAX_WIDTH`, since below that the menu is sized *from* these strings.
 
-    It is drawn on every row whether or not the label needs it, because
-    painting a row's ground over its own ground is not visible.
+    `a_menu_is_as_wide_as_its_longest_entry` opens a menu on every demo track
+    and asserts `tail` is a no-op on every entry of every one — which is the
+    thing that says nothing is cut. Falsified by returning `MENU_MIN_WIDTH`
+    from `width_for`: it fails with `"Go to Johann Sebastian Bach" is cut in a
+    menu 198px wide`, which is the bug it was written for.
 
-    **What macOS does here is not this, and it is worth being straight about
-    that.** AppKit sizes an `NSMenu` to its widest item and truncates with a
-    *tail* ellipsis only when it runs out of screen — the fade is not a menu
-    idiom there. This is a fixed 198px panel, so the choice was a fade or a
-    tail ellipsis, and the fade was the one asked for. Widening the menu to fit
-    its longest entry is the more AppKit-ish answer and is still available.
-
-    **Not verified on screen from here.** Nothing in this container can open a
-    window, so what holds this up is the compiler, iced's own source for the
-    clip, and the fact that the ground has one definition. The thing to look
-    at first is whether the fade reads as a fade at `ENTRY_FADE` or as a soft
-    edge.
+    **Not verified on screen from here** — nothing in this container can open a
+    window. The arithmetic is tested and the estimate errs wide, so the thing
+    to look at is whether `ENTRY_CHAR` leaves a strip of empty panel on the
+    long entries.
   - **A chevron, not an ellipsis.** `Add to playlist` ends in `›` drawn at the
     right of the row, which is what a submenu looks like everywhere and the one
     thing `…` could not say: `Add to playlist…` and `Rename…` are the same

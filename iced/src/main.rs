@@ -589,6 +589,13 @@ struct RowMenu {
     /// and coming back offers it a second time, which is what a person who
     /// closed it by accident will do.
     offered: bool,
+    /// How wide it came out, from its own longest entry.
+    ///
+    /// Stored for the reason `Picker::width` is: three places need it and they
+    /// must agree — `view_menu` draws the panel, `menu_origin` places it, and
+    /// `submenu_origin` hangs the next one off its right-hand edge. One number
+    /// cannot be three answers.
+    width: f32,
 }
 
 impl RowMenu {
@@ -603,6 +610,41 @@ impl RowMenu {
     /// an entry has a submenu exactly when its message opens one, and
     /// `dwell_submenu` asks the same question the same way. A `bool` beside
     /// the label would be a second answer to keep in step with the first.
+    /// As wide as its longest entry, within the panel's range.
+    ///
+    /// Counted against `ENTRY_CHAR`, the same estimate `Picker::width_for`
+    /// uses and erring the same way: a panel sized from it is its own width,
+    /// so erring wide is a strip of empty panel and erring narrow is an
+    /// ellipsis through somebody's album title.
+    ///
+    /// The one entry that owns a submenu carries a chevron at the end of its
+    /// row, so it needs that column too — asked as `matches!(…OpenPicker)`,
+    /// which is the same question `view_menu` and `dwell_submenu` ask rather
+    /// than a fourth field to keep in step.
+    fn width_for(entries: &[Entry]) -> f32 {
+        let longest = entries
+            .iter()
+            .map(|e| {
+                e.label.chars().count() as f32 * ENTRY_CHAR
+                    + match matches!(e.message, Message::OpenPicker) {
+                        true => icon::TRANSPORT + ENTRY_GAP,
+                        false => 0.0,
+                    }
+            })
+            .fold(0.0_f32, f32::max);
+        (ENTRY_CHROME + longest).clamp(App::MENU_MIN_WIDTH, App::MENU_MAX_WIDTH)
+    }
+
+    /// …how many characters of a label that width affords…
+    fn label_chars(&self) -> usize {
+        (((self.width - ENTRY_CHROME) / ENTRY_CHAR).floor().max(0.0)) as usize
+    }
+
+    /// …and how many of the title, which sits in a line with no glyph column.
+    fn title_chars(&self) -> usize {
+        (((self.width - TITLE_CHROME) / ENTRY_CHAR).floor().max(0.0)) as usize
+    }
+
     fn entries(&self) -> Vec<Entry> {
         let mut out = vec![
             Entry {
@@ -760,6 +802,27 @@ const TIME: Length = Length::Fixed(56.0);
 /// column. Erring short costs an ellipsis nobody needed; erring long costs
 /// two columns of text on top of each other.
 const PER_PORTION: usize = 13;
+
+/// Shorten to `max` characters, taking the *end* off.
+///
+/// The other one of these, and the right one for a verb. `middle` exists
+/// because the ends of a track identify it; a menu entry is a sentence, so
+/// what it can afford to lose is the end of it — `Go to Goldberg Variations,
+/// BWV…` says what the row does, and `Go to Goldb…s, BWV 988` spends most of
+/// its width on `Go to` and an ellipsis. It is also what AppKit does to a
+/// menu item that will not fit.
+///
+/// Only ever reached when a label is too long for `MENU_MAX_WIDTH`, because
+/// below that the menu is sized *from* these strings.
+fn tail(body: &str, max: usize) -> String {
+    let chars: Vec<char> = body.chars().collect();
+    if chars.len() <= max || max < 2 {
+        return body.to_string();
+    }
+    let mut out: String = chars[..max - 1].iter().collect();
+    out.push('\u{2026}');
+    out
+}
 
 /// Shorten to `max` characters, taking the middle out rather than the end.
 ///
@@ -946,23 +1009,9 @@ const ENTRY_CHAR: f32 = 7.0;
 /// Everything in a panel row that is not the label: the panel's padding either
 /// side, the row's, the glyph column and the gap after it.
 const ENTRY_CHROME: f32 = PANEL_PADDING * 2.0 + ENTRY_PAD_X * 2.0 + icon::TRANSPORT + ENTRY_GAP;
-/// How much of the end of a row the fade covers, for a label too long for it.
-///
-/// Wide enough to read as a fade rather than as a soft edge — under about
-/// twenty it looks like a rendering fault — and narrow enough that it is the
-/// tail of a word going and not a third of the row.
-const ENTRY_FADE: f32 = 28.0;
-
-/// The ground all three context windows are painted on.
-///
-/// Its own function because the fade at the end of a long label has to run to
-/// it, and a fade that ran to a colour the panel had since stopped using would
-/// be a band of the wrong grey down the right of every row — visible, and not
-/// obviously *this* function's fault. `entry_ground` reads it rather than
-/// naming `background.weak` a second time.
-fn panel_ground(theme: &iced::Theme) -> iced::Color {
-    palette::of(theme).background.weak.color
-}
+/// …and the same for a menu's title, which has no glyph column to leave room
+/// for: the panel's padding either side and the line's own.
+const TITLE_CHROME: f32 = PANEL_PADDING * 2.0 + ENTRY_PAD_X * 2.0;
 
 /// The chrome all three context windows share: the ground, the border, the
 /// corner and the padding.
@@ -980,7 +1029,7 @@ fn panel<'a>(
         .style(|theme: &iced::Theme| {
             let palette = palette::of(theme);
             container::Style {
-                background: Some(iced::Background::Color(panel_ground(theme))),
+                background: Some(iced::Background::Color(palette.background.weak.color)),
                 border: iced::Border {
                     color: palette.background.strong.color,
                     width: PANEL_BORDER,
@@ -1045,105 +1094,18 @@ fn panel_entry<'a>(
 /// out, the same rule `row_style` has and for the same reason: the row is
 /// still the one the panel is about.
 fn entry_fill(theme: &iced::Theme, on_cursor: bool, focused: bool) -> container::Style {
+    let palette = palette::of(theme);
     container::Style {
-        background: on_cursor
-            .then_some(iced::Background::Color(entry_ground(theme, true, focused))),
+        background: on_cursor.then_some(iced::Background::Color(match focused {
+            true => palette.primary.base.color,
+            false => palette.background.strong.color,
+        })),
         border: iced::Border {
             radius: ENTRY_RADIUS.into(),
             ..iced::Border::default()
         },
         ..container::Style::default()
     }
-}
-
-/// What is actually *behind* one of those rows.
-///
-/// One answer, because two things need it and a disagreement between them is
-/// visible: `entry_fill` paints it, and the fade at the end of a label too
-/// long for its row has to run **to** it. A fade that ran to the panel's grey
-/// while the row under it was filled with the accent would be a smear across
-/// the one row you were looking at — which is the same mistake as writing a
-/// colour down, one step removed.
-fn entry_ground(theme: &iced::Theme, on_cursor: bool, focused: bool) -> iced::Color {
-    let palette = palette::of(theme);
-    match (on_cursor, focused) {
-        // Not on the cursor is not "no colour": the row draws no background of
-        // its own, so what is behind it is the panel's own ground.
-        (false, _) => panel_ground(theme),
-        (true, true) => palette.primary.base.color,
-        (true, false) => palette.background.strong.color,
-    }
-}
-
-/// A label that is one line, and runs off the end of its row into a fade
-/// rather than an ellipsis.
-///
-/// **`middle` is the wrong tool for a verb.** It takes the centre out, which
-/// is right for a track — `Prelude No. 14 in F-sharp minor, BWV 859` is told
-/// from its twenty-three siblings by the tail — and wrong for a menu entry,
-/// where the head is the whole sentence: `Go to Goldb…s, BWV 988` spends its
-/// budget on `Go to` and an ellipsis. And a count of characters is an estimate
-/// against `ENTRY_CHAR`, so a string that came out a shade too wide *wrapped*,
-/// and a fixed-height row with two lines in it drew one of them over its
-/// neighbour.
-///
-/// So the renderer decides where it ends instead of arithmetic. Two things
-/// make that work, and neither is optional:
-///
-/// * **`Wrapping::None` does not clip.** It draws the whole string at full
-///   length, over whatever is beside it — which is what `PER_PORTION` and
-///   `middle` are for everywhere else in this file. The clipping is the
-///   container's, with `clip(true)`.
-/// * **A hard clip through the middle of a glyph reads as a bug.** The fade is
-///   what makes it a decision: the row's own ground, painted over the last
-///   `ENTRY_FADE` pixels, from the same colour at zero alpha to opaque.
-///
-/// It is drawn whether or not the label is long enough to need it, because
-/// painting a row's ground over its own ground is not visible — the gradient
-/// resolves to exactly what is already there.
-fn fading_label<'a>(
-    body: String,
-    lit: bool,
-    on_cursor: bool,
-    focused: bool,
-) -> Element<'a, Message> {
-    let line =
-        text(body)
-            .size(13)
-            .wrapping(text::Wrapping::None)
-            .style(move |theme: &iced::Theme| text::Style {
-                color: Some(entry_text(theme, lit)),
-            });
-    stack![
-        container(line).width(Length::Fill).clip(true),
-        // The strip is held at the right-hand end by a filler rather than by
-        // an alignment, so it keeps its own width whatever the label does.
-        row![
-            container("").width(Length::Fill),
-            container("")
-                .width(Length::Fixed(ENTRY_FADE))
-                .height(Length::Fill)
-                .style(move |theme: &iced::Theme| {
-                    let ground = entry_ground(theme, on_cursor, focused);
-                    container::Style {
-                        background: Some(iced::Background::Gradient(
-                            iced::gradient::Linear::new(iced::Radians(std::f32::consts::FRAC_PI_2))
-                                // The transparent end is *this* colour at zero
-                                // alpha, never `Color::TRANSPARENT` — that one is
-                                // black, and a fade through it darkens before it
-                                // clears, which on a light theme is a bruise at
-                                // the end of every long row.
-                                .add_stop(0.0, iced::Color { a: 0.0, ..ground })
-                                .add_stop(1.0, ground)
-                                .into(),
-                        )),
-                        ..container::Style::default()
-                    }
-                }),
-        ],
-    ]
-    .width(Length::Fill)
-    .into()
 }
 
 /// The one colour text on such a row is legible in.
@@ -2047,7 +2009,19 @@ impl App {
     const NAMING: &'static str = "naming";
     /// What `view_menu` draws and `fit` has to assume: 190 of entry inside 4
     /// of padding either side.
-    const MENU_WIDTH: f32 = 198.0;
+    /// A menu is as wide as its longest entry, within this range.
+    ///
+    /// **AppKit's rule, and it is the one worth copying here.** An `NSMenu`
+    /// sizes itself to its widest item and only truncates when it runs out of
+    /// screen; it does not shorten an entry to fit a width somebody picked.
+    /// This was a flat 198, so `Go to Goldberg Variations, BWV 988` had to be
+    /// cut to fit it — and the cut was `middle`, which spent the budget on
+    /// `Go to` and an ellipsis.
+    ///
+    /// The minimum is that old fixed width, so nothing narrows; the maximum is
+    /// what stops one long album title making a menu the width of the window.
+    const MENU_MIN_WIDTH: f32 = 198.0;
+    const MENU_MAX_WIDTH: f32 = 420.0;
     /// A menu's title line, which `view_menu` gives that exact height rather
     /// than leaving to whatever 11pt text inside 4 of padding comes to. Its
     /// entries are `PANEL_ENTRY`, the one row height every panel here draws.
@@ -2085,7 +2059,7 @@ impl App {
     ///
     /// That is the whole rule, and it is the one thing to look at on screen.
     /// A menu's highlight is a rounded rectangle inset by `PANEL_PADDING`, so
-    /// its right-hand edge is `MENU_WIDTH - PANEL_PADDING` across — and a
+    /// its right-hand edge is the menu's width less `PANEL_PADDING` — and a
     /// submenu placed there meets it. The two panels overlap, because a
     /// submenu that merely abuts its parent reads as a second panel; what they
     /// overlap is the strip of empty panel beside the highlight, which is the
@@ -3090,22 +3064,34 @@ impl App {
                     if let Some(item) = peer.rows().iter().find(|i| i.id == id) {
                         let album = peer.detail_of(id).album;
                         let artist = item.creator.clone();
-                        // Two entries always, and one more for each of the
-                        // album and the artist when the track has one — which
-                        // is what decides how tall it is, and so which way it
-                        // has room to open.
-                        let entries =
-                            2 + usize::from(!album.is_empty()) + usize::from(!artist.is_empty());
-                        self.menu = Some(RowMenu {
+                        // Built, then asked what it holds, then placed — in
+                        // that order, because how many entries it has decides
+                        // how tall it is and their longest decides how wide,
+                        // and both are what `menu_origin` needs to know which
+                        // way it has room to open. `entries` is the one
+                        // definition of what is in it; counting them a second
+                        // time here as `2 + album + artist` was a second one.
+                        let mut menu = RowMenu {
                             media: id,
                             title: item.title.clone(),
                             album,
                             artist,
-                            origin: Self::menu_origin(self.cursor, self.window, entries, anchor),
+                            origin: iced::Point::new(0.0, 0.0),
                             at: 0,
                             dwell: 0,
                             offered: false,
-                        });
+                            width: 0.0,
+                        };
+                        let entries = menu.entries();
+                        menu.width = RowMenu::width_for(&entries);
+                        menu.origin = Self::menu_origin(
+                            self.cursor,
+                            self.window,
+                            entries.len(),
+                            anchor,
+                            menu.width,
+                        );
+                        self.menu = Some(menu);
                     }
                 }
                 Ok(())
@@ -3561,8 +3547,8 @@ impl App {
     /// iced lays out after `view` and this decides before it. It is the same
     /// division that function does, minus the same three things — so the menu
     /// ends where the list ends, which is where the button is.
-    fn dots_x(window: iced::Size) -> f32 {
-        (window.width - Self::PAGE_PADDING - SCROLLBAR - Self::MENU_WIDTH).max(Self::EDGE)
+    fn dots_x(window: iced::Size, width: f32) -> f32 {
+        (window.width - Self::PAGE_PADDING - SCROLLBAR - width).max(Self::EDGE)
     }
 
     /// Where to pin a menu asked for on the row at `cursor.y`.
@@ -3580,22 +3566,24 @@ impl App {
     ///
     /// The size is computed rather than measured: iced lays out after `view`
     /// and this has to decide before it. Both numbers are the panel's own —
-    /// `MENU_WIDTH` is what `view_menu` sets, and the height is its padding,
-    /// its title line and `entries` rows of text.
+    /// the width is `RowMenu::width_for`, which is what `view_menu` gives the
+    /// panel, and the height is its padding, its title line and `entries` rows
+    /// of text.
     fn menu_origin(
         cursor: iced::Point,
         window: iced::Size,
         entries: usize,
         anchor: Anchor,
+        width: f32,
     ) -> iced::Point {
         let x = match anchor {
             Anchor::Pointer => cursor.x,
-            Anchor::Dots => Self::dots_x(window),
+            Anchor::Dots => Self::dots_x(window, width),
         };
         Self::fit(
             iced::Point::new(x, cursor.y),
             window,
-            Self::MENU_WIDTH,
+            width,
             Self::menu_height(entries),
         )
     }
@@ -3636,7 +3624,7 @@ impl App {
         // one thing that grew rather than as two that happen to touch — and
         // the entries inside them meet edge to edge, which is the most the
         // overlap can be without covering a word of the menu.
-        let right = menu.origin.x + Self::MENU_WIDTH - Self::SUBMENU_OVERLAP;
+        let right = menu.origin.x + menu.width - Self::SUBMENU_OVERLAP;
         let x = match right + width + Self::EDGE > window.width {
             true => (menu.origin.x - width + Self::SUBMENU_OVERLAP).max(Self::EDGE),
             false => right,
@@ -3709,7 +3697,13 @@ impl App {
                         .then(|| Element::from(icon::chevron(lit)));
                     let line = panel_entry(
                         Some(icon::line(entry.glyph, lit).into()),
-                        fading_label(entry.label.clone(), lit, on_cursor, focused),
+                        text(tail(&entry.label, menu.label_chars()))
+                            .size(13)
+                            .width(Length::Fill)
+                            .style(move |theme: &iced::Theme| text::Style {
+                                color: Some(entry_text(theme, lit)),
+                            })
+                            .into(),
                         end,
                     );
                     col.push(
@@ -3736,14 +3730,18 @@ impl App {
                 // Given the height `MENU_TITLE` claims rather than left to
                 // measure, for the reason `panel_entry` is: `menu_origin`
                 // places the panel before iced lays it out.
-                container(text(middle(&menu.title, 26)).size(11).style(style::dim))
-                    .height(Length::Fixed(Self::MENU_TITLE))
-                    .align_y(iced::Alignment::Center)
-                    .padding([0, ENTRY_PAD_X as u16]),
+                container(
+                    text(middle(&menu.title, menu.title_chars()))
+                        .size(11)
+                        .style(style::dim)
+                )
+                .height(Length::Fixed(Self::MENU_TITLE))
+                .align_y(iced::Alignment::Center)
+                .padding([0, ENTRY_PAD_X as u16]),
                 rows,
             ]
             .spacing(0),
-            Self::MENU_WIDTH,
+            menu.width,
         )
         .into()
     }
@@ -5793,7 +5791,9 @@ mod cards {
 /// whatever the mouse was doing.
 #[cfg(all(test, feature = "demo"))]
 mod context {
-    use super::{vim, Anchor, App, Entry, Focus, Message, Pane, Picker, PANEL_PADDING};
+    use super::{
+        glyphs, tail, vim, Anchor, App, Entry, Focus, Message, Pane, Picker, RowMenu, PANEL_PADDING,
+    };
 
     /// The demo's own boot, which is a seeded peer and nothing else — on a
     /// database of this test's own, because cargo runs them on threads and
@@ -5801,6 +5801,68 @@ mod context {
     /// way, twice; see `demo_covers::blank`.
     fn app(who: &str) -> App {
         App::demo_app(App::demo_login_for(who)).0
+    }
+
+    /// A menu is as wide as its longest entry, and nothing in it is cut.
+    ///
+    /// `Go to Goldberg Variations, BWV 988` went through `middle(…, 22)`
+    /// against a flat 198px panel and came out `Go to Goldb…s, BWV 988` — the
+    /// budget spent on `Go to` and an ellipsis — and then *wrapped* onto two
+    /// lines inside a row whose height is fixed, so the second drew over its
+    /// neighbour. AppKit sizes a menu to its widest item rather than cutting
+    /// an item to a width somebody picked, and this does now.
+    ///
+    /// Falsify it by returning `App::MENU_MIN_WIDTH` from
+    /// `RowMenu::width_for`: the first two assertions fail together, which is
+    /// the point — a menu that cannot grow is a menu whose entries get cut.
+    #[test]
+    fn a_menu_is_as_wide_as_its_longest_entry() {
+        let mut app = app("menu-width");
+        let ids: Vec<_> = app
+            .peer
+            .as_ref()
+            .unwrap()
+            .rows()
+            .iter()
+            .map(|i| i.id)
+            .collect();
+
+        let mut widest: f32 = 0.0;
+        for id in ids {
+            let _ = app.update(Message::RowMenu(id, Anchor::Pointer));
+            let menu = app.menu.as_ref().expect("the menu opened");
+            widest = widest.max(menu.width);
+            // The one that matters: every entry is drawn whole. `tail` is a
+            // no-op exactly when the label fits what the panel affords.
+            for entry in menu.entries() {
+                assert_eq!(
+                    tail(&entry.label, menu.label_chars()),
+                    entry.label,
+                    "{:?} is cut in a menu {}px wide",
+                    entry.label,
+                    menu.width
+                );
+            }
+        }
+        assert!(
+            widest > App::MENU_MIN_WIDTH,
+            "no demo track earned a menu wider than the minimum ({widest}px),              so this test proves nothing about growing"
+        );
+
+        // …and it stops. One album title should not make a menu the width of
+        // the window, which is the other half of AppKit's rule.
+        let long = [Entry {
+            glyph: glyphs::PLAY,
+            label: "Go to ".to_owned() + &"a".repeat(200),
+            message: Message::CloseMenu,
+        }];
+        assert_eq!(RowMenu::width_for(&long), App::MENU_MAX_WIDTH);
+        let short = [Entry {
+            glyph: glyphs::PLAY,
+            label: "Play".into(),
+            message: Message::CloseMenu,
+        }];
+        assert_eq!(RowMenu::width_for(&short), App::MENU_MIN_WIDTH);
     }
 
     /// One keyboard, one cursor drawn.
@@ -5883,19 +5945,44 @@ mod context {
         let window = iced::Size::new(1280.0, 720.0);
 
         // A right click puts the corner where you clicked, both ways.
-        let left = App::menu_origin(iced::Point::new(220.0, 300.0), window, 4, Anchor::Pointer);
-        let right = App::menu_origin(iced::Point::new(600.0, 300.0), window, 4, Anchor::Pointer);
+        let wide = App::MENU_MIN_WIDTH;
+        let left = App::menu_origin(
+            iced::Point::new(220.0, 300.0),
+            window,
+            4,
+            Anchor::Pointer,
+            wide,
+        );
+        let right = App::menu_origin(
+            iced::Point::new(600.0, 300.0),
+            window,
+            4,
+            Anchor::Pointer,
+            wide,
+        );
         assert_eq!(left, iced::Point::new(220.0, 300.0));
         assert_eq!(right, iced::Point::new(600.0, 300.0));
 
         // The ⋯ do not care where along the row the pointer was — the button
         // is a fixed thing on screen and the menu belongs to it.
-        let a = App::menu_origin(iced::Point::new(220.0, 300.0), window, 4, Anchor::Dots);
-        let b = App::menu_origin(iced::Point::new(1240.0, 300.0), window, 4, Anchor::Dots);
+        let a = App::menu_origin(
+            iced::Point::new(220.0, 300.0),
+            window,
+            4,
+            Anchor::Dots,
+            wide,
+        );
+        let b = App::menu_origin(
+            iced::Point::new(1240.0, 300.0),
+            window,
+            4,
+            Anchor::Dots,
+            wide,
+        );
         assert_eq!(a, b, "one button, one place");
         assert_eq!(a.y, 300.0, "…and how far down is still the row's");
         assert_eq!(
-            a.x + App::MENU_WIDTH,
+            a.x + wide,
             window.width - App::PAGE_PADDING - super::SCROLLBAR,
             "the menu ends where the dots do"
         );
@@ -6313,12 +6400,12 @@ mod context {
             //
             // The thing you can see: **the menu's lit row touches the
             // submenu's edge.** A highlight is inset by `PANEL_PADDING`, so
-            // its right-hand edge is `MENU_WIDTH - PANEL_PADDING` across, and
+            // its right-hand edge is the width less `PANEL_PADDING`, and
             // that is where the submenu starts — or, opening leftward, its
             // last pixel is where the highlight's left edge is.
             if width >= 600 {
                 let lit = match at.x > menu.origin.x {
-                    true => menu.origin.x + App::MENU_WIDTH - PANEL_PADDING,
+                    true => menu.origin.x + menu.width - PANEL_PADDING,
                     false => menu.origin.x + PANEL_PADDING,
                 };
                 let edge = match at.x > menu.origin.x {
@@ -6340,7 +6427,7 @@ mod context {
                 // `a_menu_never_hangs_off_the_glass`. *A test written in terms
                 // of the thing it is holding shrinks with it.*
                 let lap = match at.x > menu.origin.x {
-                    true => menu.origin.x + App::MENU_WIDTH - at.x,
+                    true => menu.origin.x + menu.width - at.x,
                     false => at.x + wide - menu.origin.x,
                 };
                 assert_eq!(
@@ -6415,16 +6502,25 @@ mod context {
     /// taken out — which is the shape of mistake this repository keeps
     /// finding: an assertion satisfied by a width the bug does not live at.
     /// Falsify it by dropping the `.max` in `dots_x` and it fails at 120.
+    ///
+    /// Both ends of the menu's own range, now that it has one: `dots_x` is the
+    /// window less the menu, so a *wider* menu runs out of room on a wider
+    /// window — the widest one goes negative below about 454px and the
+    /// narrowest not until 232, and a loop over only the narrow case would
+    /// stop covering the wide one the day `MENU_MAX_WIDTH` moved.
     #[test]
     fn a_menu_never_hangs_off_the_glass() {
-        for width in 120..=4000 {
-            let window = iced::Size::new(width as f32, 720.0);
-            let at = App::menu_origin(iced::Point::new(0.0, 100.0), window, 4, Anchor::Dots);
-            assert!(
-                at.x >= App::EDGE,
-                "at {width}px the menu starts at {} and its left half is clipped",
-                at.x
-            );
+        for menu in [App::MENU_MIN_WIDTH, App::MENU_MAX_WIDTH] {
+            for width in 120..=4000 {
+                let window = iced::Size::new(width as f32, 720.0);
+                let at =
+                    App::menu_origin(iced::Point::new(0.0, 100.0), window, 4, Anchor::Dots, menu);
+                assert!(
+                    at.x >= App::EDGE,
+                    "at {width}px a {menu}px menu starts at {} and its left half is clipped",
+                    at.x
+                );
+            }
         }
     }
 }
