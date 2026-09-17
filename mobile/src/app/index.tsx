@@ -43,7 +43,7 @@ import {
 } from 'react-native';
 
 import { recallServer, remembered, rememberServer, setOffline, signIn } from '@/auth';
-import { radius, space, useTheme, type Theme } from '@/theme';
+import { FONT, radius, space, useTheme, type Theme } from '@/theme';
 import { Icon } from '@/ui/icon';
 
 const PORT = 8787;
@@ -233,8 +233,8 @@ const styles = (t: Theme) =>
       backgroundColor: t.accent,
       marginBottom: space.sm,
     },
-    title: { fontSize: 42, fontWeight: '800', color: t.text, letterSpacing: -1 },
-    blurb: { fontSize: 15, lineHeight: 21, color: t.dim },
+    title: { fontFamily: FONT, fontSize: 42, fontWeight: '800', color: t.text, letterSpacing: -1 },
+    blurb: { fontFamily: FONT, fontSize: 15, lineHeight: 21, color: t.dim },
     card: {
       backgroundColor: t.raised,
       borderRadius: radius.lg,
@@ -243,7 +243,7 @@ const styles = (t: Theme) =>
       padding: space.lg,
       gap: space.sm,
     },
-    label: { fontSize: 12, fontWeight: '700', color: t.dim },
+    label: { fontFamily: FONT, fontSize: 12, fontWeight: '700', color: t.dim },
     input: {
       backgroundColor: t.card,
       borderColor: t.border,
@@ -251,10 +251,10 @@ const styles = (t: Theme) =>
       borderRadius: radius.md,
       paddingHorizontal: space.md,
       paddingVertical: 12,
-      fontSize: 16,
+      fontFamily: FONT, fontSize: 16,
       color: t.text,
     },
-    hint: { fontSize: 11.5, lineHeight: 16, color: t.faint },
+    hint: { fontFamily: FONT, fontSize: 11.5, lineHeight: 16, color: t.faint },
     button: {
       marginTop: space.md,
       backgroundColor: t.accent,
@@ -263,7 +263,7 @@ const styles = (t: Theme) =>
       alignItems: 'center',
     },
     muted: { opacity: 0.55 },
-    buttonText: { color: t.onAccent, fontSize: 15.5, fontWeight: '700' },
+    buttonText: { color: t.onAccent, fontFamily: FONT, fontSize: 15.5, fontWeight: '700' },
     ghost: {
       marginTop: space.sm,
       borderColor: t.border,
@@ -272,6 +272,6 @@ const styles = (t: Theme) =>
       paddingVertical: 15,
       alignItems: 'center',
     },
-    ghostText: { color: t.text, fontSize: 15.5, fontWeight: '600' },
-    problem: { marginTop: space.md, fontSize: 13, lineHeight: 18, color: t.danger },
+    ghostText: { color: t.text, fontFamily: FONT, fontSize: 15.5, fontWeight: '600' },
+    problem: { marginTop: space.md, fontFamily: FONT, fontSize: 13, lineHeight: 18, color: t.danger },
   });

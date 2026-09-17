@@ -50,10 +50,13 @@ petros-wasm-guest = { git = "https://github.com/k2on/petros", rev = "c09832fd147
 petros-axum = { git = "https://github.com/k2on/petros", rev = "c09832fd14716efce205bdb289af7d3a19da28e8" }
 petros-auth = { git = "https://github.com/k2on/petros", rev = "c09832fd14716efce205bdb289af7d3a19da28e8" }
 harken = { path = "domain", default-features = false }
-# `fira-sans` embeds a default font. Without it iced asks the system for
-# one, which works on a desktop and gets you nothing at all in a browser:
-# wasm has no font access, so every glyph silently fails to draw.
-iced = { version = "0.14", features = ["fira-sans"] }
+# No `fira-sans`: the font is `branding/font/`, embedded by `iced/src/main.rs`
+# from `iced/assets/Inter-Regular.ttf`. A font *must* be embedded either way —
+# without one iced asks the system, which works on a desktop and gets you
+# nothing at all in a browser, since wasm has no font access and every glyph
+# silently fails to draw. What changed is only whose font it is, and that the
+# phone now has the same one.
+iced = { version = "0.14" }
 serde = { version = "1", features = ["derive"] }
 # One HTTP client for the two places this workspace makes a request: the
 # server's bridge to a house, and the desktop client fetching a cover. Blocking

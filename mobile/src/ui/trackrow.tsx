@@ -19,7 +19,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withSequence, withTiming } from 'react-native-reanimated';
 
 import { clockMs } from '@/format';
-import { radius, space, type Theme } from '@/theme';
+import { FONT, radius, space, type Theme } from '@/theme';
 import type { Item } from 'harken-native';
 import { Artwork } from './artwork';
 import { Icon } from './icon';
@@ -136,8 +136,8 @@ const styles = (t: Theme) =>
       backgroundColor: t.accent,
     },
     text: { flex: 1, gap: 2 },
-    title: { fontSize: 15.5, fontWeight: '600', color: t.text },
+    title: { fontFamily: FONT, fontSize: 15.5, fontWeight: '600', color: t.text },
     titlePlaying: { color: t.accent },
-    meta: { fontSize: 12.5, color: t.dim },
-    time: { fontSize: 12, color: t.faint, fontVariant: ['tabular-nums'] },
+    meta: { fontFamily: FONT, fontSize: 12.5, color: t.dim },
+    time: { fontFamily: FONT, fontSize: 12, color: t.faint, fontVariant: ['tabular-nums'] },
   });

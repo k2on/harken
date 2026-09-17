@@ -23,7 +23,7 @@ import { ScrollView, StyleSheet, Text, View, Pressable } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { space, radius, useTheme, type Theme } from '@/theme';
+import { FONT, space, radius, useTheme, type Theme } from '@/theme';
 import { Artwork } from '@/ui/artwork';
 import { Debug } from '@/ui/debug';
 import { Icon, type IconName } from '@/ui/icon';
@@ -250,11 +250,11 @@ const styles = (t: Theme) =>
       paddingHorizontal: space.lg,
       paddingBottom: space.sm,
     },
-    title: { fontSize: 27, fontWeight: '800', color: t.text },
+    title: { fontFamily: FONT, fontSize: 27, fontWeight: '800', color: t.text },
     headButtons: { flexDirection: 'row', alignItems: 'center', gap: space.lg },
     section: { paddingTop: space.lg },
     sectionLabel: {
-      fontSize: 12,
+      fontFamily: FONT, fontSize: 12,
       fontWeight: '700',
       color: t.dim,
       textTransform: 'uppercase',
@@ -281,6 +281,6 @@ const styles = (t: Theme) =>
     round: { borderRadius: radius.pill },
     plus: { borderWidth: StyleSheet.hairlineWidth, borderColor: t.border },
     text: { flex: 1, gap: 2 },
-    name: { fontSize: 15, fontWeight: '600', color: t.text },
-    under: { fontSize: 12, color: t.dim },
+    name: { fontFamily: FONT, fontSize: 15, fontWeight: '600', color: t.text },
+    under: { fontFamily: FONT, fontSize: 12, color: t.dim },
   });

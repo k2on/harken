@@ -33,7 +33,7 @@ import { listening } from '@/listening';
 import { mediaUrl } from '@/media';
 import { usePeer, type Peer } from '@/peer';
 import { usePlayer, type Track } from '@/player';
-import { radius, space, useTheme, type Theme } from '@/theme';
+import { FONT, radius, space, useTheme, type Theme } from '@/theme';
 import { Devices } from '@/ui/devices';
 import { PlayerSheet, BAR } from '@/ui/player';
 import { Playlists } from '@/ui/playlists';
@@ -258,5 +258,5 @@ const styles = (t: Theme) =>
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: t.border,
     },
-    noteText: { fontSize: 13, color: t.text, textAlign: 'center' },
+    noteText: { fontFamily: FONT, fontSize: 13, color: t.text, textAlign: 'center' },
   });

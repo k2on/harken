@@ -114,6 +114,9 @@ mobile/                  the phone client; src/ is UI and a socket, nothing else
 branding/                what the program looks like, once
   trumpet.svg            the mark: Pictogrammers' MDI glyph, vendored, Apache 2.0
   LICENSE.trumpet        …and its licence, kept beside it
+  font/                  the typeface: Inter, vendored, SIL OFL 1.1
+  LICENSE.inter          …and its licence, kept beside it
+  nix/font.nix           …copied to where each client can reach it; run: fonts
   nix/palette.nix        the colors — AppKit's greys and the gold — and nothing else
   nix/icon.nix           the angle, the centring, the ground, and every raster
   nix/default.nix        …written out as `palette.rs` and `palette.ts`
@@ -150,6 +153,7 @@ nix run .#web               # …a browser peer, at localhost:8080
 nix run .#bindings          # regenerate the Expo client's TS from the domain crate
 nix run .#expo-android      # …and a phone. Needs `nix develop .#android`.
 nix run .#icons             # rebuild the app icons into mobile/assets/images
+nix run .#fonts             # …and the typeface into iced/assets and mobile/assets/fonts
 nix run .#write-files       # regenerate README.md, eas.json, the palettes, the favicon
 nix build .#harken-server   # …and .#harken-iced, .#harken-web
 nix build .#apk             # the whole APK, toolchain and all
@@ -177,7 +181,7 @@ it. The same file serves a bare crate, a crate with a server, a crate with a
 phone, or this.
 
 ```
-branding/nix/*.nix       branding.palette; the icons; run: icons
+branding/nix/*.nix       branding.palette; the icons; the font; run: icons, fonts
 domain/nix/default.nix   petros.mutators.crate, petros.cargoVendorHash; run: latency
 server/nix/default.nix   harken-server, `services.harken`; run: serve
 iced/nix/default.nix     harken-iced; run: iced
@@ -2829,3 +2833,45 @@ first. The engine's own decisions are in `../petros/docs/decisions.md`.
     the way `nix run .#mutators` writes the module. The favicon is SVG, so it
     *is* checked — and it carries both themes in a media query, because a tab
     strip is light or dark and the page is never told which.
+
+- **One typeface, and it is Inter.** The desktop took iced's own Fira Sans and
+  the phone took whatever the system gave it, which on iOS is SF and on
+  Android is Roboto — three faces for one program. `branding/font/` is the one
+  vendored copy now (SIL OFL 1.1, licence beside it, the rule `trumpet.svg`
+  already follows), and `nix run .#fonts` copies it to where each client can
+  reach it.
+
+  SF Pro was the obvious target and cannot be used: Apple's licence says *"You
+  may not embed the Apple Font in any software programs or other products"*,
+  and separately bars use aimed at non-Apple operating systems. Inter is the
+  usual stand-in and is the face Apple's own greys sit under here anyway.
+
+  Four things worth knowing:
+
+  - **A copy per client, because neither narrow source tree contains
+    `branding/`.** `engineSrc` is `domain`, `server`, `iced`, `Cargo.toml` and
+    `Cargo.lock`, so an `include_bytes!` reaching `../../branding` compiles on
+    a laptop and fails in `nix flake check`; and `expo prebuild` links fonts
+    from paths under `mobile/`. A TTF is bytes, so it cannot be a *checked*
+    file — it is copied, exactly as the rasters are.
+  - **Which weights each client gets is what it actually draws.** The phone
+    writes `600`, `700` and `800` and takes Regular for the rest, so it gets
+    four faces. iced names no `Weight` anywhere — it draws one — and its
+    module is pushed over the wire, so three faces nothing draws would be
+    1.2 MB of wasm for a future that has not arrived. Add the face the day
+    something asks for the weight.
+  - **Embedding is not optional, only whose font it is.** With no font loaded
+    iced asks the system, and wasm has no font access, so in a browser every
+    glyph silently fails to draw. That is what `fira-sans` was for. Dropping
+    the feature does *not* move `cargoVendorHash` — it gates an
+    `include_bytes!` inside iced rather than pulling a crate, so `Cargo.lock`
+    is untouched, which is the opposite of the trap the covers commit fell in.
+  - **The phone links it at prebuild, not at run time.** `useFonts()` would be
+    an async load, which is a frame of the wrong font on every launch — and
+    the wrong font on a screen of track titles is the whole screen. So the
+    `expo-font` config plugin, with Android given the family and a weight per
+    face and iOS given the four files. `theme.ts` exports `FONT` and nothing
+    else in `mobile/src` names a typeface, the same rule the colors follow;
+    the debug screen's monospace is the one deliberate exception, because a
+    column of numbers and URLs is what monospace is for. **Not verified on a
+    device** — nothing here can build an APK.

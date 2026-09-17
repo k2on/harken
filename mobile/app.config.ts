@@ -67,6 +67,49 @@ const config: ExpoConfig = {
     ],
     ['expo-build-properties', { android: { usePrecompiledHeaders: true } }],
     [
+      // The typeface, the same one the desktop client embeds — one
+      // description in `branding/font/`, copied here by `nix run .#fonts`.
+      //
+      // Linked into the native project at prebuild rather than fetched at
+      // run time, which is what `useFonts()` would do: an async load is a
+      // frame of the wrong font on every launch, and the wrong font on a
+      // screen of track titles is the whole screen.
+      //
+      // Android is given the *family* with a weight per face, so
+      // `fontFamily: 'Inter'` beside a `fontWeight` resolves; iOS is given
+      // the four files and matches the weight within the family itself.
+      'expo-font',
+      {
+        fonts: [
+          './assets/fonts/Inter-Regular.ttf',
+          './assets/fonts/Inter-SemiBold.ttf',
+          './assets/fonts/Inter-Bold.ttf',
+          './assets/fonts/Inter-ExtraBold.ttf',
+        ],
+        android: {
+          fonts: [
+            {
+              fontFamily: 'Inter',
+              fontDefinitions: [
+                { path: './assets/fonts/Inter-Regular.ttf', weight: 400 },
+                { path: './assets/fonts/Inter-SemiBold.ttf', weight: 600 },
+                { path: './assets/fonts/Inter-Bold.ttf', weight: 700 },
+                { path: './assets/fonts/Inter-ExtraBold.ttf', weight: 800 },
+              ],
+            },
+          ],
+        },
+        ios: {
+          fonts: [
+            './assets/fonts/Inter-Regular.ttf',
+            './assets/fonts/Inter-SemiBold.ttf',
+            './assets/fonts/Inter-Bold.ttf',
+            './assets/fonts/Inter-ExtraBold.ttf',
+          ],
+        },
+      },
+    ],
+    [
       // Playback only. This app never records, so the microphone permission is
       // declined here rather than asked for at run time and denied — a music
       // app that asks to hear you is a music app people uninstall.

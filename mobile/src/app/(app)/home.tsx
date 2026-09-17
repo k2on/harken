@@ -13,7 +13,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { radius, space, useTheme, type Theme } from '@/theme';
+import { FONT, radius, space, useTheme, type Theme } from '@/theme';
 import { Icon } from '@/ui/icon';
 import { useShell } from './_layout';
 
@@ -100,16 +100,16 @@ const styles = (t: Theme) =>
   StyleSheet.create({
     page: { flex: 1, backgroundColor: t.bg },
     inner: { paddingHorizontal: space.lg, gap: space.sm },
-    title: { fontSize: 27, fontWeight: '800', color: t.text },
-    who: { fontSize: 13, color: t.dim, marginBottom: space.xl },
+    title: { fontFamily: FONT, fontSize: 27, fontWeight: '800', color: t.text },
+    who: { fontFamily: FONT, fontSize: 13, color: t.dim, marginBottom: space.xl },
     empty: {
       alignItems: 'center',
       gap: space.sm,
       paddingVertical: space.xl,
       paddingHorizontal: space.lg,
     },
-    emptyTitle: { fontSize: 16, fontWeight: '700', color: t.text },
-    emptyWhy: { fontSize: 13, lineHeight: 19, color: t.dim, textAlign: 'center' },
+    emptyTitle: { fontFamily: FONT, fontSize: 16, fontWeight: '700', color: t.text },
+    emptyWhy: { fontFamily: FONT, fontSize: 13, lineHeight: 19, color: t.dim, textAlign: 'center' },
     links: { gap: space.xs, paddingTop: space.lg },
     link: {
       flexDirection: 'row',
@@ -121,6 +121,6 @@ const styles = (t: Theme) =>
     },
     linkPressed: { backgroundColor: t.cardHigh },
     linkText: { flex: 1, gap: 1 },
-    linkLabel: { fontSize: 15, color: t.text, fontWeight: '700' },
-    linkWhy: { fontSize: 12.5, color: t.dim },
+    linkLabel: { fontFamily: FONT, fontSize: 15, color: t.text, fontWeight: '700' },
+    linkWhy: { fontFamily: FONT, fontSize: 12.5, color: t.dim },
   });

@@ -67,6 +67,24 @@ export type Theme = {
 };
 
 /** Spacing, in the four sizes anything here actually uses. */
+/**
+ * The typeface, and the only place this directory names one.
+ *
+ * The same rule the colors follow: nothing writes a font down, it asks — so
+ * the day the branding picks another face there is one line to change rather
+ * than sixty-eight. `branding/font/` is where it comes from and
+ * `app.config.ts` is what links it into the native project.
+ *
+ * A family and not a file. Android is given the four faces as one family with
+ * a weight each, and iOS matches a weight within a family itself, so this
+ * sits beside the `fontWeight` a style already had rather than replacing it.
+ *
+ * **Not verified on a device from here** — nothing in this container can
+ * build an APK. What is verified is that it type-checks and that every style
+ * with a `fontSize` has it.
+ */
+export const FONT = 'Inter';
+
 export const space = { xs: 4, sm: 8, md: 12, lg: 16, xl: 24 } as const;
 
 /** Corner radii. `pill` is anything taller than it is round. */

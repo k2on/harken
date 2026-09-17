@@ -32,7 +32,7 @@ import { router } from 'expo-router';
 
 import { asId } from '@/mutators.gen';
 import type { Peer } from '@/peer';
-import { radius, space, type Theme } from '@/theme';
+import { FONT, radius, space, type Theme } from '@/theme';
 import type { Item, Playlist } from 'harken-native';
 import { Icon } from './icon';
 
@@ -211,11 +211,11 @@ const styles = (t: Theme) =>
       backgroundColor: t.border,
       marginBottom: space.md,
     },
-    title: { fontSize: 16, fontWeight: '700', color: t.text },
-    sub: { fontSize: 12.5, color: t.dim, marginTop: 2 },
+    title: { fontFamily: FONT, fontSize: 16, fontWeight: '700', color: t.text },
+    sub: { fontFamily: FONT, fontSize: 12.5, color: t.dim, marginTop: 2 },
     list: { marginTop: space.md },
     listInner: { paddingBottom: space.sm },
-    empty: { color: t.faint, fontSize: 13, paddingVertical: space.md },
+    empty: { color: t.faint, fontFamily: FONT, fontSize: 13, paddingVertical: space.md },
     row: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -223,13 +223,13 @@ const styles = (t: Theme) =>
       paddingVertical: space.md,
     },
     rowPressed: { backgroundColor: t.cardHigh, borderRadius: radius.md },
-    rowText: { fontSize: 15, color: t.text, flex: 1 },
+    rowText: { fontFamily: FONT, fontSize: 15, color: t.text, flex: 1 },
     rowTextOn: { color: t.accent, fontWeight: '600' },
     naming: { flexDirection: 'row', alignItems: 'center', gap: space.sm, paddingVertical: space.sm },
     input: {
       flex: 1,
       color: t.text,
-      fontSize: 15,
+      fontFamily: FONT, fontSize: 15,
       backgroundColor: t.card,
       borderRadius: radius.md,
       paddingHorizontal: space.md,
@@ -243,5 +243,5 @@ const styles = (t: Theme) =>
       paddingHorizontal: space.md,
       paddingVertical: space.sm,
     },
-    makeText: { color: t.onAccent, fontWeight: '700', fontSize: 14 },
+    makeText: { color: t.onAccent, fontWeight: '700', fontFamily: FONT, fontSize: 14 },
   });

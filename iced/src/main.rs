@@ -4669,6 +4669,27 @@ impl App {
     }
 }
 
+/// The typeface, the same one the phone draws.
+///
+/// **Embedded rather than asked for**, which iced needs either way: with no
+/// font loaded it asks the system, and wasm has no font access, so in a
+/// browser every glyph silently fails to draw. That is what iced's own
+/// `fira-sans` feature was doing; this is the same thing with the font
+/// `branding/` chose.
+///
+/// One face, deliberately. Nothing in this program names a `Weight`, so three
+/// more would be 1.2 MB of wasm module for a future that has not arrived —
+/// and the module is pushed over the wire. The phone takes four because it
+/// writes `600`, `700` and `800`. Add the face the day something here asks
+/// for the weight.
+///
+/// `iced/assets/` rather than `branding/font/` because the sandbox's Rust
+/// tree does not contain `branding/`: an `include_bytes!` reaching out of it
+/// compiles on a laptop and fails in `nix flake check`. `nix run .#fonts`
+/// puts the copy there, the way `nix run .#icons` puts the rasters in
+/// `mobile/assets/images/`.
+const INTER: &[u8] = include_bytes!("../assets/Inter-Regular.ttf");
+
 pub fn main() -> iced::Result {
     #[cfg(target_arch = "wasm32")]
     console_error_panic_hook::set_once();
@@ -4676,6 +4697,8 @@ pub fn main() -> iced::Result {
     iced::application(App::boot, App::update, App::view)
         .subscription(App::subscription)
         .title("harken")
+        .font(INTER)
+        .default_font(iced::Font::with_name("Inter"))
         .window_size((860.0, 600.0))
         .run()
 }

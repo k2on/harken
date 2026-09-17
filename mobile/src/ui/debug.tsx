@@ -35,7 +35,7 @@ import { socketUrl, type Login } from '@petros/client';
 
 import { mediaUrl } from '@/media';
 import { databasePath, type Peer } from '@/peer';
-import { radius, space, type Theme } from '@/theme';
+import { FONT, radius, space, type Theme } from '@/theme';
 import { Icon } from '@/ui/icon';
 
 /** A time the token stops working, as something a person can act on. */
@@ -283,7 +283,7 @@ const styles = (t: Theme) =>
       paddingHorizontal: space.lg,
       paddingBottom: space.sm,
     },
-    title: { fontSize: 22, fontWeight: '800', color: t.text },
+    title: { fontFamily: FONT, fontSize: 22, fontWeight: '800', color: t.text },
     round: {
       width: 34,
       height: 34,
@@ -301,7 +301,7 @@ const styles = (t: Theme) =>
       padding: space.md,
       gap: 6,
     },
-    sectionTitle: { fontSize: 12, fontWeight: '800', color: t.accent, marginBottom: 2 },
+    sectionTitle: { fontFamily: FONT, fontSize: 12, fontWeight: '800', color: t.accent, marginBottom: 2 },
     row: { flexDirection: 'row', alignItems: 'flex-start', gap: space.sm },
     key: { width: 108, fontSize: 11.5, color: t.dim, fontFamily: mono },
     // Wrapping rather than truncating: the value that matters most here is a
@@ -315,7 +315,7 @@ const styles = (t: Theme) =>
       borderRadius: radius.md,
       paddingHorizontal: space.md,
       paddingVertical: 10,
-      fontSize: 14,
+      fontFamily: FONT, fontSize: 14,
       color: t.text,
       marginTop: 4,
     },
@@ -329,6 +329,6 @@ const styles = (t: Theme) =>
       paddingHorizontal: space.md,
     },
     muted: { opacity: 0.55 },
-    buttonText: { fontSize: 13, fontWeight: '700', color: t.text },
-    hint: { fontSize: 11, lineHeight: 15, color: t.faint, marginTop: space.sm },
+    buttonText: { fontFamily: FONT, fontSize: 13, fontWeight: '700', color: t.text },
+    hint: { fontFamily: FONT, fontSize: 11, lineHeight: 15, color: t.faint, marginTop: space.sm },
   });

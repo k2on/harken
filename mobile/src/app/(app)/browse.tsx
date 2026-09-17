@@ -17,7 +17,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import type { Source } from '@/peer';
-import { space, radius, useTheme, type Theme } from '@/theme';
+import { FONT, space, radius, useTheme, type Theme } from '@/theme';
 import { Artwork } from '@/ui/artwork';
 import { Icon } from '@/ui/icon';
 import { useShell } from './_layout';
@@ -184,19 +184,19 @@ const styles = (t: Theme) =>
       paddingHorizontal: space.lg,
       paddingBottom: space.sm,
     },
-    headLabel: { flex: 1, fontSize: 15, fontWeight: '600', color: t.text },
+    headLabel: { flex: 1, fontFamily: FONT, fontSize: 15, fontWeight: '600', color: t.text },
     headSpace: { width: 24 },
     top: { alignItems: 'center', gap: space.xs, paddingVertical: space.lg },
     title: {
-      fontSize: 22,
+      fontFamily: FONT, fontSize: 22,
       fontWeight: '800',
       color: t.text,
       textAlign: 'center',
       paddingHorizontal: space.lg,
       paddingTop: space.md,
     },
-    under: { fontSize: 12.5, color: t.dim, textAlign: 'center', paddingHorizontal: space.lg },
-    empty: { fontSize: 13, color: t.dim, textAlign: 'center', paddingTop: space.lg },
+    under: { fontFamily: FONT, fontSize: 12.5, color: t.dim, textAlign: 'center', paddingHorizontal: space.lg },
+    empty: { fontFamily: FONT, fontSize: 13, color: t.dim, textAlign: 'center', paddingTop: space.lg },
     row: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -206,6 +206,6 @@ const styles = (t: Theme) =>
     },
     pressed: { backgroundColor: t.cardHigh },
     text: { flex: 1, gap: 2 },
-    name: { fontSize: 15, fontWeight: '600', color: t.text },
-    rowUnder: { fontSize: 12, color: t.dim },
+    name: { fontFamily: FONT, fontSize: 15, fontWeight: '600', color: t.text },
+    rowUnder: { fontFamily: FONT, fontSize: 12, color: t.dim },
   });

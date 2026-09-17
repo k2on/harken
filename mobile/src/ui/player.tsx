@@ -40,7 +40,7 @@ import Animated, {
 
 import { clock } from '@/format';
 import type { Player } from '@/player';
-import { radius, space, type Theme } from '@/theme';
+import { FONT, radius, space, type Theme } from '@/theme';
 import { Artwork } from './artwork';
 import { Icon } from './icon';
 import { SeekBar } from './seekbar';
@@ -461,12 +461,12 @@ const styles = (t: Theme) =>
       paddingHorizontal: space.md,
     },
     text: { flex: 1, gap: 1 },
-    title: { fontSize: 14, fontWeight: '600', color: t.text },
-    meta: { fontSize: 12, color: t.dim },
+    title: { fontFamily: FONT, fontSize: 14, fontWeight: '600', color: t.text },
+    meta: { fontFamily: FONT, fontSize: 12, color: t.dim },
     button: { padding: space.xs },
     playingOn: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-    playingText: { fontSize: 12.5, color: t.accent, fontWeight: '600', flexShrink: 1 },
-    playingSmall: { fontSize: 11.5 },
+    playingText: { fontFamily: FONT, fontSize: 12.5, color: t.accent, fontWeight: '600', flexShrink: 1 },
+    playingSmall: { fontFamily: FONT, fontSize: 11.5 },
 
     head: {
       flexDirection: 'row',
@@ -475,15 +475,15 @@ const styles = (t: Theme) =>
       paddingBottom: space.sm,
     },
     headButton: { width: 34, alignItems: 'flex-start' },
-    headLabel: { flex: 1, textAlign: 'center', fontSize: 12.5, color: t.dim },
+    headLabel: { flex: 1, textAlign: 'center', fontFamily: FONT, fontSize: 12.5, color: t.dim },
     art: { flex: 1, alignItems: 'center', justifyContent: 'center' },
     body: { paddingHorizontal: space.xl, gap: space.md },
     titles: { flexDirection: 'row', alignItems: 'center', gap: space.md },
     titleText: { flex: 1, gap: 2 },
-    bigTitle: { fontSize: 22, fontWeight: '800', color: t.text },
-    creator: { fontSize: 14, color: t.dim },
+    bigTitle: { fontFamily: FONT, fontSize: 22, fontWeight: '800', color: t.text },
+    creator: { fontFamily: FONT, fontSize: 14, color: t.dim },
     clocks: { flexDirection: 'row', justifyContent: 'space-between' },
-    clock: { fontSize: 11, color: t.faint, fontVariant: ['tabular-nums'] },
+    clock: { fontFamily: FONT, fontSize: 11, color: t.faint, fontVariant: ['tabular-nums'] },
     transport: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -509,6 +509,6 @@ const styles = (t: Theme) =>
       borderRadius: radius.pill,
     },
     devicesPressed: { backgroundColor: t.cardHigh },
-    devicesText: { fontSize: 12.5, color: t.dim },
-    trouble: { fontSize: 12, lineHeight: 17, color: t.danger, textAlign: 'center' },
+    devicesText: { fontFamily: FONT, fontSize: 12.5, color: t.dim },
+    trouble: { fontFamily: FONT, fontSize: 12, lineHeight: 17, color: t.danger, textAlign: 'center' },
   });

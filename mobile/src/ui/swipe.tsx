@@ -27,7 +27,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 
-import { space, type Theme } from '@/theme';
+import { FONT, space, type Theme } from '@/theme';
 import { Icon, type IconName } from './icon';
 
 /** How far it has to go before letting go does anything. */
@@ -122,5 +122,5 @@ const styles = (t: Theme) =>
     },
     behindLeft: { left: 0 },
     behindRight: { right: 0 },
-    label: { fontSize: 13, fontWeight: '600', color: t.dim },
+    label: { fontFamily: FONT, fontSize: 13, fontWeight: '600', color: t.dim },
   });

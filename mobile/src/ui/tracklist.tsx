@@ -18,7 +18,7 @@ import { useCallback } from 'react';
 import { FlatList, StyleSheet, Text, View } from 'react-native';
 import type { Item } from 'harken-native';
 
-import { space, type Theme } from '@/theme';
+import { FONT, space, type Theme } from '@/theme';
 import { Icon } from './icon';
 import { Swipe } from './swipe';
 import { TrackRow } from './trackrow';
@@ -98,5 +98,5 @@ export function TrackList({
 const styles = (t: Theme) =>
   StyleSheet.create({
     empty: { alignItems: 'center', gap: space.sm, paddingVertical: space.xl * 2 },
-    emptyText: { fontSize: 13, color: t.dim },
+    emptyText: { fontFamily: FONT, fontSize: 13, color: t.dim },
   });

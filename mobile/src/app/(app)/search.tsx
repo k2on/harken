@@ -18,7 +18,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Item } from 'harken-native';
 
 import { usePlayer } from '@/player';
-import { space, radius, useTheme, type Theme } from '@/theme';
+import { FONT, space, radius, useTheme, type Theme } from '@/theme';
 import { Icon } from '@/ui/icon';
 import { TrackList } from '@/ui/tracklist';
 import { useShell } from './_layout';
@@ -87,7 +87,7 @@ export default function Search() {
 const styles = (t: Theme) =>
   StyleSheet.create({
     page: { flex: 1, backgroundColor: t.bg },
-    title: { fontSize: 27, fontWeight: '800', color: t.text, paddingHorizontal: space.lg },
+    title: { fontFamily: FONT, fontSize: 27, fontWeight: '800', color: t.text, paddingHorizontal: space.lg },
     field: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -100,5 +100,5 @@ const styles = (t: Theme) =>
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: t.border,
     },
-    input: { flex: 1, fontSize: 15, color: t.text, paddingVertical: 2 },
+    input: { flex: 1, fontFamily: FONT, fontSize: 15, color: t.text, paddingVertical: 2 },
   });

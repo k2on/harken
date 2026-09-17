@@ -20,7 +20,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { asId } from '@/mutators.gen';
 import { usePlayer } from '@/player';
 import type { Source } from '@/peer';
-import { space, radius, useTheme, type Theme } from '@/theme';
+import { FONT, space, radius, useTheme, type Theme } from '@/theme';
 import { Artwork } from '@/ui/artwork';
 import { Icon } from '@/ui/icon';
 import { TrackList } from '@/ui/tracklist';
@@ -149,18 +149,18 @@ const styles = (t: Theme) =>
       paddingHorizontal: space.lg,
       paddingBottom: space.sm,
     },
-    headLabel: { flex: 1, fontSize: 15, fontWeight: '600', color: t.text },
+    headLabel: { flex: 1, fontFamily: FONT, fontSize: 15, fontWeight: '600', color: t.text },
     headSpace: { width: 24 },
     top: { alignItems: 'center', gap: space.xs, paddingVertical: space.lg },
     title: {
-      fontSize: 22,
+      fontFamily: FONT, fontSize: 22,
       fontWeight: '800',
       color: t.text,
       textAlign: 'center',
       paddingHorizontal: space.lg,
       paddingTop: space.md,
     },
-    under: { fontSize: 12.5, color: t.dim },
+    under: { fontFamily: FONT, fontSize: 12.5, color: t.dim },
     actions: {
       flexDirection: 'row',
       alignItems: 'center',

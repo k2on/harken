@@ -14,7 +14,7 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { router, usePathname } from 'expo-router';
 
-import { space, type Theme } from '@/theme';
+import { FONT, space, type Theme } from '@/theme';
 import { Icon, type IconName } from './icon';
 
 const TABS: { href: string; label: string; icon: IconName }[] = [
@@ -70,6 +70,6 @@ const styles = (t: Theme) =>
       // few pixels apart is a seam.
     },
     tab: { flex: 1, alignItems: 'center', gap: 3 },
-    label: { fontSize: 10.5, color: t.faint },
+    label: { fontFamily: FONT, fontSize: 10.5, color: t.faint },
     labelOn: { color: t.text, fontWeight: '600' },
   });
