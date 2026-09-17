@@ -1064,6 +1064,44 @@ every row is one line. Four things about it are load-bearing:
   things a key does — lands the cursor and runs it — so whichever you used
   last, the other carries on from there.
 
+  **Pointing at an entry lands the cursor on it**, in all three overlays, the
+  same as the table's rows and for the same reason: one highlight, however you
+  moved it. `menu_land` is the one way, because everything the dwell below does
+  keys off *moving* and two call sites setting `at` would each have to remember
+  it.
+
+  **And a submenu opens by being pointed at, after a beat.** `Add to playlist`
+  is the one entry that owns one, which `RowMenu::entries` says rather than an
+  index written down beside it. Four things it needed:
+
+  - **The beat is not zero.** That entry sits between `Play` and `Go to …`, so
+    a pointer on its way down crosses it every time, and opening on the way
+    past is a panel flashing under the cursor on a move that was never about
+    it — plus a `playlists_of` read for each crossing. 200ms, four of the 50ms
+    ticks, about what AppKit waits.
+  - **Moving off the entry closes it.** A submenu belongs to its parent entry,
+    so the cursor leaving is the submenu going — which is what makes pointing
+    at `Go to …` afterwards mean `Go to …`.
+  - **`offered` stops it reopening.** `<Esc>` out of a submenu leaves the
+    cursor on the entry it came from, and without this the next tick opens it
+    again: an overlay you cannot close. It clears on moving, so leaving and
+    coming back offers it a second time, which is what somebody who closed it
+    by accident will do.
+  - **The test's tick counts are numbers, not `SUBMENU_DWELL`.** Written
+    `for _ in 1..SUBMENU_DWELL`, setting the constant to 1 makes the range
+    empty and the "not yet" assertion never runs — the test shrinks with the
+    thing it holds. One tick is a crossing and twenty is a rest, and it now
+    falsifies in both directions. Second time that shape has been caught here;
+    see `a_menu_never_hangs_off_the_glass`.
+
+  **The page behind an overlay does not follow the pointer either**, and that
+  is a *separate* rule from the backdrop. A backdrop stops a click and a wheel
+  because `mouse_area` captures those events; a hover is published by the row
+  itself and falls through every layer above it. So the rows behind went on
+  reporting, and the cursor the menu is about crept away under an overlay that
+  was no longer drawing it — invisible until `<Esc>`, which then landed
+  somewhere else entirely. `HoverAt` is refused unless `focus()` is a pane.
+
   **Where it opens is AppKit's two rules, because they are two rules.** A
   right click puts the menu's corner on the pointer, which is what a
   contextual menu does on every desktop and has done on macOS since Mac OS 8.

@@ -561,6 +561,16 @@ struct RowMenu {
     /// pointer is a menu that is missing from half this window's controls —
     /// everything else here answers to `j` and `k`.
     at: usize,
+    /// Ticks the cursor has rested on `at`, for the submenu below.
+    dwell: u8,
+    /// …and whether the submenu this entry owns has already been offered.
+    ///
+    /// `<Esc>` out of a submenu leaves the cursor on the entry it came from,
+    /// and without this the very next tick would open it again — an overlay
+    /// you cannot close. It clears when the cursor moves, so leaving the entry
+    /// and coming back offers it a second time, which is what a person who
+    /// closed it by accident will do.
+    offered: bool,
 }
 
 impl RowMenu {
@@ -2047,14 +2057,72 @@ impl App {
     /// uses. Four entries at most, so it is the same one-column grid a hundred
     /// rows get.
     fn menu_travel(&mut self, motion: vim::Motion) -> Task<Message> {
-        let Some(menu) = &mut self.menu else {
+        let Some(menu) = &self.menu else {
             return Task::none();
         };
         let shape = vim::Grid::column(menu.entries().len());
         if let Some(at) = shape.step(menu.at, motion) {
-            menu.at = at;
+            self.menu_land(at);
         }
         Task::none()
+    }
+
+    /// How long the cursor rests on an entry before its submenu opens, in
+    /// ticks of the 50ms clock — so 200ms, about what AppKit waits.
+    ///
+    /// Not zero, and that is the whole reason there is a number here. Sweeping
+    /// from `Play` down to `Go to …` passes straight over `Add to playlist`,
+    /// and opening on the way past means a panel flashing up under the pointer
+    /// on a move that was never about it — plus a `playlists_of` read for each
+    /// one. A beat says "you stopped here" and a sweep does not.
+    const SUBMENU_DWELL: u8 = 4;
+
+    /// Open the submenu the cursor has come to rest on.
+    ///
+    /// The one entry with a submenu is `Add to playlist`, and which entry that
+    /// is comes from `RowMenu::entries` rather than from an index written down
+    /// here — the same reason the view and `<Enter>` both read that list.
+    ///
+    /// `<Enter>` still opens it at once. This is the *pointing* half, and the
+    /// two are the same rule the rest of this window has: a click does what a
+    /// key does, and the cursor is the cursor whichever moved it.
+    fn dwell_submenu(&mut self) -> Option<Task<Message>> {
+        let menu = self.menu.as_mut()?;
+        if self.picker.is_some() || menu.offered {
+            return None;
+        }
+        if !matches!(menu.entries().get(menu.at), Some((_, Message::OpenPicker))) {
+            return None;
+        }
+        menu.dwell = menu.dwell.saturating_add(1);
+        if menu.dwell < Self::SUBMENU_DWELL {
+            return None;
+        }
+        menu.offered = true;
+        Some(self.open_picker())
+    }
+
+    /// Put the menu's cursor on an entry, however it got there.
+    ///
+    /// The one way, because a hover and a `j` have to mean the same thing —
+    /// and because everything the dwell below does keys off *moving*, which
+    /// two call sites setting `at` themselves would each have to remember.
+    ///
+    /// Moving off an entry closes the submenu it owned. That is what a menu
+    /// does everywhere: a submenu belongs to its parent entry, so the cursor
+    /// leaving is the submenu going.
+    fn menu_land(&mut self, at: usize) {
+        let Some(menu) = &mut self.menu else {
+            return;
+        };
+        let at = at.min(menu.entries().len().saturating_sub(1));
+        if menu.at == at {
+            return;
+        }
+        menu.at = at;
+        menu.dwell = 0;
+        menu.offered = false;
+        self.picker = None;
     }
 
     /// Move inside the picker, through the same shape the panes use.
@@ -2459,6 +2527,15 @@ impl App {
                 Ok(())
             }
             Message::HoverAt(at) => {
+                // Not while a context window is up. A backdrop stops a click
+                // and a wheel reaching the page, but a hover is not an event
+                // it can swallow — so the rows behind went on reporting, and
+                // the cursor the menu is about crept away under an overlay
+                // that is not drawing it. The page behind a menu is inert
+                // everywhere, and this is the half a backdrop cannot say.
+                if !matches!(self.focus(), Focus::Pane(_)) {
+                    return Task::none();
+                }
                 // Takes the keyboard as well as the highlight, because the
                 // cursor is only *drawn* in the pane that has it — a hover
                 // that moved an undrawn cursor would look like nothing
@@ -2477,9 +2554,7 @@ impl App {
                 Ok(())
             }
             Message::MenuAt(at) => {
-                if let Some(menu) = &mut self.menu {
-                    menu.at = at.min(menu.entries().len().saturating_sub(1));
-                }
+                self.menu_land(at);
                 Ok(())
             }
             Message::MenuActivate => {
@@ -2527,6 +2602,8 @@ impl App {
                             artist,
                             origin: Self::menu_origin(self.cursor, self.window, entries, anchor),
                             at: 0,
+                            dwell: 0,
+                            offered: false,
                         });
                     }
                 }
@@ -2695,6 +2772,11 @@ impl App {
             // a second is plenty to move on by.
             Message::Swallow => Ok(()),
             Message::Tick => {
+                // A submenu opens by being pointed at, which is what a menu
+                // does on every desktop — see `dwell_submenu`.
+                if let Some(task) = self.dwell_submenu() {
+                    return task;
+                }
                 if self.player.ended() {
                     self.skip(1);
                 }
@@ -3078,6 +3160,10 @@ impl App {
                     // messages a click is: the pointer lands the cursor where
                     // the keyboard would have walked it, so whichever you used
                     // last, the other carries on from there.
+                    // Pointing at an entry is landing the cursor on it, the
+                    // same as `j` — one highlight, however you moved it, and
+                    // the thing a submenu opens from.
+                    .on_enter(Message::MenuAt(i))
                     .on_press(Message::MenuAt(i))
                     .on_release(Message::MenuActivate),
                 )
@@ -3964,6 +4050,7 @@ impl App {
                     mouse_area(container(line).width(Length::Fill).padding([3, 4]).style(
                         move |theme: &iced::Theme| row_style(theme, on_cursor, true, i % 2 == 1),
                     ))
+                    .on_enter(Message::PickerAt(i))
                     .on_press(Message::PickerAt(i))
                     .on_release(Message::PickerActivate),
                 )
@@ -3995,6 +4082,7 @@ impl App {
                         row_style(theme, on_cursor, true, last % 2 == 1)
                     }),
                 )
+                .on_enter(Message::PickerAt(last))
                 .on_press(Message::PickerAt(last))
                 .on_release(Message::PickerActivate)
                 .into()
@@ -4367,6 +4455,7 @@ impl App {
             // not.
             let entry: Element<'_, Message> = if audible {
                 mouse_area(entry)
+                    .on_enter(Message::DeviceAt(i))
                     .on_press(Message::DeviceAt(i))
                     .on_release(Message::PickDevice(Some(device.id.clone())))
                     .into()
@@ -4403,6 +4492,7 @@ impl App {
                     ..container::Style::default()
                 }),
             )
+            .on_enter(Message::DeviceAt(last))
             .on_press(Message::DeviceAt(last))
             .on_release(Message::PickDevice(None)),
         );
@@ -5128,6 +5218,110 @@ mod context {
             window.width - App::PAGE_PADDING - super::SCROLLBAR,
             "the menu ends where the dots do"
         );
+    }
+
+    /// A submenu opens by being pointed at, and a sweep past is not pointing.
+    ///
+    /// The delay is the whole of what makes this usable: `Add to playlist` sits
+    /// between `Play` and `Go to …`, so a pointer on its way down crosses it
+    /// every time, and opening on the way past is a panel flashing under the
+    /// cursor on a move that was never about it.
+    ///
+    /// **The tick counts here are numbers and not `SUBMENU_DWELL`, and the
+    /// first version used the constant and was worthless.** Written
+    /// `for _ in 1..SUBMENU_DWELL`, setting the constant to 1 made the range
+    /// empty and the "not yet" assertion never ran — the test shrank with the
+    /// thing it was holding. One tick is 50ms, which is a pointer crossing an
+    /// entry; twenty is a second, which is somebody who stopped. Falsify it in
+    /// either direction: `SUBMENU_DWELL = 1` fails the first half and anything
+    /// over 20 fails the second.
+    #[test]
+    fn a_submenu_opens_by_being_pointed_at_and_not_by_being_passed_over() {
+        let mut app = app("dwell");
+        let id = app.peer.as_ref().unwrap().rows()[2].id;
+        let _ = app.update(Message::RowMenu(id, Anchor::Pointer));
+
+        // Entry 1 is `Add to playlist…`, which is the one with a submenu —
+        // and `entries()` is where that is said, not an index written here.
+        assert!(matches!(
+            app.menu.as_ref().unwrap().entries().get(1),
+            Some((_, Message::OpenPicker))
+        ));
+        let _ = app.update(Message::MenuAt(1));
+        let _ = app.update(Message::Tick);
+        assert!(app.picker.is_none(), "a sweep across is not a rest on");
+        for _ in 0..20 {
+            let _ = app.update(Message::Tick);
+        }
+        assert!(app.picker.is_some(), "…and resting on it opens it");
+
+        // `<Esc>` leaves the cursor on the entry it came from. Without
+        // `offered` the very next tick reopens it and there is no way out.
+        let _ = app.update(Message::ClosePicker);
+        for _ in 0..20 {
+            let _ = app.update(Message::Tick);
+        }
+        assert!(
+            app.picker.is_none(),
+            "closed stays closed while you are on it"
+        );
+
+        // …and leaving the entry and coming back offers it again, which is
+        // what somebody who closed it by accident will do.
+        let _ = app.update(Message::MenuAt(0));
+        let _ = app.update(Message::MenuAt(1));
+        for _ in 0..20 {
+            let _ = app.update(Message::Tick);
+        }
+        assert!(app.picker.is_some(), "and it is offered a second time");
+    }
+
+    /// A submenu belongs to its parent entry, so the cursor leaving is the
+    /// submenu going — which is what every menu on every desktop does, and
+    /// what makes pointing at `Go to …` mean `Go to …` rather than nothing.
+    ///
+    /// Falsify it by dropping the `self.picker = None` in `menu_land`.
+    #[test]
+    fn moving_off_the_parent_closes_the_submenu() {
+        let mut app = app("submenu");
+        let id = app.peer.as_ref().unwrap().rows()[2].id;
+        let _ = app.update(Message::RowMenu(id, Anchor::Pointer));
+        let _ = app.update(Message::MenuAt(1));
+        let _ = app.update(Message::MenuActivate);
+        assert!(app.picker.is_some(), "<Enter> opens it without waiting");
+        assert_eq!(app.focus(), Focus::Picker);
+
+        let _ = app.update(Message::MenuAt(0));
+        assert!(
+            app.picker.is_none(),
+            "the cursor left the entry it hung off"
+        );
+        assert_eq!(app.focus(), Focus::Menu, "…and the keyboard came back");
+    }
+
+    /// The page behind a context window does not follow the pointer.
+    ///
+    /// A backdrop stops a click and a wheel, and cannot stop a hover: an
+    /// `on_enter` is published by the row itself and falls through every layer
+    /// above it. So the rows behind went on reporting, and the cursor the menu
+    /// is *about* crept away under an overlay that was no longer drawing it —
+    /// invisible until `<Esc>`, which then landed somewhere else entirely.
+    /// Falsify it by dropping the `focus()` guard on `HoverAt`.
+    #[test]
+    fn the_page_behind_a_context_window_does_not_follow_the_pointer() {
+        let mut app = app("inert");
+        app.pane = Pane::Tracks;
+        let id = app.peer.as_ref().unwrap().rows()[2].id;
+        let _ = app.update(Message::RowMenu(id, Anchor::Pointer));
+        assert_eq!(app.at(Pane::Tracks), 2);
+
+        let _ = app.update(Message::HoverAt(9));
+        assert_eq!(app.at(Pane::Tracks), 2, "the menu is still about row 2");
+
+        // …and with nothing over it, hovering is exactly what it was.
+        let _ = app.update(Message::CloseMenu);
+        let _ = app.update(Message::HoverAt(9));
+        assert_eq!(app.at(Pane::Tracks), 9);
     }
 
     /// …and it stays on the glass at every window a person can drag.
