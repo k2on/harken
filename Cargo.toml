@@ -56,7 +56,16 @@ harken = { path = "domain", default-features = false }
 # nothing at all in a browser, since wasm has no font access and every glyph
 # silently fails to draw. What changed is only whose font it is, and that the
 # phone now has the same one.
-iced = { version = "0.14" }
+# libcosmic rather than iced: it vendors its own fork of iced 0.14 and
+# re-exports it as `cosmic::iced`, so most of this client's `iced::` paths
+# survive a `use cosmic::iced`. The checkout must carry the two patches in
+# `iced/nix/libcosmic/` — see the note there. A committable answer is a fork
+# of pop-os/libcosmic with them applied, depended on by git rev the way petros
+# is; the path here is the experiment, not the plan.
+libcosmic = { path = "../libcosmic", default-features = false, features = [
+    "winit",
+    "multi-window",
+] }
 serde = { version = "1", features = ["derive"] }
 # One HTTP client for the two places this workspace makes a request: the
 # server's bridge to a house, and the desktop client fetching a cover. Blocking

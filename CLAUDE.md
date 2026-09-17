@@ -3036,6 +3036,64 @@ identical from outside, which is why it is written down rather than left.
 Nothing here says harken's six thousand lines port cleanly, only that the
 toolkit and the two widgets this was about do work in a browser.
 
+## Porting this client to `cosmic::Application`: started, not finished
+
+On `claude/wizardly-cori-nkdj8u`, and **it does not compile yet**. What is
+done is the structure; what is left is the widget tree's type parameter, and
+the shape of what is left is the useful part of this note.
+
+Done, and each one is a real finding rather than a rename:
+
+- **The entry point.** `iced::application(…)` was a builder; libcosmic runs an
+  `Application` impl. `update`, `view` and `subscription` moved to a second
+  inherent `impl App` and the trait delegates, because the trait speaks
+  `Task<cosmic::Action<Message>>` and this client speaks its own `Message` —
+  **one `map(cosmic::Action::App)` at the seam beats wrapping every `Task`
+  inside.** `Core` is a new field, handed in by `init` rather than built by
+  `boot`.
+- **`cosmic::iced` is a re-export, so most paths survived a prefix.** 107
+  `iced::` references became `cosmic::iced::` mechanically; only `Theme` and
+  `Element` are libcosmic's own, and `cosmic::Element<'a, Message>` is exactly
+  the shape the twenty view signatures already used.
+- **The space bar is a character on this fork, not a named key.** Upstream
+  iced has `Named::Space`; pop-os's does not — it is only in `Code` — so a
+  space arrives as `Character(" ")`. `<Space>` is the transport, and the arm
+  below it hands characters to `character()`, so without a guard the play
+  button would simply stop working and nothing would say why.
+- **libcosmic's style classes cannot carry a closure that captures.**
+  `Text::Custom` is `fn(&Theme) -> Style` — a bare pointer, because the class
+  has to be `Copy` — so `cell`'s three bools, the menu entry's `lit` and the
+  sidebar's `on_cursor && focused` become *named* `fn` items chosen by a
+  `match`. That is more words and it makes the precedence visible:
+  `on_cursor` wins over `accent`, which wins over `dim`, five outcomes rather
+  than eight. `Svg` is the same. `Container::Custom` boxes, so it keeps its
+  closure.
+- **Struct literals gained fields.** `text::Style` has `selected_fill` and
+  `selected_text_color`, `slider::Style` a `breakpoint`, `scrollable::Style`
+  an `auto_scroll` — and `scrollable::default` is iced's own, for iced's own
+  theme, so the rest is written out rather than spread from it.
+- **`palette.rs` and its generator moved together**, by hand, because nothing
+  in this container runs nix and `files` fails while the two differ — the same
+  rule `glyphs.rs` is under. `of` reads `theme.theme_type.is_dark()` now.
+
+**What is left, and why it is not a few more rounds.** Five compile cycles in
+a row ended on ten errors — not nine, then six, then three. The count is flat
+because rustc reports one error per expression tree, so each fix uncovers the
+next one underneath it, and they are all the same thing: **a widget's `Theme`
+parameter, defaulting to iced's, inside a tree that is now cosmic's.** Fixing
+them where rustc points is chasing the front of a wave.
+
+The pass that would actually finish it is deliberate rather than reactive: go
+through every helper that returns a widget — `panel`, `panel_entry`, `cell`,
+`heading`, `section`, the `view_*` family — and write the theme into each
+signature at once, then compile. About forty signatures. Doing that first
+would have been cheaper than five rounds of following the compiler.
+
+**Not started at all**: the tests, the web build, `iced/nix/`, and the
+dependency itself — the workspace points at a path, and a committable answer
+is a fork of pop-os/libcosmic carrying `iced/nix/libcosmic/`'s patches,
+depended on by git rev the way petros is.
+
 ## Not verified
 
 iOS has never been built from this repository — no machine here can run the

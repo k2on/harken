@@ -13,8 +13,9 @@
 //! gets iced's answer. So every widget this program draws is styled here or
 //! at its call site, and "it looked fine" is not evidence — the blue only
 //! showed up once there was gold beside it.
-use iced::widget::{button, scrollable, slider, text};
-use iced::{Background, Border, Color, Theme};
+use cosmic::iced::widget::{button, scrollable, slider, text};
+use cosmic::iced::{Background, Border, Color};
+use cosmic::Theme;
 
 use crate::palette;
 
@@ -25,6 +26,7 @@ use crate::palette;
 pub fn dim(theme: &Theme) -> text::Style {
     text::Style {
         color: Some(palette::of(theme).background.base.text.scale_alpha(0.6)),
+        ..text::Style::default()
     }
 }
 
@@ -51,6 +53,11 @@ pub fn seek(theme: &Theme, status: slider::Status) -> slider::Style {
                 width: 0.0,
                 color: Color::TRANSPARENT,
             },
+        },
+        // Nothing here marks breakpoints on the seek bar, so this only has
+        // to be a colour the widget never paints.
+        breakpoint: slider::Breakpoint {
+            color: palette.background.base.color,
         },
         handle: slider::Handle {
             shape: slider::HandleShape::Circle { radius: 7.0 },
@@ -138,6 +145,15 @@ pub fn bars(theme: &Theme, status: scrollable::Status) -> scrollable::Style {
     scrollable::Style {
         vertical_rail: v,
         horizontal_rail: h,
-        ..scrollable::default(theme, status)
+        // The parts this program does not paint: the scrollable's own
+        // ground is the page's, there is no corner between two bars because
+        // only one is ever shown, and nothing here autoscrolls.
+        container: cosmic::iced::widget::container::Style::default(),
+        gap: None,
+        auto_scroll: scrollable::AutoScroll {
+            background: Background::Color(Color::TRANSPARENT),
+            border: Border::default(),
+            shadow: Default::default(),
+        },
     }
 }

@@ -24,7 +24,7 @@
 //! clamping are different answers to different questions, and keeping them
 //! apart is what lets one grammar serve a list, a row and a grid.
 
-use iced::keyboard::{key::Named, Key, Modifiers};
+use cosmic::iced::keyboard::{key::Named, Key, Modifiers};
 
 /// How far a page moves. Vim's `^D` is half a window; a component here does not
 /// know how tall its window is, so this is a fixed step and says so rather than
@@ -136,10 +136,6 @@ impl Keys {
                     query.pop();
                     None
                 }
-                Key::Named(Named::Space) => {
-                    query.push(' ');
-                    None
-                }
                 Key::Character(c) => {
                     query.push_str(c);
                     None
@@ -171,7 +167,13 @@ impl Keys {
                 self.pending = None;
                 Some(Action::Activate)
             }
-            Key::Named(Named::Space) => {
+            // **The space bar is a character here, not a named key.** Upstream
+            // iced has `Named::Space`; the fork libcosmic vendors does not —
+            // it is only in `Code` — so a space arrives as `Character(" ")`.
+            // Matched before the arm below, which would otherwise hand a space
+            // to `character` and get nothing, silently: `<Space>` is the
+            // transport, so it would read as the play button having died.
+            Key::Character(c) if c.as_str() == " " => {
                 self.count = None;
                 self.pending = None;
                 Some(Action::Toggle)

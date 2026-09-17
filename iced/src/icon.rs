@@ -40,8 +40,8 @@
 //! chosen against the first.
 
 use crate::glyphs;
-use iced::widget::{svg, Svg};
-use iced::Theme;
+use cosmic::iced::widget::{svg, Svg};
+use cosmic::Theme;
 
 /// How big a transport button is drawn in the now-playing bar.
 pub const TRANSPORT: f32 = 15.0;
@@ -50,31 +50,31 @@ pub const TRANSPORT: f32 = 15.0;
 ///
 /// `dim` is the pair either side of play/pause: they do the same kind of thing
 /// and should not compete with it for the eye.
-fn transport<'a>(shape: &'static [u8], dim: bool) -> Svg<'a> {
+fn transport<'a>(shape: &'static [u8], dim: bool) -> Svg<'a, Theme> {
     svg(svg::Handle::from_memory(shape))
         .width(TRANSPORT)
         .height(TRANSPORT)
-        .style(move |theme: &Theme, _| {
+        .class(cosmic::theme::Svg::custom(move |theme: &Theme| {
             let text = crate::palette::of(theme).background.base.text;
             svg::Style {
                 color: Some(if dim { text.scale_alpha(0.6) } else { text }),
             }
-        })
+        }))
 }
 
-pub fn play<'a>() -> Svg<'a> {
+pub fn play<'a>() -> Svg<'a, Theme> {
     transport(glyphs::PLAY, false)
 }
 
-pub fn pause<'a>() -> Svg<'a> {
+pub fn pause<'a>() -> Svg<'a, Theme> {
     transport(glyphs::PAUSE, false)
 }
 
-pub fn previous<'a>() -> Svg<'a> {
+pub fn previous<'a>() -> Svg<'a, Theme> {
     transport(glyphs::PREVIOUS, true)
 }
 
-pub fn next<'a>() -> Svg<'a> {
+pub fn next<'a>() -> Svg<'a, Theme> {
     transport(glyphs::NEXT, true)
 }
 
@@ -89,7 +89,7 @@ pub fn next<'a>() -> Svg<'a> {
 /// `on_cursor` is the case the color has to answer: that row is painted in
 /// the accent, so the mark takes the one color that background was paired
 /// with. Off it, the mark *is* the accent, the same as the title beside it.
-pub fn playing<'a>(paused: bool, on_cursor: bool) -> Svg<'a> {
+pub fn playing<'a>(paused: bool, on_cursor: bool) -> Svg<'a, Theme> {
     svg(svg::Handle::from_memory(if paused {
         glyphs::PLAY
     } else {
@@ -97,7 +97,7 @@ pub fn playing<'a>(paused: bool, on_cursor: bool) -> Svg<'a> {
     }))
     .width(TRANSPORT)
     .height(TRANSPORT)
-    .style(move |theme: &Theme, _| {
+    .class(cosmic::theme::Svg::custom(move |theme: &Theme| {
         let palette = crate::palette::of(theme);
         svg::Style {
             color: Some(if on_cursor {
@@ -106,7 +106,7 @@ pub fn playing<'a>(paused: bool, on_cursor: bool) -> Svg<'a> {
                 palette.primary.base.color
             }),
         }
-    })
+    }))
 }
 
 /// The tick beside a playlist this track is on.
@@ -115,11 +115,11 @@ pub fn playing<'a>(paused: bool, on_cursor: bool) -> Svg<'a> {
 /// "this one", and a second color for a second kind of yes would be a color
 /// nobody chose. On the cursor's own row it is the one color that background
 /// was paired with.
-pub fn tick<'a>(on_cursor: bool) -> Svg<'a> {
+pub fn tick<'a>(on_cursor: bool) -> Svg<'a, Theme> {
     svg(svg::Handle::from_memory(glyphs::TICK))
         .width(TRANSPORT)
         .height(TRANSPORT)
-        .style(move |theme: &Theme, _| {
+        .class(cosmic::theme::Svg::custom(move |theme: &Theme| {
             let palette = crate::palette::of(theme);
             svg::Style {
                 color: Some(if on_cursor {
@@ -128,18 +128,18 @@ pub fn tick<'a>(on_cursor: bool) -> Svg<'a> {
                     palette.primary.base.color
                 }),
             }
-        })
+        }))
 }
 
 /// The three dots that open a row's menu.
 ///
 /// Drawn faintly: it is on every row, and something on every row that is as
 /// loud as the title is something that competes with a hundred titles.
-pub fn more<'a>(on_cursor: bool) -> Svg<'a> {
+pub fn more<'a>(on_cursor: bool) -> Svg<'a, Theme> {
     svg(svg::Handle::from_memory(glyphs::MORE))
         .width(TRANSPORT)
         .height(TRANSPORT)
-        .style(move |theme: &Theme, _| {
+        .class(cosmic::theme::Svg::custom(move |theme: &Theme| {
             let palette = crate::palette::of(theme);
             svg::Style {
                 color: Some(if on_cursor {
@@ -148,7 +148,7 @@ pub fn more<'a>(on_cursor: bool) -> Svg<'a> {
                     palette.background.base.text.scale_alpha(0.45)
                 }),
             }
-        })
+        }))
 }
 
 /// The mark on a menu entry that has more behind it.
@@ -160,11 +160,11 @@ pub fn more<'a>(on_cursor: bool) -> Svg<'a> {
 ///
 /// Dimmer than the label it sits beside: it says *how* this entry behaves, not
 /// what it does.
-pub fn chevron<'a>(lit: bool) -> Svg<'a> {
+pub fn chevron<'a>(lit: bool) -> Svg<'a, Theme> {
     svg(svg::Handle::from_memory(glyphs::CHEVRON))
         .width(TRANSPORT)
         .height(TRANSPORT)
-        .style(move |theme: &Theme, _| {
+        .class(cosmic::theme::Svg::custom(move |theme: &Theme| {
             let palette = crate::palette::of(theme);
             svg::Style {
                 color: Some(match lit {
@@ -172,7 +172,7 @@ pub fn chevron<'a>(lit: bool) -> Svg<'a> {
                     false => palette.background.base.text.scale_alpha(0.55),
                 }),
             }
-        })
+        }))
 }
 
 /// A glyph beside a line of text — a sidebar row, a menu entry.
@@ -182,11 +182,11 @@ pub fn chevron<'a>(lit: bool) -> Svg<'a> {
 /// would compete with four names for the same glance. `lit` is the row under
 /// the cursor, where the one legible colour is the one the accent was paired
 /// with.
-pub fn line<'a>(shape: &'static [u8], lit: bool) -> Svg<'a> {
+pub fn line<'a>(shape: &'static [u8], lit: bool) -> Svg<'a, Theme> {
     svg(svg::Handle::from_memory(shape))
         .width(TRANSPORT)
         .height(TRANSPORT)
-        .style(move |theme: &Theme, _| {
+        .class(cosmic::theme::Svg::custom(move |theme: &Theme| {
             let palette = crate::palette::of(theme);
             svg::Style {
                 color: Some(match lit {
@@ -194,7 +194,7 @@ pub fn line<'a>(shape: &'static [u8], lit: bool) -> Svg<'a> {
                     false => palette.background.base.text.scale_alpha(0.6),
                 }),
             }
-        })
+        }))
 }
 
 /// Where the sound is coming from, in the now-playing bar.
@@ -203,11 +203,11 @@ pub fn line<'a>(shape: &'static [u8], lit: bool) -> Svg<'a> {
 /// which is the one thing the label beside it cannot say at a glance: "this
 /// device" and "Phone" are both just words, and the color is what makes the
 /// common case need no reading.
-pub fn devices<'a>(here: bool) -> Svg<'a> {
+pub fn devices<'a>(here: bool) -> Svg<'a, Theme> {
     svg(svg::Handle::from_memory(glyphs::DEVICES))
         .width(TRANSPORT)
         .height(TRANSPORT)
-        .style(move |theme: &Theme, _| {
+        .class(cosmic::theme::Svg::custom(move |theme: &Theme| {
             let palette = crate::palette::of(theme);
             svg::Style {
                 color: Some(if here {
@@ -216,7 +216,7 @@ pub fn devices<'a>(here: bool) -> Svg<'a> {
                     palette.background.base.text.scale_alpha(0.75)
                 }),
             }
-        })
+        }))
 }
 
 /// **Every shape in the table can actually draw.**

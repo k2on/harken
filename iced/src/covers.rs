@@ -38,8 +38,8 @@
 
 use std::collections::HashMap;
 
-use iced::widget::image;
-use iced::Task;
+use cosmic::iced::widget::image;
+use cosmic::iced::Task;
 
 /// The longest side a cover is kept at, in pixels.
 ///
@@ -173,7 +173,7 @@ fn key(url: &str) -> String {
 #[cfg(not(target_arch = "wasm32"))]
 mod imp {
     use super::{key, Loaded, Rgba, BOUND};
-    use iced::Task;
+    use cosmic::iced::Task;
 
     /// Where a cover lives between runs.
     ///
@@ -192,7 +192,7 @@ mod imp {
     /// The pixels, from the disk if the bytes are there and from the network if
     /// not, decoded and shrunk before they come back.
     ///
-    /// Blocking, on a thread of its own. `iced::futures::channel::oneshot` is
+    /// Blocking, on a thread of its own. `cosmic::iced::futures::channel::oneshot` is
     /// what carries the answer back, so this needs no runtime — which matters,
     /// because the desktop build's executor is `smol` and handing it a
     /// blocking HTTP call would stall every other task behind it. The decode
@@ -200,7 +200,7 @@ mod imp {
     /// renderer: it is the one place in this program where taking twenty
     /// milliseconds costs nobody anything.
     pub fn fetch(url: String) -> Task<Loaded> {
-        let (tx, rx) = iced::futures::channel::oneshot::channel();
+        let (tx, rx) = cosmic::iced::futures::channel::oneshot::channel();
         let back = url.clone();
         std::thread::spawn(move || {
             let _ = tx.send(blocking(&back).and_then(|bytes| shrink(&bytes)));
@@ -244,7 +244,7 @@ mod imp {
 
     /// Decode, and shrink to fit [`BOUND`] if it does not already.
     ///
-    /// `::image` is the crate; `image` in this file is `iced::widget::image`.
+    /// `::image` is the crate; `image` in this file is `cosmic::iced::widget::image`.
     /// `resize` fits inside the box given and keeps the aspect ratio, so one
     /// call says "no longer than this on either side" without arithmetic here.
     /// `Triangle` is a weighted downscale — `Nearest` at these ratios drops
@@ -270,7 +270,7 @@ mod imp {
 #[cfg(target_arch = "wasm32")]
 mod imp {
     use super::{Loaded, Rgba, BOUND};
-    use iced::Task;
+    use cosmic::iced::Task;
     use wasm_bindgen::prelude::*;
 
     // A snippet rather than `web-sys`, the same trade `player.rs` makes for

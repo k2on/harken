@@ -75,14 +75,15 @@
           //! icon that uses the same gold, and reach the phone as
           //! `mobile/src/palette.ts` from the same description.
           //!
-          //! iced picks Light or Dark from the system and hands every style
-          //! closure the theme it picked; [`of`] reads which of the two that
-          //! was and answers with ours. So the rule that makes dark mode work
-          //! is unchanged — nothing writes a color down, it asks — and what
-          //! it asks is this file rather than iced's own.
-          use iced::theme::palette::Extended;
-          use iced::theme::Palette;
-          use iced::{Color, Theme};
+          //! libcosmic picks Light or Dark and hands every style closure the
+          //! theme it picked; [`of`] reads which of the two that was and
+          //! answers with ours. So the rule that makes dark mode work is
+          //! unchanged — nothing writes a color down, it asks — and what it
+          //! asks is this file rather than the toolkit's own.
+          use cosmic::iced::theme::palette::Extended;
+          use cosmic::iced::theme::Palette;
+          use cosmic::iced::Color;
+          use cosmic::Theme;
           use std::sync::OnceLock;
 
           const fn rgb(r: u8, g: u8, b: u8) -> Color {
@@ -119,7 +120,7 @@
           ${icedArt p.light}
           ];
 
-          /// Ours, for whichever of the two iced picked.
+          /// Ours, for whichever of the two libcosmic picked.
           ///
           /// Generated once each rather than per widget per frame: `Extended`
           /// is forty-odd colors derived from six, and deriving them at
@@ -128,7 +129,7 @@
               static DARK_EXT: OnceLock<Extended> = OnceLock::new();
               static LIGHT_EXT: OnceLock<Extended> = OnceLock::new();
 
-              if theme.extended_palette().is_dark {
+              if theme.theme_type.is_dark() {
                   DARK_EXT.get_or_init(|| Extended::generate(DARK))
               } else {
                   LIGHT_EXT.get_or_init(|| Extended::generate(LIGHT))

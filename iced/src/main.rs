@@ -44,11 +44,12 @@ mod vim;
 use std::time::Duration;
 
 use harken::{self as mutators, HarkenApp, Item};
-use iced::widget::{
+use cosmic::iced::widget::{
     button, column, container, image, mouse_area, pin, row, rule, scrollable, slider, stack, text,
     text_input, Row,
 };
-use iced::{Element, Length, Subscription, Task};
+use cosmic::iced::{Length, Subscription};
+use cosmic::{Core, Element, Task};
 use petros::{AutoCtx, Changes, Client};
 use player::{Player, Track};
 // The tab's title and the platform's media controller are the browser's, the
@@ -479,7 +480,7 @@ enum Message {
     SignedIn(Result<Login, String>),
     SignOut,
     /// Where the pointer is, in the window. See `App::cursor`.
-    Hover(iced::Point),
+    Hover(cosmic::iced::Point),
     /// Open a row's menu: the three dots, a right click, or `m`. It lands the
     /// cursor on that row first — see the handler — and `Anchor` says where
     /// the menu goes, because that depends on which of the three it was.
@@ -510,9 +511,9 @@ enum Message {
     /// A cover arrived, or did not.
     Cover(covers::Loaded),
     /// A key nothing on screen wanted. See `subscription`.
-    Key(iced::keyboard::Key, iced::keyboard::Modifiers),
+    Key(cosmic::iced::keyboard::Key, cosmic::iced::keyboard::Modifiers),
     /// The window changed size. Only the menu cares.
-    Resized(iced::Size),
+    Resized(cosmic::iced::Size),
     /// Which device is making the sound: open the picker, walk it, pick.
     OpenDevices,
     DeviceAt(usize),
@@ -574,7 +575,7 @@ struct RowMenu {
     /// Where it was opened, in the window. Pinned there rather than centred,
     /// because a menu that appears somewhere else is a menu you have to look
     /// for after asking for it.
-    origin: iced::Point,
+    origin: cosmic::iced::Point,
     /// Which entry the keyboard is on. A menu you can only reach with the
     /// pointer is a menu that is missing from half this window's controls —
     /// everything else here answers to `j` and `k`.
@@ -712,7 +713,7 @@ struct Picker {
     /// beside its parent, which stays up behind it the way a submenu's parent
     /// does. `None` is `a` on the track list, which has no parent and no
     /// pointer to sit under, so it is centred.
-    origin: Option<iced::Point>,
+    origin: Option<cosmic::iced::Point>,
     /// Whether the keyboard is in here.
     ///
     /// False for the one case that had no way to say it: a submenu that opened
@@ -866,32 +867,62 @@ fn cell<'a>(
         Length::FillPortion(n) => middle(&body, n as usize * PER_PORTION),
         _ => body,
     };
+    // **libcosmic's text class is a `fn` pointer, not a closure** — it has to
+    // be `Copy` — so the three bools cannot be captured and the outcomes are
+    // named instead. There are five rather than eight because `on_cursor`
+    // wins over `accent`, which wins over `dim`; writing them out is what
+    // makes that precedence visible rather than buried in a nested `if`.
+    let style: fn(&cosmic::Theme) -> text::Style = match (on_cursor, accent, dim) {
+        // The row is filled with the accent color, so there is exactly one
+        // color text on it can be: the one that color was paired with. A
+        // dimmed column gets the same hue, not a grey.
+        (true, _, true) => cell_on_cursor_dim,
+        (true, _, false) => cell_on_cursor,
+        (false, true, _) => cell_accent,
+        (false, false, true) => cell_dim,
+        (false, false, false) => cell_plain,
+    };
     text(body)
         .size(13)
         .width(width)
         .wrapping(text::Wrapping::None)
-        .style(move |theme: &iced::Theme| {
-            let palette = palette::of(theme);
-            let color = if on_cursor {
-                // The row is filled with the accent color, so there is exactly
-                // one color text on it can be: the one that color was paired
-                // with. A dimmed column gets the same hue, not a grey.
-                let text = palette.primary.base.text;
-                if dim {
-                    text.scale_alpha(0.75)
-                } else {
-                    text
-                }
-            } else if accent {
-                palette.primary.base.color
-            } else if dim {
-                palette.background.base.text.scale_alpha(0.6)
-            } else {
-                palette.background.base.text
-            };
-            text::Style { color: Some(color) }
-        })
+        .class(cosmic::theme::Text::Custom(style))
         .into()
+}
+
+fn cell_plain(theme: &cosmic::Theme) -> text::Style {
+    text::Style {
+        color: Some(palette::of(theme).background.base.text),
+        ..text::Style::default()
+    }
+}
+
+fn cell_dim(theme: &cosmic::Theme) -> text::Style {
+    text::Style {
+        color: Some(palette::of(theme).background.base.text.scale_alpha(0.6)),
+        ..text::Style::default()
+    }
+}
+
+fn cell_accent(theme: &cosmic::Theme) -> text::Style {
+    text::Style {
+        color: Some(palette::of(theme).primary.base.color),
+        ..text::Style::default()
+    }
+}
+
+fn cell_on_cursor(theme: &cosmic::Theme) -> text::Style {
+    text::Style {
+        color: Some(palette::of(theme).primary.base.text),
+        ..text::Style::default()
+    }
+}
+
+fn cell_on_cursor_dim(theme: &cosmic::Theme) -> text::Style {
+    text::Style {
+        color: Some(palette::of(theme).primary.base.text.scale_alpha(0.75)),
+        ..text::Style::default()
+    }
 }
 
 /// A column heading, in the same grid as the cells under it.
@@ -899,9 +930,10 @@ fn heading<'a>(label: &'a str, width: Length) -> Element<'a, Message> {
     text(label)
         .size(11)
         .width(width)
-        .style(|theme: &iced::Theme| text::Style {
+        .class(cosmic::theme::Text::Custom(|theme| text::Style {
             color: Some(palette::of(theme).background.base.text.scale_alpha(0.55)),
-        })
+            ..text::Style::default()
+        }))
         .into()
 }
 
@@ -917,14 +949,15 @@ fn section<'a>(label: String) -> Element<'a, Message> {
         text(label)
             .size(12)
             .wrapping(text::Wrapping::None)
-            .style(|theme: &iced::Theme| text::Style {
+            .class(cosmic::theme::Text::Custom(|theme| text::Style {
                 color: Some(palette::of(theme).primary.base.color),
-            }),
+                ..text::Style::default()
+            })),
     )
     .width(Length::Fill)
     // Indented to where the track numbers start, so the heading sits over the
     // column it heads rather than out in the transport's gutter.
-    .padding(iced::Padding {
+    .padding(cosmic::iced::Padding {
         top: 8.0,
         right: 4.0,
         bottom: 2.0,
@@ -941,7 +974,7 @@ fn section<'a>(label: String) -> Element<'a, Message> {
 /// when you click away — and everything else is the zebra, which is the
 /// window's own background alternating with the faintest step up from it.
 /// Nothing here is a literal color, so a dark theme restates all of it.
-fn row_style(theme: &iced::Theme, on_cursor: bool, focused: bool, odd: bool) -> container::Style {
+fn row_style(theme: &cosmic::Theme, on_cursor: bool, focused: bool, odd: bool) -> container::Style {
     let palette = palette::of(theme);
     let background = if on_cursor {
         Some(if focused {
@@ -960,7 +993,7 @@ fn row_style(theme: &iced::Theme, on_cursor: bool, focused: bool, odd: bool) -> 
         None
     };
     container::Style {
-        background: background.map(iced::Background::Color),
+        background: background.map(cosmic::iced::Background::Color),
         ..container::Style::default()
     }
 }
@@ -1022,15 +1055,15 @@ const TITLE_CHROME: f32 = PANEL_PADDING * 2.0 + ENTRY_PAD_X * 2.0;
 fn panel<'a>(
     body: impl Into<Element<'a, Message>>,
     width: f32,
-) -> container::Container<'a, Message> {
+) -> cosmic::widget::Container<'a, Message> {
     container(body)
         .width(Length::Fixed(width))
         .padding(PANEL_PADDING)
-        .style(|theme: &iced::Theme| {
+        .style(|theme: &cosmic::Theme| {
             let palette = palette::of(theme);
             container::Style {
-                background: Some(iced::Background::Color(palette.background.weak.color)),
-                border: iced::Border {
+                background: Some(cosmic::iced::Background::Color(palette.background.weak.color)),
+                border: cosmic::iced::Border {
                     color: palette.background.strong.color,
                     width: PANEL_BORDER,
                     radius: PANEL_RADIUS.into(),
@@ -1066,10 +1099,10 @@ fn panel_entry<'a>(
     glyph: Option<Element<'a, Message>>,
     label: Element<'a, Message>,
     trailing: Option<Element<'a, Message>>,
-) -> container::Container<'a, Message> {
+) -> cosmic::widget::Container<'a, Message> {
     let mut line = Row::new()
         .spacing(ENTRY_GAP)
-        .align_y(iced::Alignment::Center)
+        .align_y(cosmic::iced::Alignment::Center)
         .push(
             container(glyph.unwrap_or_else(|| text("").into()))
                 .width(Length::Fixed(icon::TRANSPORT))
@@ -1083,7 +1116,7 @@ fn panel_entry<'a>(
         .width(Length::Fill)
         .height(Length::Fixed(PANEL_ENTRY))
         .padding([0, ENTRY_PAD_X as u16])
-        .align_y(iced::Alignment::Center)
+        .align_y(cosmic::iced::Alignment::Center)
 }
 
 /// …and what one row inside one is painted.
@@ -1093,23 +1126,74 @@ fn panel_entry<'a>(
 /// have not followed into. It dims to `background.strong` rather than going
 /// out, the same rule `row_style` has and for the same reason: the row is
 /// still the one the panel is about.
-fn entry_fill(theme: &iced::Theme, on_cursor: bool, focused: bool) -> container::Style {
+fn entry_fill(theme: &cosmic::Theme, on_cursor: bool, focused: bool) -> container::Style {
     let palette = palette::of(theme);
     container::Style {
-        background: on_cursor.then_some(iced::Background::Color(match focused {
+        background: on_cursor.then_some(cosmic::iced::Background::Color(match focused {
             true => palette.primary.base.color,
             false => palette.background.strong.color,
         })),
-        border: iced::Border {
+        border: cosmic::iced::Border {
             radius: ENTRY_RADIUS.into(),
-            ..iced::Border::default()
+            ..cosmic::iced::Border::default()
         },
         ..container::Style::default()
     }
 }
 
 /// The one colour text on such a row is legible in.
-fn entry_text(theme: &iced::Theme, lit: bool) -> iced::Color {
+/// A sidebar line, lit and not — and the count beside it, the same two.
+///
+/// `fn` items rather than a closure over `on_cursor && focused`, the same
+/// constraint `cell` explains: libcosmic's text class has to be `Copy`.
+fn sidebar_label_lit(theme: &cosmic::Theme) -> text::Style {
+    text::Style {
+        color: Some(palette::of(theme).primary.base.text),
+        ..text::Style::default()
+    }
+}
+
+fn sidebar_label_dim(theme: &cosmic::Theme) -> text::Style {
+    text::Style {
+        color: Some(palette::of(theme).background.base.text),
+        ..text::Style::default()
+    }
+}
+
+fn sidebar_count_lit(theme: &cosmic::Theme) -> text::Style {
+    text::Style {
+        color: Some(palette::of(theme).primary.base.text.scale_alpha(0.7)),
+        ..text::Style::default()
+    }
+}
+
+fn sidebar_count_dim(theme: &cosmic::Theme) -> text::Style {
+    text::Style {
+        color: Some(palette::of(theme).background.base.text.scale_alpha(0.5)),
+        ..text::Style::default()
+    }
+}
+
+/// …and the two of those a menu entry's label can be, as `fn` items.
+///
+/// `cosmic::theme::Text::Custom` takes a bare `fn` pointer, so `lit` cannot
+/// ride in a closure — see `cell` above, which has the same shape and the
+/// same reason.
+fn entry_text_lit(theme: &cosmic::Theme) -> text::Style {
+    text::Style {
+        color: Some(entry_text(theme, true)),
+        ..text::Style::default()
+    }
+}
+
+fn entry_text_dim(theme: &cosmic::Theme) -> text::Style {
+    text::Style {
+        color: Some(entry_text(theme, false)),
+        ..text::Style::default()
+    }
+}
+
+fn entry_text(theme: &cosmic::Theme, lit: bool) -> cosmic::iced::Color {
     let palette = palette::of(theme);
     match lit {
         true => palette.primary.base.text,
@@ -1288,6 +1372,10 @@ struct Peer {
 }
 
 struct App {
+    /// What libcosmic keeps about the window: its size, its scale, its theme.
+    /// Owned by the toolkit rather than by this program, which is why it is
+    /// handed in by `init` rather than built by `boot`.
+    core: Core,
     /// Which pane the cursor is in, and where it is in each of them.
     ///
     /// A cursor per pane rather than one shared one, so that leaving the
@@ -1310,7 +1398,7 @@ struct App {
     /// How big the window is, so a menu opened near an edge can open the
     /// other way. Seeded with what `main` asks for and kept in step by
     /// `window::resize_events`.
-    window: iced::Size,
+    window: cosmic::iced::Size,
     /// Whether the next reconciliation adds to the history or rewrites it.
     /// Reset to [`Nav::Push`] every time, so only the step that meant
     /// otherwise is the one that gets it.
@@ -1328,7 +1416,7 @@ struct App {
     /// menu share an origin. It costs a message per mouse move — the view is
     /// already rebuilt twenty times a second by the tick, and this is the only
     /// way to put a menu under the pointer without one.
-    cursor: iced::Point,
+    cursor: cosmic::iced::Point,
     /// What is playing, and whether this build can sound it. See `player.rs`.
     player: Player,
     /// What `Skip` moves through: the list as it stood when play was pressed.
@@ -1823,6 +1911,7 @@ impl App {
         let mut peer = Peer::open(&login);
         seed::seed(&mut peer);
         let app = App {
+            core: Core::default(),
             pane: Pane::Tracks,
             cursors: [0; 2],
             keys: vim::Keys::new(),
@@ -1832,8 +1921,8 @@ impl App {
             menu: None,
             nav: Nav::Push,
             routed: None,
-            cursor: iced::Point::ORIGIN,
-            window: iced::Size::new(860.0, 600.0),
+            cursor: cosmic::iced::Point::ORIGIN,
+            window: cosmic::iced::Size::new(860.0, 600.0),
             player: Player::new(),
             queue: Vec::new(),
             listening: listening::Remote::new(),
@@ -1863,6 +1952,7 @@ impl App {
         {
             let (server, user) = config();
             let mut app = App {
+                core: Core::default(),
                 pane: Pane::Tracks,
                 cursors: [0; 2],
                 keys: vim::Keys::new(),
@@ -1872,8 +1962,8 @@ impl App {
                 menu: None,
                 nav: Nav::Push,
                 routed: None,
-                cursor: iced::Point::ORIGIN,
-                window: iced::Size::new(860.0, 600.0),
+                cursor: cosmic::iced::Point::ORIGIN,
+                window: cosmic::iced::Size::new(860.0, 600.0),
                 player: Player::new(),
                 queue: Vec::new(),
                 listening: listening::Remote::new(),
@@ -1943,7 +2033,7 @@ impl App {
             self.note = "signing in — look for a browser tab if one opened".into();
             let server = self.server.clone();
             let user = self.user.clone();
-            let (tx, rx) = iced::futures::channel::oneshot::channel();
+            let (tx, rx) = cosmic::iced::futures::channel::oneshot::channel();
             std::thread::spawn(move || {
                 let outcome = petros_auth::client::login(
                     &server,
@@ -2473,8 +2563,8 @@ impl App {
         // `advanced` is on for exactly this: keeping a keyboard cursor inside
         // its scrollable is a widget operation, and there is no other way to
         // ask a scrollable to move.
-        iced::advanced::widget::operate(iced::advanced::widget::operation::scrollable::snap_to(
-            iced::advanced::widget::Id::new(id),
+        cosmic::iced::advanced::widget::operate(cosmic::iced::advanced::widget::operation::scrollable::snap_to(
+            cosmic::iced::advanced::widget::Id::new(id),
             scrollable::RelativeOffset {
                 x: Some(0.0),
                 y: Some(y.clamp(0.0, 1.0)),
@@ -2889,25 +2979,6 @@ impl App {
         Task::none()
     }
 
-    /// Do the thing, then make the address bar agree with what is on screen.
-    ///
-    /// The agreeing is *here* and not in the places that change what is shown,
-    /// which is the whole architecture: there are four of them — a click on
-    /// the sidebar, `j` in it, the row menu's "Go to", and the back button
-    /// itself — and the first version pushed the route from one of them. The
-    /// one it missed was the sidebar's own cursor, which is the way this
-    /// window is actually driven. A rule that every call site has to remember
-    /// is a rule that is already broken; this one cannot be missed, because
-    /// nothing has to remember it.
-    fn update(&mut self, message: Message) -> Task<Message> {
-        let task = self.step(message);
-        self.sync_route();
-        // Covers follow the *lists*, not the wire. `want_covers` is idempotent
-        // but it walks every album and artist to find that out, and this runs
-        // twenty times a second — so a generation the sidebar bumps decides,
-        // and the usual answer is that nothing happened.
-        Task::batch([task, self.want_covers_if_moved()])
-    }
 
     /// Ask for covers when the library has been rebuilt since the last ask.
     fn want_covers_if_moved(&mut self) -> Task<Message> {
@@ -3076,7 +3147,7 @@ impl App {
                             title: item.title.clone(),
                             album,
                             artist,
-                            origin: iced::Point::new(0.0, 0.0),
+                            origin: cosmic::iced::Point::new(0.0, 0.0),
                             at: 0,
                             dwell: 0,
                             offered: false,
@@ -3126,7 +3197,7 @@ impl App {
                     picker.naming = Some(String::new());
                     // Put the keyboard in the box rather than making somebody
                     // reach for the mouse to finish what a key started.
-                    return iced::widget::operation::focus(Self::NAMING);
+                    return cosmic::iced::widget::operation::focus(Self::NAMING);
                 };
                 let media = picker.media;
                 // Marked here rather than by re-reading: the answer is known
@@ -3411,133 +3482,6 @@ impl App {
         Task::none()
     }
 
-    fn view(&self) -> Element<'_, Message> {
-        let Some(peer) = &self.peer else {
-            return self.view_signed_out();
-        };
-
-        let base = container(
-            column![
-                // The sidebar and the list share the height that is left once
-                // the bar has taken its own — so the bar stays at the bottom
-                // however long the list is, rather than being pushed off it.
-                row![
-                    self.view_sidebar(peer),
-                    rule::vertical(1),
-                    self.view_page(peer),
-                ]
-                .spacing(16)
-                .height(Length::Fill),
-                rule::horizontal(1),
-                self.view_bar(),
-            ]
-            .spacing(12),
-        )
-        .padding(16)
-        // The window's own background is the one thing `palette::of` in a
-        // style closure cannot reach: with no theme of our own, iced paints
-        // the page from *its* Dark, and every row that draws no background
-        // shows it through. So the page is painted here, and the near-black
-        // in `branding/` is what you actually see.
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .style(|theme: &iced::Theme| container::Style {
-            background: Some(iced::Background::Color(
-                palette::of(theme).background.base.color,
-            )),
-            text_color: Some(palette::of(theme).background.base.text),
-            ..container::Style::default()
-        });
-
-        // Everything above the page is a layer of one stack, and the pointer
-        // is tracked on the root so that `pin` below shares its origin.
-        let mut layers = stack![mouse_area(base).on_move(Message::Hover)];
-
-        if let Some(menu) = &self.menu {
-            // A backdrop under it, because a menu that only closes on the key
-            // that opened it is a menu people click around — and because it is
-            // what stops the wheel reaching the list. A menu is pinned to a
-            // window coordinate, so a list that scrolled under it would leave
-            // it hanging beside a row it is not about.
-            layers = layers
-                .push(
-                    mouse_area(container(text("")).width(Length::Fill).height(Length::Fill))
-                        .on_press(Message::CloseMenu)
-                        .on_right_press(Message::CloseMenu)
-                        .on_scroll(|_| Message::Swallow),
-                )
-                .push(
-                    pin(Self::view_menu(menu, self.focus() == Focus::Menu))
-                        .x(menu.origin.x)
-                        .y(menu.origin.y),
-                );
-        }
-
-        if let Some(picker) = &self.picker {
-            // One panel, two places. Opened from the row menu it is that
-            // menu's submenu and sits beside it, with the parent still up;
-            // opened with `a` it has no parent and no pointer, so it is
-            // centred and the page behind it is dimmed. The *component* is the
-            // same either way, which is the point — two ways to reach one
-            // question should not be two panels to keep in step.
-            let drawn = Self::view_picker(picker, self.focus() == Focus::Picker);
-            match picker.origin {
-                // **A submenu gets no backdrop of its own**, and that is not a
-                // saving. The menu's is already under both of them, so the
-                // click-away and the wheel are already answered — and a second
-                // full-window layer *over* the menu would eat every click on
-                // the menu's own entries, which is how you would find it:
-                // pointing at `Go to …` beside an open submenu and having it
-                // dismiss the submenu instead of going anywhere.
-                Some(at) => layers = layers.push(pin(drawn).x(at.x).y(at.y)),
-                None => {
-                    let backdrop = mouse_area(
-                        container(text(""))
-                            .width(Length::Fill)
-                            .height(Length::Fill)
-                            .style(|theme: &iced::Theme| container::Style {
-                                background: Some(iced::Background::Color(
-                                    palette::of(theme).background.base.color.scale_alpha(0.72),
-                                )),
-                                ..container::Style::default()
-                            }),
-                    )
-                    .on_press(Message::ClosePicker)
-                    .on_scroll(|_| Message::Swallow);
-                    layers = layers.push(backdrop).push(
-                        container(drawn)
-                            .center_x(Length::Fill)
-                            .center_y(Length::Fill),
-                    );
-                }
-            }
-        }
-
-        if let Some(at) = self.devices {
-            // Placed by the same rule the row menu is, which is the point of
-            // `fit` being a function: this one is always asked for from the
-            // bottom of the window, so it always opens upwards — and it does
-            // that because of where it was asked from rather than because it
-            // was told to.
-            let rows = self.listening.devices().len() + 1;
-            let origin = Self::fit(
-                self.cursor,
-                self.window,
-                DEVICES_WIDTH,
-                8.0 + 27.0 + 27.0 * rows as f32,
-            );
-            layers = layers
-                .push(
-                    mouse_area(container(text("")).width(Length::Fill).height(Length::Fill))
-                        .on_press(Message::CloseDevices)
-                        .on_right_press(Message::CloseDevices)
-                        .on_scroll(|_| Message::Swallow),
-                )
-                .push(pin(self.view_devices(at)).x(origin.x).y(origin.y));
-        }
-
-        layers.into()
-    }
 
     /// Where the ⋯ column is — the track list's right-hand edge, less the
     /// menu's own width, so a menu's right edge lines up with the dots that
@@ -3547,7 +3491,7 @@ impl App {
     /// iced lays out after `view` and this decides before it. It is the same
     /// division that function does, minus the same three things — so the menu
     /// ends where the list ends, which is where the button is.
-    fn dots_x(window: iced::Size, width: f32) -> f32 {
+    fn dots_x(window: cosmic::iced::Size, width: f32) -> f32 {
         (window.width - Self::PAGE_PADDING - SCROLLBAR - width).max(Self::EDGE)
     }
 
@@ -3570,18 +3514,18 @@ impl App {
     /// panel, and the height is its padding, its title line and `entries` rows
     /// of text.
     fn menu_origin(
-        cursor: iced::Point,
-        window: iced::Size,
+        cursor: cosmic::iced::Point,
+        window: cosmic::iced::Size,
         entries: usize,
         anchor: Anchor,
         width: f32,
-    ) -> iced::Point {
+    ) -> cosmic::iced::Point {
         let x = match anchor {
             Anchor::Pointer => cursor.x,
             Anchor::Dots => Self::dots_x(window, width),
         };
         Self::fit(
-            iced::Point::new(x, cursor.y),
+            cosmic::iced::Point::new(x, cursor.y),
             window,
             width,
             Self::menu_height(entries),
@@ -3619,7 +3563,7 @@ impl App {
     /// So: to the right of the parent when there is room and to its left when
     /// there is not, never over it; and down from the entry, slid up only as
     /// far as it takes to stay on the glass.
-    fn submenu_origin(menu: &RowMenu, rows: usize, width: f32, window: iced::Size) -> iced::Point {
+    fn submenu_origin(menu: &RowMenu, rows: usize, width: f32, window: cosmic::iced::Size) -> cosmic::iced::Point {
         // Lapped over the parent by both panels' padding, so the two read as
         // one thing that grew rather than as two that happen to touch — and
         // the entries inside them meet edge to edge, which is the most the
@@ -3638,7 +3582,7 @@ impl App {
         let y = (Self::entry_top(menu) - PANEL_PADDING)
             .min((window.height - height - Self::EDGE).max(Self::EDGE))
             .max(Self::EDGE);
-        iced::Point::new(x, y)
+        cosmic::iced::Point::new(x, y)
     }
 
     /// How tall a submenu comes out, for `rows` playlists plus the row that
@@ -3655,7 +3599,7 @@ impl App {
 
     /// Put a panel of that size at `at`, or back the other way when it would
     /// not fit. The one rule both the menu and its submenu follow.
-    fn fit(at: iced::Point, window: iced::Size, w: f32, h: f32) -> iced::Point {
+    fn fit(at: cosmic::iced::Point, window: cosmic::iced::Size, w: f32, h: f32) -> cosmic::iced::Point {
         let edge = Self::EDGE;
         let x = if at.x + w + edge > window.width {
             (at.x - w).max(edge)
@@ -3667,7 +3611,7 @@ impl App {
         } else {
             at.y
         };
-        iced::Point::new(x, y)
+        cosmic::iced::Point::new(x, y)
     }
 
     /// A row's menu: what to do with the track it was opened on.
@@ -3700,16 +3644,19 @@ impl App {
                         text(tail(&entry.label, menu.label_chars()))
                             .size(13)
                             .width(Length::Fill)
-                            .style(move |theme: &iced::Theme| text::Style {
-                                color: Some(entry_text(theme, lit)),
-                            })
+                            .class(cosmic::theme::Text::Custom(match lit {
+                                true => entry_text_lit,
+                                false => entry_text_dim,
+                            }))
                             .into(),
                         end,
                     );
                     col.push(
-                        mouse_area(line.style(move |theme: &iced::Theme| {
-                            entry_fill(theme, on_cursor, focused)
-                        }))
+                        mouse_area(line.class(cosmic::theme::Container::Custom(Box::new(
+                            move |theme: &cosmic::Theme| {
+                                entry_fill(theme, on_cursor, focused)
+                            },
+                        ))))
                         // Moving onto a row and running it are the same two
                         // messages a click is: the pointer lands the cursor where
                         // the keyboard would have walked it, so whichever you used
@@ -3733,10 +3680,10 @@ impl App {
                 container(
                     text(middle(&menu.title, menu.title_chars()))
                         .size(11)
-                        .style(style::dim)
+                        .class(cosmic::theme::Text::Custom(style::dim))
                 )
                 .height(Length::Fixed(Self::MENU_TITLE))
-                .align_y(iced::Alignment::Center)
+                .align_y(cosmic::iced::Alignment::Center)
                 .padding([0, ENTRY_PAD_X as u16]),
                 rows,
             ]
@@ -3751,7 +3698,7 @@ impl App {
     fn view_sidebar(&self, peer: &'_ Peer) -> Element<'_, Message> {
         let cursor = self.at(Pane::Sidebar);
         let focused = self.has_keys(Pane::Sidebar);
-        let mut side = column![].spacing(0).padding(iced::Padding {
+        let mut side = column![].spacing(0).padding(cosmic::iced::Padding {
             top: 0.0,
             right: 10.0,
             bottom: 0.0,
@@ -3766,10 +3713,11 @@ impl App {
             let heading = choice.source.heading();
             if heading.is_some() && heading != under {
                 side = side.push(
-                    container(text(heading.unwrap_or_default()).size(10).style(
-                        |theme: &iced::Theme| text::Style {
+                    container(text(heading.unwrap_or_default()).size(10).class(
+                        cosmic::theme::Text::Custom(|theme| text::Style {
                             color: Some(palette::of(theme).background.base.text.scale_alpha(0.5)),
-                        },
+                            ..text::Style::default()
+                        }),
                     ))
                     .padding([8, 10]),
                 );
@@ -3789,32 +3737,27 @@ impl App {
                                 .size(13)
                                 .width(Length::Fill)
                                 .wrapping(text::Wrapping::None)
-                                .style(move |theme: &iced::Theme| text::Style {
-                                    color: Some(if on_cursor && focused {
-                                        palette::of(theme).primary.base.text
-                                    } else {
-                                        palette::of(theme).background.base.text
-                                    }),
-                                }),
+                                .class(cosmic::theme::Text::Custom(
+                                    match on_cursor && focused {
+                                        true => sidebar_label_lit,
+                                        false => sidebar_label_dim,
+                                    },
+                                )),
                             text(choice.count.map(|n| n.to_string()).unwrap_or_default())
                                 .size(10)
-                                .style(move |theme: &iced::Theme| {
-                                    let palette = palette::of(theme);
-                                    text::Style {
-                                        color: Some(if on_cursor && focused {
-                                            palette.primary.base.text.scale_alpha(0.7)
-                                        } else {
-                                            palette.background.base.text.scale_alpha(0.5)
-                                        }),
-                                    }
-                                }),
+                                .class(cosmic::theme::Text::Custom(
+                                    match on_cursor && focused {
+                                        true => sidebar_count_lit,
+                                        false => sidebar_count_dim,
+                                    },
+                                )),
                         ]
                         .spacing(6)
-                        .align_y(iced::Alignment::Center),
+                        .align_y(cosmic::iced::Alignment::Center),
                     )
                     .width(Length::Fill)
                     .padding([4, 10])
-                    .style(move |theme: &iced::Theme| row_style(theme, on_cursor, focused, false)),
+                    .style(move |theme: &cosmic::Theme| row_style(theme, on_cursor, focused, false)),
                 )
                 .on_press(Message::Select(choice.source.clone())),
             );
@@ -4057,7 +4000,7 @@ impl App {
     fn view_takes(&self, peer: &'_ Peer) -> Element<'_, Message> {
         if peer.recordings.is_empty() {
             return container(text("No recordings of it yet.").size(13).style(
-                |theme: &iced::Theme| text::Style {
+                |theme: &cosmic::Theme| text::Style {
                     color: Some(palette::of(theme).background.base.text.scale_alpha(0.5)),
                 },
             ))
@@ -4091,7 +4034,7 @@ impl App {
                 mouse_area(
                     container(
                         column![
-                            text(who).size(13).style(move |theme: &iced::Theme| {
+                            text(who).size(13).style(move |theme: &cosmic::Theme| {
                                 text::Style {
                                     color: Some(if on_cursor {
                                         palette::of(theme).primary.base.text
@@ -4100,7 +4043,7 @@ impl App {
                                     }),
                                 }
                             }),
-                            text(facts).size(11).style(move |theme: &iced::Theme| {
+                            text(facts).size(11).style(move |theme: &cosmic::Theme| {
                                 let palette = palette::of(theme);
                                 text::Style {
                                     color: Some(match on_cursor {
@@ -4112,14 +4055,14 @@ impl App {
                         ]
                         .spacing(2),
                     )
-                    .padding(iced::Padding {
+                    .padding(cosmic::iced::Padding {
                         top: 8.0,
                         right: Self::PAGE_PADDING,
                         bottom: 8.0,
                         left: Self::PAGE_PADDING,
                     })
                     .width(Length::Fill)
-                    .style(move |theme: &iced::Theme| {
+                    .style(move |theme: &cosmic::Theme| {
                         row_style(theme, on_cursor, focused, at % 2 == 1)
                     }),
                 )
@@ -4148,7 +4091,7 @@ impl App {
             return container(
                 text(empty)
                     .size(13)
-                    .style(|theme: &iced::Theme| text::Style {
+                    .style(|theme: &cosmic::Theme| text::Style {
                         color: Some(palette::of(theme).background.base.text.scale_alpha(0.5)),
                     }),
             )
@@ -4165,7 +4108,7 @@ impl App {
             // its card taller and centring would then float the short ones.
             let mut line = row![]
                 .spacing(Self::CARD_GAP)
-                .align_y(iced::Alignment::Start);
+                .align_y(cosmic::iced::Alignment::Start);
             for (c, card) in chunk.iter().enumerate() {
                 let at = r * columns + c;
                 line = line.push(self.view_card(card, at, Some(at) == cursor));
@@ -4194,7 +4137,7 @@ impl App {
                 // square and a photograph of a person is not, and a grid of
                 // cards with grey bars down the sides of half of them is a
                 // grid that looks broken.
-                .content_fit(iced::ContentFit::Cover)
+                .content_fit(cosmic::iced::ContentFit::Cover)
                 .border_radius(corner)
                 .into(),
             None => art::square::<Message>(seed, side, corner),
@@ -4221,7 +4164,7 @@ impl App {
                     text(card.title.clone())
                         .size(13)
                         .width(Length::Fixed(Self::CARD))
-                        .style(move |theme: &iced::Theme| text::Style {
+                        .style(move |theme: &cosmic::Theme| text::Style {
                             color: Some(if on_cursor {
                                 palette::of(theme).primary.base.color
                             } else {
@@ -4229,7 +4172,7 @@ impl App {
                             }),
                         }),
                     text(under).size(11).width(Length::Fixed(Self::CARD)).style(
-                        |theme: &iced::Theme| text::Style {
+                        |theme: &cosmic::Theme| text::Style {
                             color: Some(palette::of(theme).background.base.text.scale_alpha(0.5)),
                         }
                     ),
@@ -4306,7 +4249,7 @@ impl App {
                 column![
                     text(kind)
                         .size(10)
-                        .style(|theme: &iced::Theme| text::Style {
+                        .style(|theme: &cosmic::Theme| text::Style {
                             color: Some(palette::of(theme).background.base.text.scale_alpha(0.5)),
                         }),
                     text(name.to_string())
@@ -4318,23 +4261,23 @@ impl App {
                     mouse_area(
                         text(under.to_string())
                             .size(13)
-                            .style(|theme: &iced::Theme| text::Style {
+                            .style(|theme: &cosmic::Theme| text::Style {
                                 color: Some(palette::of(theme).primary.base.color),
                             },)
                     )
                     .on_press(Message::Select(Source::Artist(under.to_string()))),
                     text(facts)
                         .size(11)
-                        .style(|theme: &iced::Theme| text::Style {
+                        .style(|theme: &cosmic::Theme| text::Style {
                             color: Some(palette::of(theme).background.base.text.scale_alpha(0.5)),
                         }),
                 ]
                 .spacing(4),
             ]
             .spacing(16)
-            .align_y(iced::Alignment::Center),
+            .align_y(cosmic::iced::Alignment::Center),
         )
-        .padding(iced::Padding {
+        .padding(cosmic::iced::Padding {
             top: Self::PAGE_PADDING,
             right: Self::PAGE_PADDING,
             bottom: Self::PAGE_PADDING,
@@ -4387,7 +4330,7 @@ impl App {
                     let mut line =
                         Row::new()
                             .spacing(0)
-                            .align_y(iced::Alignment::Center)
+                            .align_y(cosmic::iced::Alignment::Center)
                             .push(if here {
                                 Element::from(
                                     button(icon::playing(!sounding, on_cursor))
@@ -4477,7 +4420,7 @@ impl App {
                         // width, not to a button around the title: a stripe that
                         // stops where the text does is not a row.
                         mouse_area(container(line).width(Length::Fill).padding([3, 4]).style(
-                            move |theme: &iced::Theme| {
+                            move |theme: &cosmic::Theme| {
                                 row_style(theme, on_cursor, focused, i % 2 == 1)
                             },
                         ))
@@ -4489,7 +4432,7 @@ impl App {
 
         let mut headings = Row::new()
             .spacing(0)
-            .align_y(iced::Alignment::Center)
+            .align_y(cosmic::iced::Alignment::Center)
             .push(container(text("")).width(TRANSPORT));
         if album_page {
             headings = headings.push(heading("#", TRACK));
@@ -4523,7 +4466,7 @@ impl App {
                         .style(style::dim),
                 ]
                 .spacing(12)
-                .align_y(iced::Alignment::Center),
+                .align_y(cosmic::iced::Alignment::Center),
             );
         }
 
@@ -4599,7 +4542,7 @@ impl App {
                         None,
                     );
                     col.push(
-                        mouse_area(line.style(move |theme: &iced::Theme| {
+                        mouse_area(line.style(move |theme: &cosmic::Theme| {
                             entry_fill(theme, on_cursor, focused)
                         }))
                         .on_enter(Message::PickerAt(i))
@@ -4631,7 +4574,7 @@ impl App {
                     None,
                 );
                 mouse_area(
-                    line.style(move |theme: &iced::Theme| entry_fill(theme, on_cursor, focused)),
+                    line.style(move |theme: &cosmic::Theme| entry_fill(theme, on_cursor, focused)),
                 )
                 .on_enter(Message::PickerAt(last))
                 .on_press(Message::PickerAt(last))
@@ -4846,7 +4789,7 @@ impl App {
             button(
                 row![
                     icon::devices(here),
-                    text(label).size(12).style(move |theme: &iced::Theme| {
+                    text(label).size(12).style(move |theme: &cosmic::Theme| {
                         text::Style {
                             color: Some(if here {
                                 palette::of(theme).primary.base.color
@@ -4857,7 +4800,7 @@ impl App {
                     }),
                 ]
                 .spacing(5)
-                .align_y(iced::Alignment::Center),
+                .align_y(cosmic::iced::Alignment::Center),
             )
             .style(button::text)
             .on_press(Message::OpenDevices)
@@ -4875,7 +4818,7 @@ impl App {
             })
             .size(12)
             .style(style::dim);
-            let mut line = row![idle].spacing(12).align_y(iced::Alignment::Center);
+            let mut line = row![idle].spacing(12).align_y(cosmic::iced::Alignment::Center);
             if let Some(output) = self.view_output() {
                 line = line.push(container(text("")).width(Length::Fill));
                 line = line.push(output);
@@ -4909,7 +4852,7 @@ impl App {
                 .on_press(Message::Skip(1)),
         ]
         .spacing(4)
-        .align_y(iced::Alignment::Center);
+        .align_y(cosmic::iced::Alignment::Center);
 
         let mut line = row![
             transport,
@@ -4929,7 +4872,7 @@ impl App {
             text(clock(duration)).size(11).style(style::dim),
         ]
         .spacing(12)
-        .align_y(iced::Alignment::Center);
+        .align_y(cosmic::iced::Alignment::Center);
         if let Some(output) = self.view_output() {
             line = line.push(output);
         }
@@ -4983,7 +4926,7 @@ impl App {
                     mark,
                     text(label)
                         .size(13)
-                        .style(move |theme: &iced::Theme| text::Style {
+                        .style(move |theme: &cosmic::Theme| text::Style {
                             color: Some(match (on_cursor, audible) {
                                 (false, false) => {
                                     palette::of(theme).background.base.text.scale_alpha(0.4)
@@ -4993,11 +4936,11 @@ impl App {
                         }),
                 ]
                 .spacing(6)
-                .align_y(iced::Alignment::Center),
+                .align_y(cosmic::iced::Alignment::Center),
             )
             .width(Length::Fill)
             .padding([5, 10])
-            .style(move |theme: &iced::Theme| entry_fill(theme, on_cursor, true));
+            .style(move |theme: &cosmic::Theme| entry_fill(theme, on_cursor, true));
             // A row for a device that cannot be heard is not a target: the
             // server would refuse the transfer anyway, and a control that
             // looks pressable and is not is worse than one that is plainly
@@ -5020,7 +4963,7 @@ impl App {
             rows.push(
                 mouse_area(
                     container(text("Stop everywhere").size(13).style(
-                        move |theme: &iced::Theme| text::Style {
+                        move |theme: &cosmic::Theme| text::Style {
                             color: Some(if on_cursor {
                                 palette::of(theme).primary.base.text
                             } else {
@@ -5030,7 +4973,7 @@ impl App {
                     ))
                     .width(Length::Fill)
                     .padding([5, 10])
-                    .style(move |theme: &iced::Theme| entry_fill(theme, on_cursor, true)),
+                    .style(move |theme: &cosmic::Theme| entry_fill(theme, on_cursor, true)),
                 )
                 .on_enter(Message::DeviceAt(last))
                 .on_press(Message::DeviceAt(last))
@@ -5069,28 +5012,6 @@ impl App {
         .into()
     }
 
-    /// A sans-io client has to be pumped by someone. This is that someone —
-    /// and beside it, the keyboard.
-    ///
-    /// `keyboard::listen` reports only the presses **no widget took**, which is
-    /// what makes a modeless vim layer safe here: while a text input has the
-    /// focus it consumes its own keys and none of them reach this, so typing a
-    /// song title cannot also walk the cursor down the list. There is no
-    /// insert mode to get stuck in because there is nothing to get stuck in.
-    fn subscription(&self) -> Subscription<Message> {
-        Subscription::batch([
-            iced::time::every(Duration::from_millis(50)).map(|_| Message::Tick),
-            iced::window::resize_events().map(|(_, size)| Message::Resized(size)),
-            iced::keyboard::listen().map(|event| match event {
-                iced::keyboard::Event::KeyPressed { key, modifiers, .. } => {
-                    Message::Key(key, modifiers)
-                }
-                // A release or a modifier change is not a command. `Tick` is
-                // the harmless message: it pumps the transport and nothing else.
-                _ => Message::Tick,
-            }),
-        ])
-    }
 }
 
 /// The typeface, the same one the phone draws.
@@ -5114,17 +5035,17 @@ impl App {
 /// `mobile/assets/images/`.
 const INTER: &[u8] = include_bytes!("../assets/Inter-Regular.ttf");
 
-pub fn main() -> iced::Result {
+pub fn main() -> cosmic::iced::Result {
     #[cfg(target_arch = "wasm32")]
     console_error_panic_hook::set_once();
 
-    iced::application(App::boot, App::update, App::view)
-        .subscription(App::subscription)
-        .title("harken")
-        .font(INTER)
-        .default_font(iced::Font::with_name("Inter"))
-        .window_size((860.0, 600.0))
-        .run()
+    // libcosmic runs the program rather than a builder chain: the title, the
+    // font and the window size are `Settings`, and everything else is the
+    // `Application` impl at the bottom of this file.
+    let settings = cosmic::app::Settings::default()
+        .default_font(cosmic::iced::Font::with_name("Inter"))
+        .size(cosmic::iced::Size::new(860.0, 600.0));
+    cosmic::app::run::<App>(settings, ())
 }
 
 #[cfg(test)]
@@ -5942,38 +5863,38 @@ mod context {
     /// you keep, one of these two halves fails.
     #[test]
     fn a_right_click_opens_on_the_pointer_and_the_dots_open_on_the_dots() {
-        let window = iced::Size::new(1280.0, 720.0);
+        let window = cosmic::iced::Size::new(1280.0, 720.0);
 
         // A right click puts the corner where you clicked, both ways.
         let wide = App::MENU_MIN_WIDTH;
         let left = App::menu_origin(
-            iced::Point::new(220.0, 300.0),
+            cosmic::iced::Point::new(220.0, 300.0),
             window,
             4,
             Anchor::Pointer,
             wide,
         );
         let right = App::menu_origin(
-            iced::Point::new(600.0, 300.0),
+            cosmic::iced::Point::new(600.0, 300.0),
             window,
             4,
             Anchor::Pointer,
             wide,
         );
-        assert_eq!(left, iced::Point::new(220.0, 300.0));
-        assert_eq!(right, iced::Point::new(600.0, 300.0));
+        assert_eq!(left, cosmic::iced::Point::new(220.0, 300.0));
+        assert_eq!(right, cosmic::iced::Point::new(600.0, 300.0));
 
         // The ⋯ do not care where along the row the pointer was — the button
         // is a fixed thing on screen and the menu belongs to it.
         let a = App::menu_origin(
-            iced::Point::new(220.0, 300.0),
+            cosmic::iced::Point::new(220.0, 300.0),
             window,
             4,
             Anchor::Dots,
             wide,
         );
         let b = App::menu_origin(
-            iced::Point::new(1240.0, 300.0),
+            cosmic::iced::Point::new(1240.0, 300.0),
             window,
             4,
             Anchor::Dots,
@@ -6147,7 +6068,7 @@ mod context {
     /// anything else: the assertion names the motion it produced.
     #[test]
     fn the_arrows_are_the_same_motions_as_hl() {
-        use iced::keyboard::{key::Named, Key, Modifiers};
+        use cosmic::iced::keyboard::{key::Named, Key, Modifiers};
         let mut keys = vim::Keys::new();
         let letter = |keys: &mut vim::Keys, c: char| {
             keys.press(&Key::Character(c.to_string().into()), Modifiers::default())
@@ -6378,7 +6299,7 @@ mod context {
         let mut app = app("beside");
         let id = app.peer.as_ref().unwrap().rows()[2].id;
         for width in 320..=3000 {
-            app.window = iced::Size::new(width as f32, 720.0);
+            app.window = cosmic::iced::Size::new(width as f32, 720.0);
             let _ = app.update(Message::CloseMenu);
             let _ = app.update(Message::RowMenu(id, Anchor::Dots));
             let _ = app.update(Message::MenuAt(1));
@@ -6458,7 +6379,7 @@ mod context {
         // actually see: both inset their rows by `PANEL_PADDING`, so a panel
         // whose *edge* met the entry would put its first row a padding lower
         // and the two would read as stepped. Asserted the way it is drawn.
-        app.window = iced::Size::new(1280.0, 900.0);
+        app.window = cosmic::iced::Size::new(1280.0, 900.0);
         app.cursor.y = 120.0;
         let _ = app.update(Message::RowMenu(id, Anchor::Dots));
         let _ = app.update(Message::MenuAt(1));
@@ -6471,7 +6392,7 @@ mod context {
         let rows = app.picker.as_ref().unwrap().lists.len() + 1;
         let height = App::submenu_height(rows);
         for h in 200..=900 {
-            app.window = iced::Size::new(1280.0, h as f32);
+            app.window = cosmic::iced::Size::new(1280.0, h as f32);
             let _ = app.update(Message::CloseMenu);
             let _ = app.update(Message::RowMenu(id, Anchor::Dots));
             let _ = app.update(Message::MenuAt(1));
@@ -6512,9 +6433,9 @@ mod context {
     fn a_menu_never_hangs_off_the_glass() {
         for menu in [App::MENU_MIN_WIDTH, App::MENU_MAX_WIDTH] {
             for width in 120..=4000 {
-                let window = iced::Size::new(width as f32, 720.0);
+                let window = cosmic::iced::Size::new(width as f32, 720.0);
                 let at =
-                    App::menu_origin(iced::Point::new(0.0, 100.0), window, 4, Anchor::Dots, menu);
+                    App::menu_origin(cosmic::iced::Point::new(0.0, 100.0), window, 4, Anchor::Dots, menu);
                 assert!(
                     at.x >= App::EDGE,
                     "at {width}px a {menu}px menu starts at {} and its left half is clipped",
@@ -6522,5 +6443,229 @@ mod context {
                 );
             }
         }
+    }
+}
+
+
+/// The program libcosmic runs.
+///
+/// `update`, `view` and `subscription` are the same three functions this
+/// client always had — they moved here from the inherent `impl App` rather
+/// than being wrapped, because their signatures already matched the trait's
+/// exactly and a delegating copy would be a second place to edit.
+/// The three the toolkit asks for, kept inherent.
+///
+/// A second `impl App` rather than moving them into the trait, because the
+/// trait wants `Task<cosmic::Action<Message>>` and this client speaks in its
+/// own `Message`. One `map` at the seam beats wrapping every `Task` inside.
+impl App {
+    fn update(&mut self, message: Message) -> Task<Message> {
+        let task = self.step(message);
+        self.sync_route();
+        // Covers follow the *lists*, not the wire. `want_covers` is idempotent
+        // but it walks every album and artist to find that out, and this runs
+        // twenty times a second — so a generation the sidebar bumps decides,
+        // and the usual answer is that nothing happened.
+        Task::batch([task, self.want_covers_if_moved()])
+    }
+
+    fn view(&self) -> Element<'_, Message> {
+        let Some(peer) = &self.peer else {
+            return self.view_signed_out();
+        };
+
+        let base = container(
+            column![
+                // The sidebar and the list share the height that is left once
+                // the bar has taken its own — so the bar stays at the bottom
+                // however long the list is, rather than being pushed off it.
+                row![
+                    self.view_sidebar(peer),
+                    rule::vertical(1),
+                    self.view_page(peer),
+                ]
+                .spacing(16)
+                .height(Length::Fill),
+                rule::horizontal(1),
+                self.view_bar(),
+            ]
+            .spacing(12),
+        )
+        .padding(16)
+        // The window's own background is the one thing `palette::of` in a
+        // style closure cannot reach: with no theme of our own, iced paints
+        // the page from *its* Dark, and every row that draws no background
+        // shows it through. So the page is painted here, and the near-black
+        // in `branding/` is what you actually see.
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .style(|theme: &cosmic::Theme| container::Style {
+            background: Some(cosmic::iced::Background::Color(
+                palette::of(theme).background.base.color,
+            )),
+            text_color: Some(palette::of(theme).background.base.text),
+            ..container::Style::default()
+        });
+
+        // Everything above the page is a layer of one stack, and the pointer
+        // is tracked on the root so that `pin` below shares its origin.
+        let mut layers = stack![mouse_area(base).on_move(Message::Hover)];
+
+        if let Some(menu) = &self.menu {
+            // A backdrop under it, because a menu that only closes on the key
+            // that opened it is a menu people click around — and because it is
+            // what stops the wheel reaching the list. A menu is pinned to a
+            // window coordinate, so a list that scrolled under it would leave
+            // it hanging beside a row it is not about.
+            layers = layers
+                .push(
+                    mouse_area(container(text("")).width(Length::Fill).height(Length::Fill))
+                        .on_press(Message::CloseMenu)
+                        .on_right_press(Message::CloseMenu)
+                        .on_scroll(|_| Message::Swallow),
+                )
+                .push(
+                    pin(Self::view_menu(menu, self.focus() == Focus::Menu))
+                        .x(menu.origin.x)
+                        .y(menu.origin.y),
+                );
+        }
+
+        if let Some(picker) = &self.picker {
+            // One panel, two places. Opened from the row menu it is that
+            // menu's submenu and sits beside it, with the parent still up;
+            // opened with `a` it has no parent and no pointer, so it is
+            // centred and the page behind it is dimmed. The *component* is the
+            // same either way, which is the point — two ways to reach one
+            // question should not be two panels to keep in step.
+            let drawn = Self::view_picker(picker, self.focus() == Focus::Picker);
+            match picker.origin {
+                // **A submenu gets no backdrop of its own**, and that is not a
+                // saving. The menu's is already under both of them, so the
+                // click-away and the wheel are already answered — and a second
+                // full-window layer *over* the menu would eat every click on
+                // the menu's own entries, which is how you would find it:
+                // pointing at `Go to …` beside an open submenu and having it
+                // dismiss the submenu instead of going anywhere.
+                Some(at) => layers = layers.push(pin(drawn).x(at.x).y(at.y)),
+                None => {
+                    let backdrop = mouse_area(
+                        container(text(""))
+                            .width(Length::Fill)
+                            .height(Length::Fill)
+                            .style(|theme: &cosmic::Theme| container::Style {
+                                background: Some(cosmic::iced::Background::Color(
+                                    palette::of(theme).background.base.color.scale_alpha(0.72),
+                                )),
+                                ..container::Style::default()
+                            }),
+                    )
+                    .on_press(Message::ClosePicker)
+                    .on_scroll(|_| Message::Swallow);
+                    layers = layers.push(backdrop).push(
+                        container(drawn)
+                            .center_x(Length::Fill)
+                            .center_y(Length::Fill),
+                    );
+                }
+            }
+        }
+
+        if let Some(at) = self.devices {
+            // Placed by the same rule the row menu is, which is the point of
+            // `fit` being a function: this one is always asked for from the
+            // bottom of the window, so it always opens upwards — and it does
+            // that because of where it was asked from rather than because it
+            // was told to.
+            let rows = self.listening.devices().len() + 1;
+            let origin = Self::fit(
+                self.cursor,
+                self.window,
+                DEVICES_WIDTH,
+                8.0 + 27.0 + 27.0 * rows as f32,
+            );
+            layers = layers
+                .push(
+                    mouse_area(container(text("")).width(Length::Fill).height(Length::Fill))
+                        .on_press(Message::CloseDevices)
+                        .on_right_press(Message::CloseDevices)
+                        .on_scroll(|_| Message::Swallow),
+                )
+                .push(pin(self.view_devices(at)).x(origin.x).y(origin.y));
+        }
+
+        layers.into()
+    }
+
+    /// A sans-io client has to be pumped by someone. This is that someone —
+    /// and beside it, the keyboard.
+    ///
+    /// `keyboard::listen` reports only the presses **no widget took**, which is
+    /// what makes a modeless vim layer safe here: while a text input has the
+    /// focus it consumes its own keys and none of them reach this, so typing a
+    /// song title cannot also walk the cursor down the list. There is no
+    /// insert mode to get stuck in because there is nothing to get stuck in.
+    fn subscription(&self) -> Subscription<Message> {
+        Subscription::batch([
+            cosmic::iced::time::every(Duration::from_millis(50)).map(|_| Message::Tick),
+            cosmic::iced::window::resize_events().map(|(_, size)| Message::Resized(size)),
+            cosmic::iced::keyboard::listen().map(|event| match event {
+                cosmic::iced::keyboard::Event::KeyPressed { key, modifiers, .. } => {
+                    Message::Key(key, modifiers)
+                }
+                // A release or a modifier change is not a command. `Tick` is
+                // the harmless message: it pumps the transport and nothing else.
+                _ => Message::Tick,
+            }),
+        ])
+    }
+}
+
+impl cosmic::Application for App {
+    type Executor = cosmic::executor::Default;
+    type Flags = ();
+    type Message = Message;
+
+    const APP_ID: &'static str = "us.koon.harken";
+
+    fn core(&self) -> &Core {
+        &self.core
+    }
+
+    fn core_mut(&mut self) -> &mut Core {
+        &mut self.core
+    }
+
+    /// `boot` is still where the peer is opened and the login recalled; this
+    /// only hands it the `Core` libcosmic owns.
+    fn init(core: Core, _flags: ()) -> (Self, Task<cosmic::Action<Message>>) {
+        let (mut app, task) = App::boot();
+        app.core = core;
+        (app, task.map(cosmic::Action::App))
+    }
+
+    /// Do the thing, then make the address bar agree with what is on screen.
+    ///
+    /// The agreeing is *here* and not in the places that change what is shown,
+    /// which is the whole architecture: there are four of them — a click on
+    /// the sidebar, `j` in it, the row menu's "Go to", and the back button
+    /// itself — and the first version pushed the route from one of them. The
+    /// one it missed was the sidebar's own cursor, which is the way this
+    /// window is actually driven. A rule that every call site has to remember
+    /// is a rule that is already broken; this one cannot be missed, because
+    /// nothing has to remember it.
+
+    /// The seam: everything above answers in `Message`, and libcosmic's own
+    /// messages share the channel, so each one is tagged on the way out.
+    fn update(&mut self, message: Message) -> Task<cosmic::Action<Message>> {
+        App::update(self, message).map(cosmic::Action::App)
+    }
+
+    fn view(&self) -> Element<'_, Message> {
+        App::view(self)
+    }
+
+    fn subscription(&self) -> Subscription<Message> {
+        App::subscription(self)
     }
 }

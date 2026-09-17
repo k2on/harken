@@ -18,8 +18,8 @@
 //! one description in `branding/nix/palette.nix` — and why the hash below is
 //! specified down to the width of what it walks, rather than being "some hash".
 
-use iced::widget::svg;
-use iced::{Color, Element, Length, Theme};
+use cosmic::iced::widget::svg;
+use cosmic::iced::{Color, Element, Length, Theme};
 
 use crate::palette;
 
