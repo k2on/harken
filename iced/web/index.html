@@ -76,9 +76,16 @@
       canvas.arriving {
         animation: arrive var(--reveal) var(--ease) both;
       }
+      /* **The canvas does not fade.** It did, opposite the splash, which
+         sounds like a cross-dissolve and is not one: two half-transparent
+         layers over the page means the splash's background hides nothing from
+         the first frame, so what you watch is a washed-out app with a gold
+         mark dissolving on it rather than a screen coming off. The splash is
+         opaque and goes; the app is simply there underneath, and the only
+         thing it does is scale. */
       @keyframes arrive {
-        from { opacity: 0; transform: scale(1.2); }
-        to   { opacity: 1; transform: none; }
+        from { transform: scale(1.2); }
+        to   { transform: none; }
       }
       @keyframes settle {
         from { opacity: 0; transform: scale(0.94); }

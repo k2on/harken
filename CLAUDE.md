@@ -2696,7 +2696,7 @@ Only a browser has this, for the same reason the media session and the device
 picker do: the desktop binary is already running when its window appears, so
 there is nothing to wait for and nothing to reveal.
 
-Seven things it needed:
+Eight things it needed:
 
 - **The splash covers the canvas; the canvas does not start invisible.** Those
   look equivalent and fail differently. A module that never resolves leaves a
@@ -2730,11 +2730,17 @@ Seven things it needed:
     the moment you could first see it. The zoom was real, measured, and
     entirely behind an opaque panel.
 
-  Sharing the curve is also what makes it a clean dissolve rather than a
-  cross-fade with a dip in it: the two opacities sum to 1 at every frame,
-  because one is the other subtracted from it.
-- **The splash only fades.** It has been sitting still for a second or two, so
-  giving it a transform when it goes means starting that transform *somewhere*
+- **The canvas does not fade — only the splash does.** Fading them opposite
+  each other sounds like a cross-dissolve and is not one. Two half-transparent
+  layers over the page means the splash's background hides nothing from the
+  first frame, so what is on screen through the middle of it is a washed-out
+  app with a gold mark dissolving on it, and the whole thing reads as *the
+  logo* fading rather than as a screen coming off. The splash is opaque and
+  goes; the app is simply there underneath at full strength, and the only
+  thing it does is scale.
+- **The splash's own transform stays at 1.** It has been sitting still for a
+  second or two, so giving it a transform when it goes means starting that
+  transform *somewhere*
   — and any value but 1 is the mark jumping before it leaves. The movement
   belongs to the thing arriving.
 - **The fallback timeout is read off `--reveal`, not written down.** At a fixed
