@@ -60,7 +60,14 @@
       mkWeb = { pname, features }: rustPlatform.buildRustPackage {
         inherit pname;
         version = "0.1.0";
-        src = sources.workspace;
+        # The *narrow* tree, not `sources.workspace`. That one is the whole
+        # repository minus four basenames, so the wasm was rebuilt from
+        # scratch by a CLAUDE.md edit, a `.tsx`, a change under `branding/` —
+        # every commit, in other words, since a nix build starts with no
+        # `target/`. `check-clippy` already compiles this same crate from
+        # `engineWorkspace`, which is what says it is enough; everything the
+        # build reads is under `iced/` or `domain/`, both workspace members.
+        src = sources.engineWorkspace;
         inherit (sources) cargoDeps;
         doCheck = false;
 

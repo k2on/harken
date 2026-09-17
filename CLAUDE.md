@@ -265,13 +265,43 @@ pruned:
 The identical command passed on a laptop. Two places, same command, different
 answers — which is the whole argument for the derivations.
 
-Three consequences worth knowing:
+Four consequences worth knowing:
 
 - **`nix flake check` skips when nothing it reads has changed.** What it reads
   is `engineSrc`: `domain`, `server`, `iced`, `Cargo.toml`, `Cargo.lock`, and
   the module's config under `mobile/modules`. A `.tsx` edit or a workflow
   change does not run it. An engine pin bump does, because that is
   `Cargo.toml`.
+
+  A member is a *directory*, though, so everything in one is Rust as far as
+  this is concerned — and `iced/web/index.html` is inside `iced`. Editing the
+  page reruns fmt, clippy and the whole suite. `engineSrc` is documented in the
+  engine as "the Rust alone, so that a screen edit is not an input to a
+  cross-compile or a check", which is the intent; a page is a screen edit that
+  gets in anyway, and narrowing it needs an option the engine does not have.
+- **There are two source trees, and taking the wrong one costs every commit.**
+  `sources.engineWorkspace` is that narrow tree; `sources.workspace` is the
+  whole repository minus four basenames (`.cargo`, `target`, `node_modules`,
+  `result`). `harken-web` and `harken-demo` were built from the second, and a
+  nix build starts with no `target/` — so the wasm was compiled from scratch by
+  a prose commit, a `.tsx`, a change under `branding/`. Every commit, since
+  nothing is excluded but build output.
+
+  Measured rather than read, by replicating the engine's filter over four
+  copies of the tree and comparing the store paths it produces:
+
+  | the one edit          | `sources.workspace` | `engineSrc` |
+  |-----------------------|---------------------|-------------|
+  | `iced/web/index.html` | changes             | changes     |
+  | `CLAUDE.md`           | changes             | **no**      |
+  | `iced/src/main.rs`    | changes             | changes     |
+
+  They are both `lib.cleanSourceWith` over `appRoot`, which is the flake
+  source — so `.git` and everything gitignored, `iced/web/pkg` included, are
+  already out before either filter runs, and the filter is the only thing
+  deciding. `mkWeb` takes `engineWorkspace` now, which is what `check-clippy`
+  already compiles this same crate from. A page edit still rebuilds it, for
+  the reason above.
 - **A check's output is an empty directory.** What is cached is that it passed,
   and that is the entire skip mechanism — so the outputs have to be gc-rooted
   before the CI cache saves, or the collection takes them and the next run
