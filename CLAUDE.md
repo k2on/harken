@@ -3029,6 +3029,31 @@ first. The engine's own decisions are in `../petros/docs/decisions.md`.
     one line. nix has no general text substitution, and a generator that
     cannot perform the transformation cannot be checked against the thing it
     generates — so the file *is* the literal.
+
+    **And that strip took four glyphs' geometry with it.** `width` and `height`
+    on the root `<svg>` are what the widget sets; on a `<rect>` inside one they
+    *are* the shape. `pause`, `library-big`, `smartphone` and `circle-stop` —
+    every glyph here built out of a rect — were vendored as
+    `<rect x="14" y="3" rx="1"/>`, which is well-formed SVG that resvg renders
+    without complaint and which draws nothing at all. The pause button was
+    invisible for as long as Lucide had been vendored, on both clients; it only
+    got noticed in the browser because that is the one build that can make a
+    sound, so it is the one where anything ever pauses.
+
+    `stroke-width` survived, because somebody had already been bitten by that
+    one and written the rule to spare it. A bare `width` on a child element is
+    the same mistake wearing the attribute's real name — which is the general
+    lesson: *a rule written against the one case that bit you is a rule that
+    does not know what it is about.*
+
+    `icon::tests::every_glyph_can_draw` is the guard, and it is structural
+    rather than visual for the reason everything else in this program's drawing
+    is: **something that fails to draw lays out perfectly.** It reads
+    `glyphs.rs` with `include_str!` — the table rather than a list of
+    constants, because half of it is drawn only by the phone and a list here
+    would be a second table to keep in step — and asserts that every element in
+    it carries the attributes without which it is not a shape. An element the
+    table has never seen fails too, rather than being waved through.
   - **`#![allow(dead_code)]` on the generated Rust**, because the table is the
     program's vocabulary rather than one client's: the phone draws `home`,
     `search` and a tab bar's worth the desktop has no place for. Generating

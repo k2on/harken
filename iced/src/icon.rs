@@ -218,3 +218,87 @@ pub fn devices<'a>(here: bool) -> Svg<'a> {
             }
         })
 }
+
+/// **Every shape in the table can actually draw.**
+///
+/// The pause button was invisible for as long as Lucide had been vendored, and
+/// nothing said so. `<rect x="14" y="3" rx="1"/>` is well-formed SVG, resvg
+/// renders it without complaint, and a rect with no width is nothing — so the
+/// button laid out at the right size, took its click, and drew empty space.
+/// Four glyphs were like it: `pause`, `library-big`, `smartphone` and
+/// `circle-stop`, every one of them the ones built out of a `<rect>`.
+///
+/// The cause is the normalising that happens on the way *in*. `branding/` keeps
+/// each icon stripped of the root `<svg>`'s `width` and `height`, because the
+/// widget sets those — and the strip took the `width` and `height` off the
+/// `<rect>`s inside as well, where they are the shape itself. `stroke-width`
+/// survived because somebody had already been bitten by that one and written
+/// the rule to spare it; a bare `width` on a child element is the same mistake
+/// wearing the attribute's real name.
+///
+/// This is the same shape as every other trap in this program's drawing:
+/// **something that fails to draw lays out perfectly.** A missing glyph in a
+/// font, a canvas in a scrollable, a `container` gradient that never painted —
+/// each looked like a rendering fault rather than the thing it was. So the
+/// check is structural rather than visual: read the generated table as text and
+/// assert that every element in it carries the attributes without which it is
+/// not a shape.
+///
+/// It reads `glyphs.rs` with `include_str!` rather than a list of the constants
+/// on purpose. The table is the program's vocabulary and half of it is drawn
+/// only by the phone, so a list here would be a second table to keep in step —
+/// which is the thing generating one file for both clients replaced.
+#[cfg(test)]
+mod tests {
+    /// What each element needs before it is a shape rather than a no-op.
+    const NEEDS: &[(&str, &[&str])] = &[
+        ("rect", &["width", "height"]),
+        ("circle", &["r"]),
+        ("ellipse", &["rx", "ry"]),
+        ("path", &["d"]),
+        ("line", &["x1", "y1", "x2", "y2"]),
+        ("polyline", &["points"]),
+        ("polygon", &["points"]),
+    ];
+
+    /// Falsify it by deleting ` width="5"` from `PAUSE` in `glyphs.rs`: the
+    /// failure names the glyph, the element and the attribute.
+    #[test]
+    fn every_glyph_can_draw() {
+        let table = include_str!("glyphs.rs");
+        let mut checked = 0;
+        for line in table.lines() {
+            let Some((name, body)) = line.split_once(": &[u8] = br##\"") else {
+                continue;
+            };
+            let name = name.trim_start_matches("pub const ");
+            // Past the root `<svg …>`, whose own width and height the widget
+            // sets and the vendoring therefore strips.
+            let inner = &body[body.find('>').expect("a root element") + 1..];
+            for el in inner.split('<').skip(1) {
+                let tag = el
+                    .split([' ', '/', '>'])
+                    .next()
+                    .expect("a tag name after the angle bracket");
+                let Some((_, needs)) = NEEDS.iter().find(|(t, _)| *t == tag) else {
+                    // `</svg>` and the closing quote, and nothing else: an
+                    // element this test has never seen is one to add above
+                    // rather than to wave through.
+                    assert!(
+                        tag.starts_with('/') || tag.is_empty(),
+                        "{name} draws a <{tag}>, which `NEEDS` does not describe"
+                    );
+                    continue;
+                };
+                for attr in *needs {
+                    assert!(
+                        el.contains(&format!("{attr}=\"")),
+                        "{name}'s <{tag}> has no {attr}, so it draws nothing"
+                    );
+                    checked += 1;
+                }
+            }
+        }
+        assert!(checked > 60, "this has to be reading the table: {checked}");
+    }
+}
