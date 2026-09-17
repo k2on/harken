@@ -4822,7 +4822,7 @@ mod tests {
 /// This has now been wrong twice — once because the ask was wired to the wire
 /// and once because nobody had ever run the path — and both times what the
 /// page showed was a grid of correct-looking derived squares, which is exactly
-/// what it shows when everything works and eight of the twelve albums have no
+/// what it shows when everything works and nine of the thirteen albums have no
 /// picture. A silent fallback is the hardest kind of broken to see, so the
 /// path gets a test rather than a reading.
 #[cfg(all(test, feature = "demo"))]
@@ -4928,7 +4928,7 @@ mod demo_works {
         let composers = harken::composers(store).unwrap();
         assert!(
             composers.len() >= 5,
-            "the demo is seven composers; it has {}: {:?}",
+            "the demo is eight composers; it has {}: {:?}",
             composers.len(),
             composers.iter().map(|c| &c.name).collect::<Vec<_>>()
         );
@@ -4996,6 +4996,70 @@ mod demo_works {
             .collect();
         assert_eq!(brandenburgs.len(), 6);
         assert!(brandenburgs.contains(&"Brandenburg Concerto No. 4 in G Major"));
+    }
+
+    /// **An album is a release, and a release may carry four works.**
+    ///
+    /// This is the one distinction the schema exists for and the demo had
+    /// nothing that said it out loud: every other record here is one work
+    /// (Water Music, Messiah) or one collection that the seed *calls* a work
+    /// per catalogue number. The Four Seasons is four concertos — four
+    /// catalogue numbers, four keys, four sets of three movements — on one
+    /// release, so `works()` answers four where `album()` answers twelve.
+    ///
+    /// Falsify it by giving the twelve rows one catalogue number: the count
+    /// drops to one and all twelve movements hang off it.
+    ///
+    /// The twelve titles are asserted whole rather than by their ends, because
+    /// three of them are called "III. Allegro" and a first-and-last check
+    /// would pass on any shuffle that kept those two in place. It does **not**
+    /// pin `album()`'s sort — deleting that sort leaves this green, because
+    /// the seed authors the seasons in order and the library order already
+    /// agrees. `an_album_is_in_the_works_order_and_not_the_librarys` in the
+    /// domain is what holds the sort; this holds the record.
+    #[test]
+    fn one_release_can_carry_four_works() {
+        let mut peer = fresh("seasons");
+        let playlist = peer.playlist;
+        let store = &mut peer.client.store();
+
+        let works = harken::works(store, "Antonio Vivaldi".into()).unwrap();
+        let seasons: Vec<&harken::Work> = works
+            .iter()
+            .filter(|w| w.title.starts_with("The Four Seasons"))
+            .collect();
+        assert_eq!(
+            seasons.len(),
+            4,
+            "four concertos, not one: {:?}",
+            works.iter().map(|w| &w.title).collect::<Vec<_>>()
+        );
+        for w in &seasons {
+            assert_eq!(w.tracks, 3, "{} has three movements", w.catalogue);
+            assert_eq!(w.recordings, 1, "one orchestra played all four");
+        }
+
+        // …and all twelve of them are on one record.
+        let record = harken::album(store, playlist, "The Four Seasons".into()).unwrap();
+        let names: Vec<&str> = record.iter().map(|i| i.title.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                "I. Allegro",
+                "II. Largo",
+                "III. Allegro",
+                "I. Allegro non molto",
+                "II. Adagio",
+                "III. Presto",
+                "I. Allegro",
+                "II. Adagio molto",
+                "III. Allegro",
+                "I. Allegro non molto",
+                "II. Largo",
+                "III. Allegro",
+            ],
+            "Spring, Summer, Autumn, Winter, each in its own three movements"
+        );
     }
 
     /// **Nobody is called `(CC BY-SA 3.0)`.**
@@ -5231,8 +5295,8 @@ mod demo_works {
     /// one would silently give a work somebody else's title.
     ///
     /// The log's key includes the composer; this table's does not, because
-    /// nothing here needs it and repeating the composer on forty-three rows is
-    /// forty-three chances to mistype one.
+    /// nothing here needs it and repeating the composer on forty-seven rows is
+    /// forty-seven chances to mistype one.
     #[test]
     fn the_catalogue_is_the_key() {
         let mut seen = std::collections::BTreeSet::new();

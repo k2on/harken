@@ -2508,6 +2508,178 @@ pub const MESSIAH: &[Seed] = &[
     },
 ];
 
+/// The Four Seasons — four concertos, twelve movements, one orchestra.
+///
+/// Op. 8 Nos. 1–4, which are four *works* on one record and therefore the
+/// clearest thing in this library about what an album is: `RV 269`, `RV 315`,
+/// `RV 293` and `RV 297` each have their own catalogue number, their own key
+/// and their own three movements, and the release that carries all four is a
+/// fifth thing with a name of its own. The album page folds them back into
+/// four sections; the composer page lists four works.
+///
+/// The Modena Chamber Orchestra's, which is the one complete set on Commons
+/// under a mark that reserves nothing — so unlike [`BRANDENBURG`] there is no
+/// `licence` to draw, and the performer column carries a performer and nothing
+/// else. Twelve files, one per movement, in the order the seasons go round.
+pub const FOUR_SEASONS: &[Seed] = &[
+    Seed {
+        title: "I. Allegro",
+        composer: "Antonio Vivaldi",
+        album: "The Four Seasons",
+        part: "Concerto No. 1 in E major, RV 269 (Spring)",
+        track: 1,
+        catalogue: "RV 269",
+        performer: "The Modena Chamber Orchestra",
+        licence: "",
+        bpm: 138,
+        ms: 214013,
+        file: "https://upload.wikimedia.org/wikipedia/commons/transcoded/1/18/The_Modena_Chamber_Orchestra_-_Vivaldi%27s_Spring%2C_RV_269_-_I._Allegro.ogg/The_Modena_Chamber_Orchestra_-_Vivaldi%27s_Spring%2C_RV_269_-_I._Allegro.ogg.mp3",
+    },
+    Seed {
+        title: "II. Largo",
+        composer: "Antonio Vivaldi",
+        album: "The Four Seasons",
+        part: "Concerto No. 1 in E major, RV 269 (Spring)",
+        track: 2,
+        catalogue: "RV 269",
+        performer: "The Modena Chamber Orchestra",
+        licence: "",
+        bpm: 50,
+        ms: 178777,
+        file: "https://upload.wikimedia.org/wikipedia/commons/transcoded/3/39/The_Modena_Chamber_Orchestra_-_Vivaldi%27s_Spring%2C_RV_269_-_II._Largo.ogg/The_Modena_Chamber_Orchestra_-_Vivaldi%27s_Spring%2C_RV_269_-_II._Largo.ogg.mp3",
+    },
+    Seed {
+        title: "III. Allegro",
+        composer: "Antonio Vivaldi",
+        album: "The Four Seasons",
+        part: "Concerto No. 1 in E major, RV 269 (Spring)",
+        track: 3,
+        catalogue: "RV 269",
+        performer: "The Modena Chamber Orchestra",
+        licence: "",
+        bpm: 138,
+        ms: 258151,
+        file: "https://upload.wikimedia.org/wikipedia/commons/transcoded/7/7c/The_Modena_Chamber_Orchestra_-_Vivaldi%27s_Spring%2C_RV_269_-_III._Allegro.ogg/The_Modena_Chamber_Orchestra_-_Vivaldi%27s_Spring%2C_RV_269_-_III._Allegro.ogg.mp3",
+    },
+    Seed {
+        title: "I. Allegro non molto",
+        composer: "Antonio Vivaldi",
+        album: "The Four Seasons",
+        part: "Concerto No. 2 in G minor, RV 315 (Summer)",
+        track: 4,
+        catalogue: "RV 315",
+        performer: "The Modena Chamber Orchestra",
+        licence: "",
+        bpm: 120,
+        ms: 328064,
+        file: "https://upload.wikimedia.org/wikipedia/commons/transcoded/3/3d/The_Modena_Chamber_Orchestra_-_Vivaldi%27s_Summer%2C_RV_315_-_I._Allegro_non_molto.ogg/The_Modena_Chamber_Orchestra_-_Vivaldi%27s_Summer%2C_RV_315_-_I._Allegro_non_molto.ogg.mp3",
+    },
+    Seed {
+        title: "II. Adagio",
+        composer: "Antonio Vivaldi",
+        album: "The Four Seasons",
+        part: "Concerto No. 2 in G minor, RV 315 (Summer)",
+        track: 5,
+        catalogue: "RV 315",
+        performer: "The Modena Chamber Orchestra",
+        licence: "",
+        bpm: 71,
+        ms: 124823,
+        file: "https://upload.wikimedia.org/wikipedia/commons/transcoded/1/17/The_Modena_Chamber_Orchestra_-_Vivaldi%27s_Summer%2C_RV_315_-_II._Adagio.ogg/The_Modena_Chamber_Orchestra_-_Vivaldi%27s_Summer%2C_RV_315_-_II._Adagio.ogg.mp3",
+    },
+    Seed {
+        title: "III. Presto",
+        composer: "Antonio Vivaldi",
+        album: "The Four Seasons",
+        part: "Concerto No. 2 in G minor, RV 315 (Summer)",
+        track: 6,
+        catalogue: "RV 315",
+        performer: "The Modena Chamber Orchestra",
+        licence: "",
+        bpm: 184,
+        ms: 176622,
+        file: "https://upload.wikimedia.org/wikipedia/commons/transcoded/1/17/The_Modena_Chamber_Orchestra_-_Vivaldi%27s_Summer%2C_RV_315_-_III._Presto.ogg/The_Modena_Chamber_Orchestra_-_Vivaldi%27s_Summer%2C_RV_315_-_III._Presto.ogg.mp3",
+    },
+    Seed {
+        title: "I. Allegro",
+        composer: "Antonio Vivaldi",
+        album: "The Four Seasons",
+        part: "Concerto No. 3 in F major, RV 293 (Autumn)",
+        track: 7,
+        catalogue: "RV 293",
+        performer: "The Modena Chamber Orchestra",
+        licence: "",
+        bpm: 138,
+        ms: 329337,
+        file: "https://upload.wikimedia.org/wikipedia/commons/transcoded/c/c4/The_Modena_Chamber_Orchestra_-_Vivaldi%27s_Autumn%2C_RV_293_-_I._Allegro.ogg/The_Modena_Chamber_Orchestra_-_Vivaldi%27s_Autumn%2C_RV_293_-_I._Allegro.ogg.mp3",
+    },
+    Seed {
+        title: "II. Adagio molto",
+        composer: "Antonio Vivaldi",
+        album: "The Four Seasons",
+        part: "Concerto No. 3 in F major, RV 293 (Autumn)",
+        track: 8,
+        catalogue: "RV 293",
+        performer: "The Modena Chamber Orchestra",
+        licence: "",
+        bpm: 60,
+        ms: 200703,
+        file: "https://upload.wikimedia.org/wikipedia/commons/transcoded/8/83/The_Modena_Chamber_Orchestra_-_Vivaldi%27s_Autumn%2C_RV_293_-_II._Adagio_molto.ogg/The_Modena_Chamber_Orchestra_-_Vivaldi%27s_Autumn%2C_RV_293_-_II._Adagio_molto.ogg.mp3",
+    },
+    Seed {
+        title: "III. Allegro",
+        composer: "Antonio Vivaldi",
+        album: "The Four Seasons",
+        part: "Concerto No. 3 in F major, RV 293 (Autumn)",
+        track: 9,
+        catalogue: "RV 293",
+        performer: "The Modena Chamber Orchestra",
+        licence: "",
+        bpm: 138,
+        ms: 202379,
+        file: "https://upload.wikimedia.org/wikipedia/commons/transcoded/7/79/The_Modena_Chamber_Orchestra_-_Vivaldi%27s_Autumn%2C_RV_293_-_III._Allegro.ogg/The_Modena_Chamber_Orchestra_-_Vivaldi%27s_Autumn%2C_RV_293_-_III._Allegro.ogg.mp3",
+    },
+    Seed {
+        title: "I. Allegro non molto",
+        composer: "Antonio Vivaldi",
+        album: "The Four Seasons",
+        part: "Concerto No. 4 in F minor, RV 297 (Winter)",
+        track: 10,
+        catalogue: "RV 297",
+        performer: "The Modena Chamber Orchestra",
+        licence: "",
+        bpm: 120,
+        ms: 205514,
+        file: "https://upload.wikimedia.org/wikipedia/commons/transcoded/9/9c/The_Modena_Chamber_Orchestra_-_Vivaldi%27s_Winter%2C_RV_297_-_I._Allegro_non_molto.ogg/The_Modena_Chamber_Orchestra_-_Vivaldi%27s_Winter%2C_RV_297_-_I._Allegro_non_molto.ogg.mp3",
+    },
+    Seed {
+        title: "II. Largo",
+        composer: "Antonio Vivaldi",
+        album: "The Four Seasons",
+        part: "Concerto No. 4 in F minor, RV 297 (Winter)",
+        track: 11,
+        catalogue: "RV 297",
+        performer: "The Modena Chamber Orchestra",
+        licence: "",
+        bpm: 50,
+        ms: 163847,
+        file: "https://upload.wikimedia.org/wikipedia/commons/transcoded/8/8b/The_Modena_Chamber_Orchestra_-_Vivaldi%27s_Winter%2C_RV_297_-_II._Largo.ogg/The_Modena_Chamber_Orchestra_-_Vivaldi%27s_Winter%2C_RV_297_-_II._Largo.ogg.mp3",
+    },
+    Seed {
+        title: "III. Allegro",
+        composer: "Antonio Vivaldi",
+        album: "The Four Seasons",
+        part: "Concerto No. 4 in F minor, RV 297 (Winter)",
+        track: 12,
+        catalogue: "RV 297",
+        performer: "The Modena Chamber Orchestra",
+        licence: "",
+        bpm: 138,
+        ms: 178571,
+        file: "https://upload.wikimedia.org/wikipedia/commons/transcoded/3/3d/The_Modena_Chamber_Orchestra_-_Vivaldi%27s_Winter%2C_RV_297_-_III._Allegro.ogg/The_Modena_Chamber_Orchestra_-_Vivaldi%27s_Winter%2C_RV_297_-_III._Allegro.ogg.mp3",
+    },
+];
+
 /// One picture, for an album or for a person.
 pub struct Art {
     /// `"album"` or `"artist"` — which of the two lists `name` is a name in,
@@ -2543,10 +2715,16 @@ pub struct Art {
 /// Goldberg title page or the Brandenburg dedication under a name a search
 /// finds, and inventing one — or hanging Bach's portrait on all four of his
 /// records, which would put four identical faces in one grid — would be worse
-/// than the square `art.rs` derives from the name. So eight of the twelve fall
+/// than the square `art.rs` derives from the name. So nine of the thirteen fall
 /// back to that, which is also the only way to see in the demo that the
 /// fallback is there.
 pub const ART: &[Art] = &[
+    // the anonymous oil in Bologna, c. 1723
+    Art {
+        subject: "artist",
+        name: "Antonio Vivaldi",
+        file: "https://upload.wikimedia.org/wikipedia/commons/thumb/b/bd/Vivaldi.jpg/960px-Vivaldi.jpg",
+    },
     // Haussmann's portrait, 1746
     Art {
         subject: "artist",
@@ -2658,8 +2836,43 @@ pub struct WorkSeed {
     pub composed: i64,
 }
 
-/// The forty-three works this library holds something of.
+/// The forty-seven works this library holds something of.
 pub const WORKS: &[WorkSeed] = &[
+    // Vivaldi. Four works on one record, which is what `The Four Seasons`
+    // makes visible: each concerto has its own number, its own key and its own
+    // three movements, and the album is the fifth thing that carries them.
+    WorkSeed {
+        catalogue: "RV 269",
+        title: "The Four Seasons, Concerto No. 1 \"Spring\"",
+        form: "Concerto",
+        period: "Baroque",
+        key_sig: "E Major",
+        composed: 1725,
+    },
+    WorkSeed {
+        catalogue: "RV 315",
+        title: "The Four Seasons, Concerto No. 2 \"Summer\"",
+        form: "Concerto",
+        period: "Baroque",
+        key_sig: "G Minor",
+        composed: 1725,
+    },
+    WorkSeed {
+        catalogue: "RV 293",
+        title: "The Four Seasons, Concerto No. 3 \"Autumn\"",
+        form: "Concerto",
+        period: "Baroque",
+        key_sig: "F Major",
+        composed: 1725,
+    },
+    WorkSeed {
+        catalogue: "RV 297",
+        title: "The Four Seasons, Concerto No. 4 \"Winter\"",
+        form: "Concerto",
+        period: "Baroque",
+        key_sig: "F Minor",
+        composed: 1725,
+    },
     // Bach
     WorkSeed {
         catalogue: "BWV 565",
@@ -3083,6 +3296,13 @@ pub const CREDITS: &[CreditSeed] = &[
         pos: 1,
     },
     CreditSeed {
+        performer: "The Modena Chamber Orchestra",
+        name: "The Modena Chamber Orchestra",
+        role: "orchestra",
+        instrument: "",
+        pos: 1,
+    },
+    CreditSeed {
         performer: "United States Marine Band",
         name: "United States Marine Band",
         role: "ensemble",
@@ -3115,6 +3335,12 @@ pub struct ComposerSeed {
 }
 
 pub const COMPOSERS: &[ComposerSeed] = &[
+    ComposerSeed {
+        name: "Antonio Vivaldi",
+        sort_name: "Vivaldi, Antonio",
+        born: 1678,
+        died: 1741,
+    },
     ComposerSeed {
         name: "Johann Sebastian Bach",
         sort_name: "Bach, Johann Sebastian",
@@ -3231,6 +3457,7 @@ pub fn seed(peer: &mut Peer) {
         .chain(WATER_MUSIC)
         .chain(FIREWORKS)
         .chain(MESSIAH)
+        .chain(FOUR_SEASONS)
     {
         // The work's own name where this library knows one, and the record's
         // where it does not. That difference is the whole of stage two on

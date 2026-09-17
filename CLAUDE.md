@@ -64,8 +64,8 @@ iced/                    the desktop and browser client
                          and nothing at all on the desktop
   src/covers.rs          a cover, fetched once and shrunk before the renderer
                          ever sees it; two caches, one `want`/`handle` pair
-  src/art.rs             …and the square derived from the name, for the eight
-                         albums in twelve that have no picture
+  src/art.rs             …and the square derived from the name, for the nine
+                         albums in thirteen that have no picture
   nix/readme.nix         its section of README.md
   web/                   the browser shell `nix run .#web` serves
   nix/default.nix        the desktop package and `iced`
@@ -558,7 +558,7 @@ it. Three things made it invisible and each is worth knowing on its own:
   `debug_assert!` now — which names the verb and the reason on the first run
   of any test or dev build.
 - **What it looked like was right.** Covers fell back to the derived square,
-  which is what eight of the twelve demo albums correctly do. A grid of
+  which is what nine of the thirteen demo albums correctly do. A grid of
   gold squares is the same picture whether the feature works or has never
   once run, and that is the shape of bug to write a test for rather than
   read for: `domain/tests/read_model.rs` unwraps every cover mutation rather
@@ -2051,6 +2051,26 @@ prose — "Nos. 1 and 4 are two recordings between them because that is the only
 way either is complete" — with nowhere to put the word. The demo now says it in
 rows: BWV 1046 and BWV 1049 each come out with **two recordings**, and it took
 no change to `seed.rs` at all.
+
+**And The Four Seasons is the other half of it, said out loud.** Every other
+record in the demo is one work — Water Music, Messiah — or one collection the
+seed calls a work per catalogue number, so nothing in it demonstrated a release
+carrying several *works*. Op. 8 Nos. 1–4 do: `RV 269`, `RV 315`, `RV 293` and
+`RV 297` are four concertos with four keys and three movements each, on one
+release, played by one orchestra. `works()` answers four where `album()`
+answers twelve, which is what `one_release_can_carry_four_works` asserts — and
+the twelve titles are asserted whole rather than by their ends, because three
+of them are called "III. Allegro" and a first-and-last check would pass on any
+shuffle that left those two in place. It does not pin `album()`'s sort:
+deleting that sort leaves it green, because the seed authors the seasons in
+order and the library order already agrees. That was checked rather than
+assumed, and the doc comment says so — `an_album_is_in_the_works_order_and_not_the_librarys`
+in the domain is what holds the sort.
+
+The set is The Modena Chamber Orchestra's, which is the one complete Four
+Seasons on Commons under a mark that reserves nothing — so unlike the
+Brandenburgs there is no `licence` to draw and the performer column carries a
+performer and nothing else.
 
 **Pop is not a second case, and that is the point.** The industry already has
 both layers — an ISWC identifies a work and an ISRC a recording — and pop hides

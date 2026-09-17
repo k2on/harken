@@ -4,7 +4,7 @@
 //! derived from the name, which is most of what a cover is actually doing in a
 //! list and the part that survives having no picture. It is the *fallback* —
 //! `album.art` and `artist.art` are real columns, and `covers.rs` fetches them
-//! — but it is the answer for eight of the demo's twelve albums and for every
+//! — but it is the answer for nine of the demo's thirteen albums and for every
 //! library nobody has given pictures to.
 //!
 //! Nothing here is on `media`, deliberately: a cover hangs on the album and
