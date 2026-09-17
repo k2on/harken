@@ -51,6 +51,15 @@ const TICK: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24
 const MORE: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
 <path d="M12 4.2a2.1 2.1 0 1 1 0 4.2 2.1 2.1 0 0 1 0-4.2zm0 5.7a2.1 2.1 0 1 1 0 4.2 2.1 2.1 0 0 1 0-4.2zm0 5.7a2.1 2.1 0 1 1 0 4.2 2.1 2.1 0 0 1 0-4.2z" fill="#000"/></svg>"##;
 
+/// A right chevron, for a menu entry that opens a submenu.
+///
+/// U+203A is outside Latin-1 like everything else here, so it is drawn — and
+/// the rule at the top of this file is exactly why it is worth the six lines:
+/// a single guillemet *probably* exists in Fira Sans, which is not a thing to
+/// find out from a screenshot of a menu with a `?` on the end of one row.
+const CHEVRON: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+<path d="M9.5 5.5 16 12l-6.5 6.5" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##;
+
 /// The transport glyphs, as paths in a 24-unit box.
 const PLAY: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
 <path d="M8 5l11 7-11 7z" fill="#000"/></svg>"##;
@@ -169,6 +178,30 @@ pub fn more<'a>(on_cursor: bool) -> Svg<'a> {
                     palette.primary.base.text.scale_alpha(0.8)
                 } else {
                     palette.background.base.text.scale_alpha(0.45)
+                }),
+            }
+        })
+}
+
+/// The mark on a menu entry that has more behind it.
+///
+/// What a submenu looks like everywhere, and the thing an ellipsis could not
+/// say: `Add to playlist…` and `Rename…` are the same three dots, and one of
+/// them opens a panel beside the entry while the other replaces what is under
+/// it. A chevron points at where the panel is about to appear.
+///
+/// Dimmer than the label it sits beside: it says *how* this entry behaves, not
+/// what it does.
+pub fn chevron<'a>(lit: bool) -> Svg<'a> {
+    svg(svg::Handle::from_memory(CHEVRON))
+        .width(TRANSPORT)
+        .height(TRANSPORT)
+        .style(move |theme: &Theme, _| {
+            let palette = crate::palette::of(theme);
+            svg::Style {
+                color: Some(match lit {
+                    true => palette.primary.base.text.scale_alpha(0.8),
+                    false => palette.background.base.text.scale_alpha(0.55),
                 }),
             }
         })

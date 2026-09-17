@@ -529,7 +529,6 @@ struct Bar {
 }
 
 /// What `view_devices` draws a row at, and `fit` has to assume.
-const DEVICE_ROW: f32 = 208.0;
 const DEVICES_WIDTH: f32 = 216.0;
 
 /// How the next change to what is shown should reach the history.
@@ -580,10 +579,15 @@ impl RowMenu {
     /// Every one is something this window could already do. What the menu adds
     /// is asking for it *about a row*, which neither a key nor a click on the
     /// row itself could say.
+    ///
+    /// The chevron `view_menu` draws on one of them is not a fifth field here:
+    /// an entry has a submenu exactly when its message opens one, and
+    /// `dwell_submenu` asks the same question the same way. A `bool` beside
+    /// the label would be a second answer to keep in step with the first.
     fn entries(&self) -> Vec<(String, Message)> {
         let mut out = vec![
             ("Play".to_string(), Message::PlayItem(self.media)),
-            ("Add to playlist\u{2026}".to_string(), Message::OpenPicker),
+            ("Add to playlist".to_string(), Message::OpenPicker),
         ];
         if !self.album.is_empty() {
             out.push((
@@ -625,6 +629,16 @@ struct Picker {
     /// does. `None` is `a` on the track list, which has no parent and no
     /// pointer to sit under, so it is centred.
     origin: Option<iced::Point>,
+    /// Whether the keyboard is in here.
+    ///
+    /// False for the one case that had no way to say it: a submenu that opened
+    /// because the pointer came to rest on its parent entry. It is *shown*,
+    /// and the highlight stays on the entry it hangs off — which is what a
+    /// menu does everywhere, and the difference between a submenu appearing
+    /// beside what you are pointing at and the highlight jumping off it into
+    /// a panel you have not reached yet. The pointer entering the submenu, or
+    /// `<Enter>` on the parent, is what hands the keys over.
+    keys: bool,
     /// What is being typed into the new-playlist box, if it is open.
     ///
     /// While this is `Some` a `text_input` has the focus and takes its own
@@ -809,6 +823,76 @@ fn row_style(theme: &iced::Theme, on_cursor: bool, focused: bool, odd: bool) -> 
     container::Style {
         background: background.map(iced::Background::Color),
         ..container::Style::default()
+    }
+}
+
+/// The corner every context window is drawn with, and the corner every row
+/// inside one is drawn with.
+///
+/// One number each, because three panels with three radii are three *kinds* of
+/// panel — and the submenu read as a different kind of thing from the menu it
+/// hangs off, which is exactly what a submenu must not do. The menu was 6 and
+/// the playlist picker 8, which is small enough that nobody would call it a
+/// bug and plain enough to see when the two are beside each other.
+const PANEL_RADIUS: f32 = 6.0;
+const PANEL_PADDING: f32 = 4.0;
+const ENTRY_RADIUS: f32 = 4.0;
+
+/// The chrome all three context windows share: the ground, the border, the
+/// corner and the padding.
+///
+/// Returns the container rather than an `Element` so a caller can still say
+/// what is its own — the playlist picker's height cap is a fact about a list
+/// of thirty playlists and not about being a panel.
+fn panel<'a>(
+    body: impl Into<Element<'a, Message>>,
+    width: f32,
+) -> container::Container<'a, Message> {
+    container(body)
+        .width(Length::Fixed(width))
+        .padding(PANEL_PADDING)
+        .style(|theme: &iced::Theme| {
+            let palette = palette::of(theme);
+            container::Style {
+                background: Some(iced::Background::Color(palette.background.weak.color)),
+                border: iced::Border {
+                    color: palette.background.strong.color,
+                    width: 1.0,
+                    radius: PANEL_RADIUS.into(),
+                },
+                ..container::Style::default()
+            }
+        })
+}
+
+/// …and what one row inside one is painted.
+///
+/// `focused` is `false` on a panel whose keyboard has gone somewhere else — a
+/// menu with its submenu up, or a submenu opened by pointing that the keys
+/// have not followed into. It dims to `background.strong` rather than going
+/// out, the same rule `row_style` has and for the same reason: the row is
+/// still the one the panel is about.
+fn entry_fill(theme: &iced::Theme, on_cursor: bool, focused: bool) -> container::Style {
+    let palette = palette::of(theme);
+    container::Style {
+        background: on_cursor.then_some(iced::Background::Color(match focused {
+            true => palette.primary.base.color,
+            false => palette.background.strong.color,
+        })),
+        border: iced::Border {
+            radius: ENTRY_RADIUS.into(),
+            ..iced::Border::default()
+        },
+        ..container::Style::default()
+    }
+}
+
+/// The one colour text on such a row is legible in.
+fn entry_text(theme: &iced::Theme, lit: bool) -> iced::Color {
+    let palette = palette::of(theme);
+    match lit {
+        true => palette.primary.base.text,
+        false => palette.background.base.text,
     }
 }
 
@@ -1705,9 +1789,18 @@ impl App {
     /// What `view_menu` draws and `fit` has to assume: 190 of entry inside 4
     /// of padding either side.
     const MENU_WIDTH: f32 = 198.0;
+    /// A menu's title line and one of its entries, in pixels. Estimates, the
+    /// way `PER_PORTION` is and for the same reason — `view_menu` lays a row
+    /// out as 13pt text inside 5 of padding, and nothing can ask it before it
+    /// has been drawn.
+    const MENU_TITLE: f32 = 27.0;
+    const MENU_ENTRY: f32 = 27.0;
     /// …and the picker's, which is a panel and also a submenu.
     const PICKER_WIDTH: f32 = 340.0;
     const PICKER_MAX_HEIGHT: f32 = 420.0;
+    /// Its title, its hint, the rule and the padding around them; then a row.
+    const PICKER_CHROME: f32 = 84.0;
+    const PICKER_ROW: f32 = 23.0;
     /// A margin, so a panel that only just fits does not sit flush against
     /// the glass.
     const EDGE: f32 = 8.0;
@@ -1730,7 +1823,7 @@ impl App {
         if self.devices.is_some() {
             return Focus::Devices;
         }
-        if self.picker.is_some() {
+        if self.picker.as_ref().is_some_and(|p| p.keys) {
             return Focus::Picker;
         }
         if self.menu.is_some() {
@@ -1858,6 +1951,11 @@ impl App {
                     _ => self.pick_device(),
                 },
                 vim::Action::Cancel => match focus {
+                    // A showing submenu goes first, even though the keyboard
+                    // never went into it: `<Esc>` closes the innermost thing
+                    // that is up, and `offered` keeps the next tick from
+                    // opening it again under a cursor that has not moved.
+                    Focus::Menu if self.picker.is_some() => self.update(Message::ClosePicker),
                     Focus::Menu => self.update(Message::CloseMenu),
                     Focus::Picker => self.update(Message::ClosePicker),
                     _ => self.update(Message::CloseDevices),
@@ -2099,7 +2197,12 @@ impl App {
             return None;
         }
         menu.offered = true;
-        Some(self.open_picker())
+        let task = self.open_picker();
+        if let Some(picker) = &mut self.picker {
+            // Shown, not entered. See `Picker::keys`.
+            picker.keys = false;
+        }
+        Some(task)
     }
 
     /// Put the menu's cursor on an entry, however it got there.
@@ -2181,16 +2284,6 @@ impl App {
         // The menu stays up: this is its submenu, and a submenu that closes
         // its parent is a second menu wearing the name.
         let wanted = self.menu.as_ref().map(|m| m.media);
-        let origin = self.menu.as_ref().map(|m| {
-            // Beside the parent, overlapping its border by a hair so the two
-            // read as one panel rather than as two that happen to touch.
-            Self::fit(
-                iced::Point::new(m.origin.x + Self::MENU_WIDTH - 2.0, m.origin.y),
-                self.window,
-                Self::PICKER_WIDTH,
-                Self::PICKER_MAX_HEIGHT,
-            )
-        });
         let at = self.at(Pane::Tracks);
         let Some(peer) = &mut self.peer else {
             return Task::none();
@@ -2208,18 +2301,27 @@ impl App {
             .into_iter()
             .map(|p| p.id)
             .collect();
-        let lists = harken::playlists(&mut store)
-            .unwrap_or_default()
-            .into_iter()
-            .map(|p| (p.id, p.name, on.contains(&p.id)))
-            .collect();
+        let lists: Vec<(harken::Id<harken::tables::Playlist>, String, bool)> =
+            harken::playlists(&mut store)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|p| (p.id, p.name, on.contains(&p.id)))
+                .collect();
         drop(store);
+        // Placed once the rows are known, because how tall it is decides
+        // where it fits — see `submenu_origin`. The `+ 1` is the row that
+        // makes a new playlist, which is a row like any other.
+        let origin = self
+            .menu
+            .as_ref()
+            .map(|m| Self::submenu_origin(m, lists.len() + 1, self.window));
         self.picker = Some(Picker {
             media: item.id,
             title: item.title,
             lists,
             at: 0,
             origin,
+            keys: true,
             naming: None,
         });
         Task::none()
@@ -2569,6 +2671,13 @@ impl App {
             }
             Message::CloseMenu => {
                 self.menu = None;
+                // A submenu has no life of its own: it belongs to the entry it
+                // hangs off, and now there is no entry. This is also what
+                // makes the menu's backdrop close *both*, which is the whole
+                // reason a submenu needs no backdrop.
+                if self.picker.as_ref().is_some_and(|p| p.origin.is_some()) {
+                    self.picker = None;
+                }
                 Ok(())
             }
             Message::RowMenu(id, anchor) => {
@@ -2617,6 +2726,10 @@ impl App {
             Message::PickerAt(at) => {
                 if let Some(picker) = &mut self.picker {
                     picker.at = at.min(picker.lists.len());
+                    // Landing a cursor in here *is* entering it, however you
+                    // got here — a pointer that has reached a row of the
+                    // submenu has left the entry the submenu hangs off.
+                    picker.keys = true;
                 }
                 Ok(())
             }
@@ -2983,38 +3096,43 @@ impl App {
         }
 
         if let Some(picker) = &self.picker {
-            // Dimmed only when it is centred. A submenu that dims its parent
-            // has hidden the thing it is a submenu of.
-            let dimmed = picker.origin.is_none();
             // One panel, two places. Opened from the row menu it is that
             // menu's submenu and sits beside it, with the parent still up;
             // opened with `a` it has no parent and no pointer, so it is
             // centred and the page behind it is dimmed. The *component* is the
             // same either way, which is the point — two ways to reach one
             // question should not be two panels to keep in step.
-            let backdrop = mouse_area(
-                container(text(""))
-                    .width(Length::Fill)
-                    .height(Length::Fill)
-                    .style(move |theme: &iced::Theme| container::Style {
-                        background: dimmed.then(|| {
-                            iced::Background::Color(
-                                palette::of(theme).background.base.color.scale_alpha(0.72),
-                            )
-                        }),
-                        ..container::Style::default()
-                    }),
-            )
-            .on_press(Message::ClosePicker)
-            .on_scroll(|_| Message::Swallow);
-            layers = layers.push(backdrop).push(match picker.origin {
-                Some(at) => Element::from(pin(Self::view_picker(picker)).x(at.x).y(at.y)),
-                None => Element::from(
-                    container(Self::view_picker(picker))
-                        .center_x(Length::Fill)
-                        .center_y(Length::Fill),
-                ),
-            });
+            let drawn = Self::view_picker(picker, self.focus() == Focus::Picker);
+            match picker.origin {
+                // **A submenu gets no backdrop of its own**, and that is not a
+                // saving. The menu's is already under both of them, so the
+                // click-away and the wheel are already answered — and a second
+                // full-window layer *over* the menu would eat every click on
+                // the menu's own entries, which is how you would find it:
+                // pointing at `Go to …` beside an open submenu and having it
+                // dismiss the submenu instead of going anywhere.
+                Some(at) => layers = layers.push(pin(drawn).x(at.x).y(at.y)),
+                None => {
+                    let backdrop = mouse_area(
+                        container(text(""))
+                            .width(Length::Fill)
+                            .height(Length::Fill)
+                            .style(|theme: &iced::Theme| container::Style {
+                                background: Some(iced::Background::Color(
+                                    palette::of(theme).background.base.color.scale_alpha(0.72),
+                                )),
+                                ..container::Style::default()
+                            }),
+                    )
+                    .on_press(Message::ClosePicker)
+                    .on_scroll(|_| Message::Swallow);
+                    layers = layers.push(backdrop).push(
+                        container(drawn)
+                            .center_x(Length::Fill)
+                            .center_y(Length::Fill),
+                    );
+                }
+            }
         }
 
         if let Some(at) = self.devices {
@@ -3078,9 +3196,6 @@ impl App {
         entries: usize,
         anchor: Anchor,
     ) -> iced::Point {
-        const TITLE: f32 = 27.0;
-        const ENTRY: f32 = 27.0;
-        const PADDING: f32 = 8.0;
         let x = match anchor {
             Anchor::Pointer => cursor.x,
             Anchor::Dots => Self::dots_x(window),
@@ -3089,8 +3204,62 @@ impl App {
             iced::Point::new(x, cursor.y),
             window,
             Self::MENU_WIDTH,
-            PADDING + TITLE + ENTRY * entries as f32,
+            Self::menu_height(entries),
         )
+    }
+
+    /// How tall a menu of `entries` comes out.
+    ///
+    /// Computed rather than measured, for the reason `columns_in` is: iced
+    /// lays out after `view` and both `menu_origin` and `submenu_origin` have
+    /// to decide before it. The numbers are the panel's own — `PANEL_PADDING`
+    /// top and bottom, its title line, and a row of text per entry.
+    fn menu_height(entries: usize) -> f32 {
+        PANEL_PADDING * 2.0 + Self::MENU_TITLE + Self::MENU_ENTRY * entries as f32
+    }
+
+    /// …and where the `at`th entry's own top is, down the window.
+    fn entry_top(menu: &RowMenu) -> f32 {
+        menu.origin.y + PANEL_PADDING + Self::MENU_TITLE + Self::MENU_ENTRY * menu.at as f32
+    }
+
+    /// Where a submenu goes: beside the entry it hangs off.
+    ///
+    /// **It slides to fit; it does not flip.** `fit` is right for a menu,
+    /// which hangs off a *point* — with no room below, opening upward from
+    /// that same point is still a menu about that point. A submenu hangs off a
+    /// *row*, and flipping it puts it somewhere with nothing to do with the
+    /// row. That is what was wrong: `open_picker` passed `PICKER_MAX_HEIGHT`
+    /// to `fit`, so on any window under about 520px — which the default 860×600
+    /// is — the flip fired whatever the submenu's real height was, and a
+    /// three-playlist panel jumped above the menu for no reason anyone could
+    /// see. Worse in x: flipped, a 340-wide submenu against a menu right-aligned
+    /// to the ⋯ column landed almost entirely *on top of* its parent.
+    ///
+    /// So: to the right of the parent when there is room and to its left when
+    /// there is not, never over it; and down from the entry, slid up only as
+    /// far as it takes to stay on the glass.
+    fn submenu_origin(menu: &RowMenu, rows: usize, window: iced::Size) -> iced::Point {
+        // Overlapping the parent's border by a hair, so the two read as one
+        // panel rather than as two that happen to touch.
+        let right = menu.origin.x + Self::MENU_WIDTH - 2.0;
+        let x = match right + Self::PICKER_WIDTH + Self::EDGE > window.width {
+            true => (menu.origin.x - Self::PICKER_WIDTH + 2.0).max(Self::EDGE),
+            false => right,
+        };
+        let height = Self::picker_height(rows);
+        let y = Self::entry_top(menu)
+            .min((window.height - height - Self::EDGE).max(Self::EDGE))
+            .max(Self::EDGE);
+        iced::Point::new(x, y)
+    }
+
+    /// How tall the playlist picker comes out, for `rows` playlists plus the
+    /// row that makes another — capped where the panel itself caps it, so
+    /// thirty playlists scroll inside a panel of a known size rather than
+    /// growing one nothing can place.
+    fn picker_height(rows: usize) -> f32 {
+        (Self::PICKER_CHROME + Self::PICKER_ROW * rows as f32).min(Self::PICKER_MAX_HEIGHT)
     }
 
     /// Put a panel of that size at `at`, or back the other way when it would
@@ -3122,54 +3291,44 @@ impl App {
     /// than lit. Two accent-filled rows would be two answers to "where does
     /// the next key go".
     fn view_menu(menu: &RowMenu, focused: bool) -> Element<'_, Message> {
-        let rows = menu.entries().into_iter().enumerate().fold(
-            column![].spacing(0),
-            |col, (i, (label, _))| {
-                let on_cursor = menu.at == i;
-                let lit = on_cursor && focused;
-                col.push(
-                    mouse_area(
-                        container(text(middle(&label, 26)).size(13).style(
+        let rows =
+            menu.entries().into_iter().enumerate().fold(
+                column![].spacing(0),
+                |col, (i, (label, message))| {
+                    let on_cursor = menu.at == i;
+                    let lit = on_cursor && focused;
+                    // A chevron rather than an ellipsis, which is what a submenu
+                    // looks like everywhere — and the one thing `…` could not say:
+                    // `Add to playlist…` and `Rename…` are the same three dots,
+                    // and one of them opens a panel *beside* the entry.
+                    let mut line = Row::new().align_y(iced::Alignment::Center).push(
+                        text(middle(&label, 24)).size(13).width(Length::Fill).style(
                             move |theme: &iced::Theme| text::Style {
-                                color: Some(if lit {
-                                    palette::of(theme).primary.base.text
-                                } else {
-                                    palette::of(theme).background.base.text
-                                }),
+                                color: Some(entry_text(theme, lit)),
                             },
+                        ),
+                    );
+                    if matches!(message, Message::OpenPicker) {
+                        line = line.push(icon::chevron(lit));
+                    }
+                    col.push(
+                        mouse_area(container(line).width(Length::Fill).padding([5, 10]).style(
+                            move |theme: &iced::Theme| entry_fill(theme, on_cursor, focused),
                         ))
-                        .width(Length::Fixed(190.0))
-                        .padding([5, 10])
-                        .style(move |theme: &iced::Theme| container::Style {
-                            background: on_cursor.then(|| {
-                                let palette = palette::of(theme);
-                                iced::Background::Color(if focused {
-                                    palette.primary.base.color
-                                } else {
-                                    palette.background.strong.color
-                                })
-                            }),
-                            border: iced::Border {
-                                radius: 4.0.into(),
-                                ..iced::Border::default()
-                            },
-                            ..container::Style::default()
-                        }),
+                        // Moving onto a row and running it are the same two
+                        // messages a click is: the pointer lands the cursor where
+                        // the keyboard would have walked it, so whichever you used
+                        // last, the other carries on from there.
+                        // Pointing at an entry is landing the cursor on it, the
+                        // same as `j` — one highlight, however you moved it, and
+                        // the thing a submenu opens from.
+                        .on_enter(Message::MenuAt(i))
+                        .on_press(Message::MenuAt(i))
+                        .on_release(Message::MenuActivate),
                     )
-                    // Moving onto a row and running it are the same two
-                    // messages a click is: the pointer lands the cursor where
-                    // the keyboard would have walked it, so whichever you used
-                    // last, the other carries on from there.
-                    // Pointing at an entry is landing the cursor on it, the
-                    // same as `j` — one highlight, however you moved it, and
-                    // the thing a submenu opens from.
-                    .on_enter(Message::MenuAt(i))
-                    .on_press(Message::MenuAt(i))
-                    .on_release(Message::MenuActivate),
-                )
-            },
-        );
-        container(
+                },
+            );
+        panel(
             column![
                 // Which track this is about. A menu opened by a right click can
                 // land a row away from where the eye was, and a menu that does not
@@ -3179,20 +3338,8 @@ impl App {
                 rows,
             ]
             .spacing(0),
+            Self::MENU_WIDTH,
         )
-        .padding(4)
-        .style(|theme: &iced::Theme| {
-            let palette = palette::of(theme);
-            container::Style {
-                background: Some(iced::Background::Color(palette.background.weak.color)),
-                border: iced::Border {
-                    color: palette.background.strong.color,
-                    width: 1.0,
-                    radius: 6.0.into(),
-                },
-                ..container::Style::default()
-            }
-        })
         .into()
     }
 
@@ -4028,34 +4175,36 @@ impl App {
     /// Drawn in place of the table, the way the keymap is: the list underneath
     /// is what the question is about, and a panel over it would put the answer
     /// on top of the thing it describes.
-    fn view_picker(picker: &Picker) -> Element<'_, Message> {
-        let rows = picker.lists.iter().enumerate().fold(
-            column![].spacing(0),
-            |col, (i, (_, name, on))| {
-                let on_cursor = picker.at == i;
-                let line = Row::new()
-                    .spacing(0)
-                    .align_y(iced::Alignment::Center)
-                    .push(
-                        container(if *on {
-                            Element::from(icon::tick(on_cursor))
-                        } else {
-                            Element::from(text(""))
-                        })
-                        .width(TRANSPORT)
-                        .height(Length::Fixed(icon::TRANSPORT)),
+    fn view_picker(picker: &Picker, focused: bool) -> Element<'_, Message> {
+        let rows =
+            picker.lists.iter().enumerate().fold(
+                column![].spacing(0),
+                |col, (i, (_, name, on))| {
+                    let on_cursor = picker.at == i;
+                    let lit = on_cursor && focused;
+                    let line = Row::new()
+                        .spacing(0)
+                        .align_y(iced::Alignment::Center)
+                        .push(
+                            container(if *on {
+                                Element::from(icon::tick(lit))
+                            } else {
+                                Element::from(text(""))
+                            })
+                            .width(TRANSPORT)
+                            .height(Length::Fixed(icon::TRANSPORT)),
+                        )
+                        .push(cell(name.clone(), NAME, lit, *on, false));
+                    col.push(
+                        mouse_area(container(line).width(Length::Fill).padding([3, 4]).style(
+                            move |theme: &iced::Theme| entry_fill(theme, on_cursor, focused),
+                        ))
+                        .on_enter(Message::PickerAt(i))
+                        .on_press(Message::PickerAt(i))
+                        .on_release(Message::PickerActivate),
                     )
-                    .push(cell(name.clone(), NAME, on_cursor, *on, false));
-                col.push(
-                    mouse_area(container(line).width(Length::Fill).padding([3, 4]).style(
-                        move |theme: &iced::Theme| row_style(theme, on_cursor, true, i % 2 == 1),
-                    ))
-                    .on_enter(Message::PickerAt(i))
-                    .on_press(Message::PickerAt(i))
-                    .on_release(Message::PickerActivate),
-                )
-            },
-        );
+                },
+            );
 
         let last = picker.lists.len();
         let making: Element<'_, Message> = match &picker.naming {
@@ -4068,19 +4217,12 @@ impl App {
                 .into(),
             None => {
                 let on_cursor = picker.at == last;
+                let lit = on_cursor && focused;
                 mouse_area(
-                    container(cell(
-                        "New playlist\u{2026}".into(),
-                        NAME,
-                        on_cursor,
-                        false,
-                        true,
-                    ))
-                    .width(Length::Fill)
-                    .padding([3, 4])
-                    .style(move |theme: &iced::Theme| {
-                        row_style(theme, on_cursor, true, last % 2 == 1)
-                    }),
+                    container(cell("New playlist\u{2026}".into(), NAME, lit, false, true))
+                        .width(Length::Fill)
+                        .padding([3, 4])
+                        .style(move |theme: &iced::Theme| entry_fill(theme, on_cursor, focused)),
                 )
                 .on_enter(Message::PickerAt(last))
                 .on_press(Message::PickerAt(last))
@@ -4093,34 +4235,26 @@ impl App {
         // size of the window is something you have to dismiss to see what you
         // were doing. Bounded in both directions so thirty playlists scroll
         // inside it instead of growing it off the screen.
-        container(
+        panel(
             column![
-                text(middle(&picker.title, 38)).size(15),
-                text("j k move  \u{00b7}  <Enter> toggles  \u{00b7}  <Esc> back")
-                    .size(11)
-                    .style(style::dim),
+                // The same two lines the menu's title is, in the same place,
+                // because this is the same kind of thing.
+                container(text(middle(&picker.title, 38)).size(13)).padding([4, 10]),
+                container(
+                    text("j k move  \u{00b7}  <Enter> toggles  \u{00b7}  <Esc> back")
+                        .size(11)
+                        .style(style::dim)
+                )
+                .padding([0, 10]),
                 rule::horizontal(1),
                 scrollable(rows.push(making))
                     .style(style::bars)
                     .height(Length::Shrink),
             ]
-            .spacing(8),
+            .spacing(4),
+            Self::PICKER_WIDTH,
         )
-        .width(Length::Fixed(340.0))
-        .max_height(420.0)
-        .padding(12)
-        .style(|theme: &iced::Theme| {
-            let palette = palette::of(theme);
-            container::Style {
-                background: Some(iced::Background::Color(palette.background.weak.color)),
-                border: iced::Border {
-                    color: palette.background.strong.color,
-                    width: 1.0,
-                    radius: 8.0.into(),
-                },
-                ..container::Style::default()
-            }
-        })
+        .max_height(Self::PICKER_MAX_HEIGHT)
         .into()
     }
 
@@ -4426,29 +4560,20 @@ impl App {
                     text(label)
                         .size(13)
                         .style(move |theme: &iced::Theme| text::Style {
-                            color: Some(if on_cursor {
-                                palette::of(theme).primary.base.text
-                            } else if !audible {
-                                palette::of(theme).background.base.text.scale_alpha(0.4)
-                            } else {
-                                palette::of(theme).background.base.text
+                            color: Some(match (on_cursor, audible) {
+                                (false, false) => {
+                                    palette::of(theme).background.base.text.scale_alpha(0.4)
+                                }
+                                (lit, _) => entry_text(theme, lit),
                             }),
                         }),
                 ]
                 .spacing(6)
                 .align_y(iced::Alignment::Center),
             )
-            .width(Length::Fixed(DEVICE_ROW))
+            .width(Length::Fill)
             .padding([5, 10])
-            .style(move |theme: &iced::Theme| container::Style {
-                background: on_cursor
-                    .then(|| iced::Background::Color(palette::of(theme).primary.base.color)),
-                border: iced::Border {
-                    radius: 4.0.into(),
-                    ..iced::Border::default()
-                },
-                ..container::Style::default()
-            });
+            .style(move |theme: &iced::Theme| entry_fill(theme, on_cursor, true));
             // A row for a device that cannot be heard is not a target: the
             // server would refuse the transfer anyway, and a control that
             // looks pressable and is not is worse than one that is plainly
@@ -4467,56 +4592,35 @@ impl App {
 
         let last = devices.len();
         let on_cursor = at == last;
-        rows = rows.push(
-            mouse_area(
-                container(
-                    text("Stop everywhere")
-                        .size(13)
-                        .style(move |theme: &iced::Theme| text::Style {
+        rows =
+            rows.push(
+                mouse_area(
+                    container(text("Stop everywhere").size(13).style(
+                        move |theme: &iced::Theme| text::Style {
                             color: Some(if on_cursor {
                                 palette::of(theme).primary.base.text
                             } else {
                                 palette::of(theme).background.base.text.scale_alpha(0.7)
                             }),
-                        }),
+                        },
+                    ))
+                    .width(Length::Fill)
+                    .padding([5, 10])
+                    .style(move |theme: &iced::Theme| entry_fill(theme, on_cursor, true)),
                 )
-                .width(Length::Fixed(DEVICE_ROW))
-                .padding([5, 10])
-                .style(move |theme: &iced::Theme| container::Style {
-                    background: on_cursor
-                        .then(|| iced::Background::Color(palette::of(theme).primary.base.color)),
-                    border: iced::Border {
-                        radius: 4.0.into(),
-                        ..iced::Border::default()
-                    },
-                    ..container::Style::default()
-                }),
-            )
-            .on_enter(Message::DeviceAt(last))
-            .on_press(Message::DeviceAt(last))
-            .on_release(Message::PickDevice(None)),
-        );
+                .on_enter(Message::DeviceAt(last))
+                .on_press(Message::DeviceAt(last))
+                .on_release(Message::PickDevice(None)),
+            );
 
-        container(
+        panel(
             column![
                 container(text("Playing on").size(11).style(style::dim)).padding([4, 10]),
                 rows,
             ]
             .spacing(0),
+            DEVICES_WIDTH,
         )
-        .padding(4)
-        .style(|theme: &iced::Theme| {
-            let palette = palette::of(theme);
-            container::Style {
-                background: Some(iced::Background::Color(palette.background.weak.color)),
-                border: iced::Border {
-                    color: palette.background.strong.color,
-                    width: 1.0,
-                    radius: 6.0.into(),
-                },
-                ..container::Style::default()
-            }
-        })
         .into()
     }
 
@@ -5322,6 +5426,126 @@ mod context {
         let _ = app.update(Message::CloseMenu);
         let _ = app.update(Message::HoverAt(9));
         assert_eq!(app.at(Pane::Tracks), 9);
+    }
+
+    /// A submenu opened by pointing is *shown*, not entered.
+    ///
+    /// The highlight stays on the entry it hangs off, which is what a menu
+    /// does everywhere — the difference between a panel appearing beside what
+    /// you are pointing at and the highlight jumping off it into something you
+    /// have not reached yet. Falsify it by making `focus()` read
+    /// `picker.is_some()` again: the first assertion fails with `Picker`.
+    #[test]
+    fn a_submenu_opened_by_pointing_does_not_take_the_keyboard() {
+        let mut app = app("hold");
+        let id = app.peer.as_ref().unwrap().rows()[2].id;
+        let _ = app.update(Message::RowMenu(id, Anchor::Pointer));
+        let _ = app.update(Message::MenuAt(1));
+        for _ in 0..20 {
+            let _ = app.update(Message::Tick);
+        }
+        assert!(app.picker.is_some(), "it is up");
+        assert_eq!(
+            app.focus(),
+            Focus::Menu,
+            "…and the entry still has the keys"
+        );
+        assert_eq!(app.menu.as_ref().unwrap().at, 1);
+
+        // The pointer reaching a row of the submenu is what hands them over:
+        // it has left the entry the submenu hangs off.
+        let _ = app.update(Message::PickerAt(0));
+        assert_eq!(app.focus(), Focus::Picker);
+
+        // …and so does `<Enter>` on the parent, without a pointer.
+        let _ = app.update(Message::MenuAt(0));
+        assert!(app.picker.is_none(), "moving off closed it");
+        let _ = app.update(Message::MenuAt(1));
+        let _ = app.update(Message::MenuActivate);
+        assert_eq!(app.focus(), Focus::Picker, "<Enter> enters it");
+    }
+
+    /// A submenu opens beside its parent, and never on top of it.
+    ///
+    /// `fit` was doing this, and `fit` flips: with no room to the right it
+    /// answers `x - width`, which for a 340-wide submenu against a 198-wide
+    /// menu right-aligned to the ⋯ column lands almost entirely *over* the
+    /// thing it is a submenu of. Falsify it by going back to
+    /// `fit(Point::new(right, …))` and it fails at every width where the menu
+    /// is within 340px of the right-hand edge — which, the menu being pinned
+    /// to that edge, is all of them.
+    #[test]
+    fn a_submenu_opens_beside_its_parent_and_never_over_it() {
+        let mut app = app("beside");
+        let id = app.peer.as_ref().unwrap().rows()[2].id;
+        for width in 320..=3000 {
+            app.window = iced::Size::new(width as f32, 720.0);
+            let _ = app.update(Message::CloseMenu);
+            let _ = app.update(Message::RowMenu(id, Anchor::Dots));
+            let _ = app.update(Message::MenuAt(1));
+            let _ = app.update(Message::MenuActivate);
+            let menu = app.menu.as_ref().unwrap();
+            let at = app.picker.as_ref().unwrap().origin.unwrap();
+            assert!(at.x >= App::EDGE, "at {width}px it starts at {}", at.x);
+
+            // Below about 550 the two cannot both be on the glass at all, and
+            // overlapping is the only answer there is. Above it, they must not.
+            if width >= 600 {
+                let beside = at.x + App::PICKER_WIDTH <= menu.origin.x + 2.0
+                    || at.x >= menu.origin.x + App::MENU_WIDTH - 2.0;
+                assert!(
+                    beside,
+                    "at {width}px the submenu at {} covers the menu at {}",
+                    at.x, menu.origin.x
+                );
+            }
+        }
+    }
+
+    /// …and it slides up to fit rather than flipping over its parent.
+    ///
+    /// The bug this is written for: `open_picker` handed `fit` the panel's
+    /// *maximum* height, so on any window under about 520px tall — which the
+    /// default 860×600 is — the flip fired whatever the submenu's real height
+    /// was, and a two-row panel jumped above the menu for no reason visible on
+    /// screen. Falsify it by passing `PICKER_MAX_HEIGHT` to `fit` again and
+    /// the first assertion fails by about four hundred pixels.
+    #[test]
+    fn a_submenu_slides_to_fit_rather_than_flipping_over_its_parent() {
+        let mut app = app("slide");
+        let id = app.peer.as_ref().unwrap().rows()[2].id;
+
+        // Room below: it opens at the entry it hangs off, full stop.
+        app.window = iced::Size::new(1280.0, 900.0);
+        app.cursor.y = 120.0;
+        let _ = app.update(Message::RowMenu(id, Anchor::Dots));
+        let _ = app.update(Message::MenuAt(1));
+        let _ = app.update(Message::MenuActivate);
+        let top = App::entry_top(app.menu.as_ref().unwrap());
+        assert_eq!(app.picker.as_ref().unwrap().origin.unwrap().y, top);
+
+        // …and no room below: it slides, and stays whole on the glass.
+        let rows = app.picker.as_ref().unwrap().lists.len() + 1;
+        let height = App::picker_height(rows);
+        for h in 200..=900 {
+            app.window = iced::Size::new(1280.0, h as f32);
+            let _ = app.update(Message::CloseMenu);
+            let _ = app.update(Message::RowMenu(id, Anchor::Dots));
+            let _ = app.update(Message::MenuAt(1));
+            let _ = app.update(Message::MenuActivate);
+            let y = app.picker.as_ref().unwrap().origin.unwrap().y;
+            assert!(y >= App::EDGE, "at {h}px tall it starts at {y}");
+            assert!(
+                y <= App::entry_top(app.menu.as_ref().unwrap()),
+                "it slid *down* at {h}px tall, which is not a thing to do"
+            );
+            if height + App::EDGE * 2.0 <= h as f32 {
+                assert!(
+                    y + height <= h as f32 - App::EDGE,
+                    "at {h}px tall the last row is off the bottom"
+                );
+            }
+        }
     }
 
     /// …and it stays on the glass at every window a person can drag.

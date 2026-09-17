@@ -1070,6 +1070,17 @@ every row is one line. Four things about it are load-bearing:
   keys off *moving* and two call sites setting `at` would each have to remember
   it.
 
+  **All three are one component, down to the corner.** `panel` is the ground,
+  the border, the radius and the padding; `entry_fill` and `entry_text` are
+  what a row inside one is painted. They were three copies, and the copies had
+  drifted: the menu's corner was 6 and the playlist picker's was 8, which is
+  small enough that nobody would call it a bug and plain enough to see when the
+  two are open beside each other — the submenu read as a different *kind* of
+  thing from the menu it hangs off, which is the one thing a submenu must not
+  do. A panel says what is legitimately its own (the picker's width, and its
+  height cap, which is a fact about thirty playlists rather than about being a
+  panel) and takes the rest.
+
   **And a submenu opens by being pointed at, after a beat.** `Add to playlist`
   is the one entry that owns one, which `RowMenu::entries` says rather than an
   index written down beside it. Four things it needed:
@@ -1081,7 +1092,43 @@ every row is one line. Four things about it are load-bearing:
     ticks, about what AppKit waits.
   - **Moving off the entry closes it.** A submenu belongs to its parent entry,
     so the cursor leaving is the submenu going — which is what makes pointing
-    at `Go to …` afterwards mean `Go to …`.
+    at `Go to …` afterwards mean `Go to …`. `CloseMenu` takes it too, which is
+    what lets a submenu have **no backdrop of its own**: the menu's is already
+    under both, so the click-away and the wheel are answered, and a second
+    full-window layer *over* the menu would eat every click on the menu's own
+    entries. That is how you would find it — pointing at `Go to …` beside an
+    open submenu and having it dismiss the submenu instead of going anywhere.
+  - **It is shown, not entered.** `Picker::keys` is false for a submenu the
+    pointer opened, so `focus()` leaves the keyboard on the parent entry and
+    the highlight stays there. The difference is between a panel appearing
+    beside what you are pointing at and the highlight jumping off it into
+    something you have not reached yet — and the submenu draws its own cursor
+    dimmed meanwhile, the same `entry_fill` rule the menu follows when its
+    submenu has the keys. The pointer reaching a row of the submenu hands them
+    over, because it has left the entry; so does `<Enter>` on the parent.
+    `<Esc>` closes the innermost thing that is up, submenu first.
+  - **It slides to fit; it does not flip.** `fit` is right for a menu, which
+    hangs off a *point* — with no room below, opening upward from that same
+    point is still a menu about that point. A submenu hangs off a *row*, and
+    flipping puts it somewhere with nothing to do with the row. `open_picker`
+    was passing `fit` the panel's **maximum** height, so on any window under
+    about 520px tall — which the default 860×600 is — the flip fired whatever
+    the submenu's real height was, and a two-row panel jumped above the menu
+    for no reason visible on screen. Worse across: flipped, a 340-wide submenu
+    against a menu right-aligned to the ⋯ column landed almost entirely on top
+    of its parent. `submenu_origin` goes right of the parent when there is room
+    and left when there is not, never over it, and slides up from the entry
+    only as far as staying on the glass takes.
+  - **A chevron, not an ellipsis.** `Add to playlist` ends in `›` drawn at the
+    right of the row, which is what a submenu looks like everywhere and the one
+    thing `…` could not say: `Add to playlist…` and `Rename…` are the same
+    three dots, and one of them opens a panel *beside* the entry while the
+    other replaces what is under it. Which entry earns it is
+    `matches!(message, Message::OpenPicker)` — the same question `dwell_submenu`
+    asks, rather than a `bool` beside the label to keep in step with it. Drawn
+    as an SVG in `icon.rs` and not typed, because U+203A is outside Latin-1 and
+    "Fira Sans probably has a single guillemet" is not a thing to find out from
+    a screenshot of a menu with a `?` on the end of one row.
   - **`offered` stops it reopening.** `<Esc>` out of a submenu leaves the
     cursor on the entry it came from, and without this the next tick opens it
     again: an overlay you cannot close. It clears on moving, so leaving and
