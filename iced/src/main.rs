@@ -1840,9 +1840,27 @@ impl App {
     /// …and the picker's, which is a panel and also a submenu.
     const PICKER_WIDTH: f32 = 340.0;
     const PICKER_MAX_HEIGHT: f32 = 420.0;
-    /// Its title, its hint, the rule and the padding around them; then a row.
-    const PICKER_CHROME: f32 = 84.0;
+    /// A submenu is the panel's own padding and then a row per playlist, and
+    /// nothing else — it draws no header, so there is no title, no hint and no
+    /// rule to leave room for. See `view_picker`.
+    ///
+    /// **This number and that view have to agree, and nothing checks it.**
+    /// iced lays out after `view` and `submenu_origin` decides before it, so a
+    /// header put back here without moving this would place a panel 76px
+    /// shorter than the one drawn — and `pin` clips, so the bottom rows would
+    /// simply not be there. It is the same shape as the flip bug below: the
+    /// placement believing a height the panel does not have.
+    const SUBMENU_CHROME: f32 = PANEL_PADDING * 2.0;
     const PICKER_ROW: f32 = 23.0;
+    /// How far a submenu laps over the menu it hangs off.
+    ///
+    /// Two panels that merely touch read as two panels; one that laps over its
+    /// parent reads as having come *out* of it, which is what a submenu is.
+    /// The number is not a taste, though: it is both panels' padding, so the
+    /// *entries* inside them meet edge to edge while the panels overlap. That
+    /// is the most it can ever be — a pixel more would draw this panel over a
+    /// word of its parent, and the parent is still up.
+    const SUBMENU_OVERLAP: f32 = PANEL_PADDING * 2.0;
     /// A margin, so a panel that only just fits does not sit flush against
     /// the glass.
     const EDGE: f32 = 8.0;
@@ -3296,26 +3314,32 @@ impl App {
     /// there is not, never over it; and down from the entry, slid up only as
     /// far as it takes to stay on the glass.
     fn submenu_origin(menu: &RowMenu, rows: usize, window: iced::Size) -> iced::Point {
-        // Overlapping the parent's border by a hair, so the two read as one
-        // panel rather than as two that happen to touch.
-        let right = menu.origin.x + Self::MENU_WIDTH - 2.0;
+        // Lapped over the parent by both panels' padding, so the two read as
+        // one thing that grew rather than as two that happen to touch — and
+        // the entries inside them meet edge to edge, which is the most the
+        // overlap can be without covering a word of the menu.
+        let right = menu.origin.x + Self::MENU_WIDTH - Self::SUBMENU_OVERLAP;
         let x = match right + Self::PICKER_WIDTH + Self::EDGE > window.width {
-            true => (menu.origin.x - Self::PICKER_WIDTH + 2.0).max(Self::EDGE),
+            true => (menu.origin.x - Self::PICKER_WIDTH + Self::SUBMENU_OVERLAP).max(Self::EDGE),
             false => right,
         };
-        let height = Self::picker_height(rows);
+        let height = Self::submenu_height(rows);
         let y = Self::entry_top(menu)
             .min((window.height - height - Self::EDGE).max(Self::EDGE))
             .max(Self::EDGE);
         iced::Point::new(x, y)
     }
 
-    /// How tall the playlist picker comes out, for `rows` playlists plus the
-    /// row that makes another — capped where the panel itself caps it, so
-    /// thirty playlists scroll inside a panel of a known size rather than
-    /// growing one nothing can place.
-    fn picker_height(rows: usize) -> f32 {
-        (Self::PICKER_CHROME + Self::PICKER_ROW * rows as f32).min(Self::PICKER_MAX_HEIGHT)
+    /// How tall a submenu comes out, for `rows` playlists plus the row that
+    /// makes another — capped where the panel itself caps it, so thirty
+    /// playlists scroll inside a panel of a known size rather than growing one
+    /// nothing can place.
+    ///
+    /// The submenu's, specifically, because it is the only picker anything
+    /// places: the one `a` opens is centred, and a centred panel's height is
+    /// the layout's business rather than this function's.
+    fn submenu_height(rows: usize) -> f32 {
+        (Self::SUBMENU_CHROME + Self::PICKER_ROW * rows as f32).min(Self::PICKER_MAX_HEIGHT)
     }
 
     /// Put a panel of that size at `at`, or back the other way when it would
@@ -4280,8 +4304,21 @@ impl App {
             None => {
                 let on_cursor = picker.at == last;
                 let lit = on_cursor && focused;
+                // The same two columns every playlist row has, so the words
+                // line up down the panel instead of this one starting where
+                // the ticks are — and a `+` in that column, because what it
+                // holds is *what this row is* and this row makes one.
+                let line = Row::new()
+                    .spacing(0)
+                    .align_y(iced::Alignment::Center)
+                    .push(
+                        container(icon::line(glyphs::PLUS, lit))
+                            .width(TRANSPORT)
+                            .height(Length::Fixed(icon::TRANSPORT)),
+                    )
+                    .push(cell("New playlist\u{2026}".into(), NAME, lit, false, true));
                 mouse_area(
-                    container(cell("New playlist\u{2026}".into(), NAME, lit, false, true))
+                    container(line)
                         .width(Length::Fill)
                         .padding([3, 4])
                         .style(move |theme: &iced::Theme| entry_fill(theme, on_cursor, focused)),
@@ -4293,12 +4330,26 @@ impl App {
             }
         };
 
-        // A panel rather than a page: it is about one row, and something the
-        // size of the window is something you have to dismiss to see what you
-        // were doing. Bounded in both directions so thirty playlists scroll
-        // inside it instead of growing it off the screen.
-        panel(
-            column![
+        let body = scrollable(rows.push(making))
+            .style(style::bars)
+            .height(Length::Shrink);
+
+        // **A submenu draws no header**, which is what `origin` decides: it is
+        // `Some` exactly when this panel hangs off the row menu, and that menu
+        // is still up behind it with the track's name across its own top. A
+        // title here would be the same sentence twice, one panel apart, and
+        // the hint under it would be three lines of chrome above a list of
+        // three playlists — where a native submenu is entries and nothing
+        // else. Opened with `a` there is no parent to have said any of it, so
+        // it says it itself.
+        //
+        // A panel rather than a page either way: it is about one row, and
+        // something the size of the window is something you have to dismiss to
+        // see what you were doing. Bounded so thirty playlists scroll inside
+        // it instead of growing it off the screen.
+        let inside: Element<'_, Message> = match picker.origin {
+            Some(_) => body.into(),
+            None => column![
                 // The same two lines the menu's title is, in the same place,
                 // because this is the same kind of thing.
                 container(text(middle(&picker.title, 38)).size(13)).padding([4, 10]),
@@ -4309,15 +4360,15 @@ impl App {
                 )
                 .padding([0, 10]),
                 rule::horizontal(1),
-                scrollable(rows.push(making))
-                    .style(style::bars)
-                    .height(Length::Shrink),
+                body,
             ]
-            .spacing(4),
-            Self::PICKER_WIDTH,
-        )
-        .max_height(Self::PICKER_MAX_HEIGHT)
-        .into()
+            .spacing(4)
+            .into(),
+        };
+
+        panel(inside, Self::PICKER_WIDTH)
+            .max_height(Self::PICKER_MAX_HEIGHT)
+            .into()
     }
 
     /// The keymap, because one that has to be read in the source is one nobody
@@ -5368,7 +5419,7 @@ mod cards {
 /// whatever the mouse was doing.
 #[cfg(all(test, feature = "demo"))]
 mod context {
-    use super::{vim, Anchor, App, Entry, Focus, Message, Pane};
+    use super::{vim, Anchor, App, Entry, Focus, Message, Pane, PANEL_PADDING};
 
     /// The demo's own boot, which is a seeded peer and nothing else — on a
     /// database of this test's own, because cargo runs them on threads and
@@ -5696,6 +5747,13 @@ mod context {
     /// `fit(Point::new(right, …))` and it fails at every width where the menu
     /// is within 340px of the right-hand edge — which, the menu being pinned
     /// to that edge, is all of them.
+    ///
+    /// "Beside" means lapped over by `SUBMENU_OVERLAP` and not one pixel more,
+    /// which is what the assertion below is written in terms of: both panels'
+    /// padding, so their *entries* meet edge to edge. The panels overlapping
+    /// is what makes the submenu read as having come out of its parent; an
+    /// entry overlapping would be this panel drawn over a word of a menu that
+    /// is still up. Falsify it by doubling the constant.
     #[test]
     fn a_submenu_opens_beside_its_parent_and_never_over_it() {
         let mut app = app("beside");
@@ -5711,15 +5769,28 @@ mod context {
             assert!(at.x >= App::EDGE, "at {width}px it starts at {}", at.x);
 
             // Below about 550 the two cannot both be on the glass at all, and
-            // overlapping is the only answer there is. Above it, they must not.
+            // covering the parent is the only answer there is. Above it, the
+            // entries must meet and never cross: the submenu's first column
+            // starts where the menu's labels end, or its last ends where they
+            // begin.
             if width >= 600 {
-                let beside = at.x + App::PICKER_WIDTH <= menu.origin.x + 2.0
-                    || at.x >= menu.origin.x + App::MENU_WIDTH - 2.0;
-                assert!(
-                    beside,
-                    "at {width}px the submenu at {} covers the menu at {}",
-                    at.x, menu.origin.x
+                let mine = (
+                    at.x + PANEL_PADDING,
+                    at.x + App::PICKER_WIDTH - PANEL_PADDING,
                 );
+                let theirs = (
+                    menu.origin.x + PANEL_PADDING,
+                    menu.origin.x + App::MENU_WIDTH - PANEL_PADDING,
+                );
+                assert!(
+                    mine.0 >= theirs.1 || mine.1 <= theirs.0,
+                    "at {width}px the submenu's entries {mine:?} cross the menu's {theirs:?}"
+                );
+                // …and they really do overlap, which is the other half: a
+                // submenu that merely touches is two panels.
+                let laps = at.x < menu.origin.x + App::MENU_WIDTH
+                    && at.x + App::PICKER_WIDTH > menu.origin.x;
+                assert!(laps, "at {width}px the two only touch, at {}", at.x);
             }
         }
     }
@@ -5748,7 +5819,7 @@ mod context {
 
         // …and no room below: it slides, and stays whole on the glass.
         let rows = app.picker.as_ref().unwrap().lists.len() + 1;
-        let height = App::picker_height(rows);
+        let height = App::submenu_height(rows);
         for h in 200..=900 {
             app.window = iced::Size::new(1280.0, h as f32);
             let _ = app.update(Message::CloseMenu);

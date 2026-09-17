@@ -1050,7 +1050,10 @@ every row is one line. Four things about it are load-bearing:
   asks: every playlist, each ticked or not, and a last row that makes one. It
   is one `vim::Grid::column` a cell longer than the playlists, so `j` walks onto the
   new-playlist row like anything else and `<Enter>` there starts naming — one
-  shape, one cursor, and no second key to learn. `<Space>` is deliberately not
+  shape, one cursor, and no second key to learn. It is drawn like one too:
+  the same two columns every playlist row has, with a `+` where the ticks are
+  rather than a bare label starting in the tick column, because that column
+  holds *what a row is* and this row makes one. `<Space>` is deliberately not
   bound inside it: the transport should not stop working because a panel is
   up.
 
@@ -1122,6 +1125,29 @@ every row is one line. Four things about it are load-bearing:
     both — so this is the keyboard agreeing with the pointer rather than a
     second rule. `a`'s picker has no parent and is only itself, which is why
     the condition is "is there a menu" and not "is this a picker".
+  - **It laps over its parent, and the overlap is not a taste.**
+    `SUBMENU_OVERLAP` is both panels' `PANEL_PADDING`, so the *entries* inside
+    them meet edge to edge while the panels themselves overlap — which is what
+    makes the submenu read as having come out of the menu rather than as two
+    panels that happen to touch, and is the most it can ever be: a pixel more
+    draws this panel over a word of a menu that is still up.
+    `a_submenu_opens_beside_its_parent_and_never_over_it` asserts both halves
+    in terms of the entries, and falsifies in both directions — doubling the
+    constant crosses them, zeroing it leaves them only touching.
+  - **And it draws no header, because its parent already did.** The menu it
+    hangs off is still up with the track's name across its own top, so a title
+    on the submenu is the same sentence twice one panel apart, and the keymap
+    hint under it is three lines of chrome above a list of three playlists.
+    `picker.origin` is what decides — it is `Some` exactly when this panel
+    came from the row menu — and the one `a` opens keeps both, because there
+    is no parent there to have said either.
+
+    The cost is a constant that nothing can check: `SUBMENU_CHROME` is the
+    panel's padding and nothing else, and `submenu_origin` places the panel
+    from it *before* iced lays anything out. Put the header back without
+    moving that number and the placement believes a panel 76px shorter than
+    the one drawn — and `pin` clips, so the bottom rows are simply not there.
+    Same shape as the flip bug below.
   - **It slides to fit; it does not flip.** `fit` is right for a menu, which
     hangs off a *point* — with no room below, opening upward from that same
     point is still a menu about that point. A submenu hangs off a *row*, and
