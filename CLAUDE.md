@@ -1113,7 +1113,15 @@ every row is one line. Four things about it are load-bearing:
     dimmed meanwhile, the same `entry_fill` rule the menu follows when its
     submenu has the keys. The pointer reaching a row of the submenu hands them
     over, because it has left the entry; so does `<Enter>` on the parent.
-    `<Esc>` closes the innermost thing that is up, submenu first.
+  - **`<Esc>` takes both, because they are one thing.** It closed the
+    innermost for a while, which is what a *stack* of menus does and this is
+    not one: a submenu belongs to an entry of its parent, both are up at once,
+    and you asked one question. Dismissing that twice is the same complaint as
+    a menu that stays up after it has been answered, one layer in. The click
+    already worked this way — a submenu has no backdrop, so the menu's closes
+    both — so this is the keyboard agreeing with the pointer rather than a
+    second rule. `a`'s picker has no parent and is only itself, which is why
+    the condition is "is there a menu" and not "is this a picker".
   - **It slides to fit; it does not flip.** `fit` is right for a menu, which
     hangs off a *point* — with no room below, opening upward from that same
     point is still a menu about that point. A submenu hangs off a *row*, and

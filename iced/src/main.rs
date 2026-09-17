@@ -1993,14 +1993,22 @@ impl App {
                     _ => self.pick_device(),
                 },
                 vim::Action::Cancel => match focus {
-                    // A showing submenu goes first, even though the keyboard
-                    // never went into it: `<Esc>` closes the innermost thing
-                    // that is up, and `offered` keeps the next tick from
-                    // opening it again under a cursor that has not moved.
-                    Focus::Menu if self.picker.is_some() => self.update(Message::ClosePicker),
-                    Focus::Menu => self.update(Message::CloseMenu),
-                    Focus::Picker => self.update(Message::ClosePicker),
-                    _ => self.update(Message::CloseDevices),
+                    Focus::Devices => self.update(Message::CloseDevices),
+                    // **A menu and its submenu are one thing**, so `<Esc>`
+                    // takes both. It used to close the innermost — which is
+                    // what a *stack* of menus does, and this is not one: the
+                    // submenu belongs to an entry of its parent, both are up
+                    // at once, and you asked one question. Dismissing that
+                    // twice is the same complaint as a menu that stays up
+                    // after it has been answered, one layer in.
+                    //
+                    // `CloseMenu` already drops a submenu with the menu — it
+                    // is what lets the menu's backdrop close both — so this is
+                    // the keyboard agreeing with the click rather than a
+                    // second rule.
+                    _ if self.menu.is_some() => self.update(Message::CloseMenu),
+                    // …and `a`'s picker has no parent, so it is only itself.
+                    _ => self.update(Message::ClosePicker),
                 },
                 vim::Action::Toggle => self.update(Message::PlayPause),
                 _ => Task::none(),
@@ -5296,7 +5304,7 @@ mod cards {
 /// whatever the mouse was doing.
 #[cfg(all(test, feature = "demo"))]
 mod context {
-    use super::{Anchor, App, Entry, Focus, Message, Pane};
+    use super::{vim, Anchor, App, Entry, Focus, Message, Pane};
 
     /// The demo's own boot, which is a seeded peer and nothing else — on a
     /// database of this test's own, because cargo runs them on threads and
@@ -5330,7 +5338,10 @@ mod context {
         // parent entry dim rather than stay lit.
         let _ = app.update(Message::OpenPicker);
         assert_eq!(app.focus(), Focus::Picker);
-        // …and giving it back is `<Esc>`, one layer at a time.
+        // `Message::ClosePicker` hands them back one layer, which is what
+        // dropping a submenu *means*; `<Esc>` is not that, because a menu and
+        // its submenu are one thing — see
+        // `escape_closes_a_menu_and_its_submenu_together`.
         let _ = app.update(Message::ClosePicker);
         assert_eq!(app.focus(), Focus::Menu, "back to the parent");
         let _ = app.update(Message::CloseMenu);
@@ -5506,6 +5517,73 @@ mod context {
         let _ = app.update(Message::CloseMenu);
         let _ = app.update(Message::HoverAt(9));
         assert_eq!(app.at(Pane::Tracks), 9);
+    }
+
+    /// `<Esc>` takes the menu and its submenu together.
+    ///
+    /// They are one thing: the submenu belongs to an entry of its parent, both
+    /// are up at once, and you asked one question. Closing the innermost is
+    /// what a *stack* of menus does and this is not one — dismissing it twice
+    /// is the same complaint as a menu that stays up after it has been
+    /// answered, one layer in. The click already worked this way, because the
+    /// menu's backdrop is the only one there is; this is the keyboard agreeing
+    /// with it.
+    ///
+    /// Falsify it by putting `ClosePicker` back on the `Focus::Menu` and
+    /// `Focus::Picker` arms: the menu is still up after the first `<Esc>`,
+    /// from either side of the keyboard.
+    #[test]
+    fn escape_closes_a_menu_and_its_submenu_together() {
+        for entered in [false, true] {
+            let mut app = app("escape");
+            let id = app.peer.as_ref().unwrap().rows()[2].id;
+            let _ = app.update(Message::RowMenu(id, Anchor::Pointer));
+            let _ = app.update(Message::MenuAt(1));
+            let _ = app.update(Message::MenuActivate);
+            assert!(app.picker.is_some());
+            if !entered {
+                // The half where the keys never left the parent entry: the
+                // pointer opened it and `focus()` is still `Menu`.
+                app.picker.as_mut().unwrap().keys = false;
+            }
+            assert_eq!(
+                app.focus(),
+                match entered {
+                    true => Focus::Picker,
+                    false => Focus::Menu,
+                }
+            );
+
+            let _ = app.act(vim::Action::Cancel);
+            assert!(
+                app.picker.is_none(),
+                "the submenu went (entered: {entered})"
+            );
+            assert!(
+                app.menu.is_none(),
+                "…and so did the menu (entered: {entered})"
+            );
+            assert_eq!(app.focus(), Focus::Pane(Pane::Tracks));
+        }
+    }
+
+    /// …and `a`'s picker has no parent, so it is only itself.
+    ///
+    /// The other half of the rule above, and the reason it is written as "is
+    /// there a menu" rather than "is this a picker": the same panel reached
+    /// the other way is the whole of what is up, and closing a menu that does
+    /// not exist is not a thing to do.
+    #[test]
+    fn escape_from_the_picker_alone_closes_only_it() {
+        let mut app = app("escape-alone");
+        app.pane = Pane::Tracks;
+        let _ = app.update(Message::OpenPicker);
+        assert!(app.picker.is_some() && app.menu.is_none());
+        assert_eq!(app.focus(), Focus::Picker);
+
+        let _ = app.act(vim::Action::Cancel);
+        assert!(app.picker.is_none());
+        assert_eq!(app.focus(), Focus::Pane(Pane::Tracks));
     }
 
     /// A submenu opened by pointing is *shown*, not entered.
