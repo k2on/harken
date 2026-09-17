@@ -80,7 +80,28 @@
          is is a number to tune. From 1.2 the canvas overfills the window
          throughout and the only thing on screen is the app. */
       canvas.arriving {
-        animation: arrive var(--reveal) var(--ease) both;
+        animation: arrive var(--reveal) var(--ease) both,
+                   focus 520ms ease-out both;
+        will-change: transform, filter;
+      }
+      /* **The blur is what stops it shimmering, and the shimmer was not the
+         curve's fault.** A CSS transform scales the canvas's *already
+         rasterized* bitmap, so at 1.2 the browser is magnifying it 20% and
+         resampling on a grid that slides every frame — which on a screen made
+         of one-pixel zebra rows and text antialiasing is a fizz of pixels
+         crawling about. No easing fixes that; it is the resample, not the
+         motion.
+
+         A blur that resolves turns the artifact into the point. The softness
+         of a magnified bitmap and the shimmer of a moving sample grid are the
+         same thing, and under a blur they read as an image coming into focus
+         — which is what an iOS app-open and Linear's load both are. It clears
+         over the first 520ms, on its own shorter curve, so the long tail of
+         the settle is crisp: a blur still on screen at rest would just be a
+         soft app. */
+      @keyframes focus {
+        from { filter: blur(9px); }
+        to   { filter: blur(0); }
       }
       /* **The canvas does not fade.** It did, opposite the splash, which
          sounds like a cross-dissolve and is not one: two half-transparent
@@ -126,11 +147,11 @@
       // land exactly where they did before. Nobody is clicking during it.
       const arrive = (canvas) => {
         canvas.classList.add("arriving");
-        canvas.addEventListener(
-          "animationend",
-          () => canvas.classList.remove("arriving"),
-          { once: true },
-        );
+        // Two animations run on it; the transform's is the long one, so the
+        // class comes off when *that* ends rather than on the first to finish.
+        canvas.addEventListener("animationend", (e) => {
+          if (e.animationName === "arrive") canvas.classList.remove("arriving");
+        });
       };
       // `transitionend` does not fire when the transition is suppressed —
       // reduced motion, a background tab — so the timeout is the one that has
@@ -157,10 +178,20 @@
 
       // Once, on the canvas — the window `focus` listener above must not
       // replay the animation every time somebody alt-tabs back.
+      // **Two frames before it starts.** `init()` resolves at the app's busiest
+      // moment — iced is opening the database, hydrating the view and decoding
+      // covers — and a settle that begins there is competing for the frames it
+      // is made of. Two `requestAnimationFrame`s put it after iced has painted
+      // at least once, which costs about 30ms of splash and buys the animation
+      // calmer water.
       const ready = (canvas) => {
         grab();
-        arrive(canvas);
-        dismiss();
+        requestAnimationFrame(() =>
+          requestAnimationFrame(() => {
+            arrive(canvas);
+            dismiss();
+          }),
+        );
       };
 
       // The canvas is appended by the wasm module, so it may not exist yet on

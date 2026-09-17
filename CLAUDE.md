@@ -2747,6 +2747,32 @@ Eight things it needed:
   through it — which is the long glide to a stop, and is what the curve was
   the wrong tool for the first time and the right one for now.
 
+- **A blur that resolves is what stops it shimmering, and the shimmer was
+  never the curve's fault.** A CSS transform scales the canvas's *already
+  rasterized* bitmap, so at 1.2 the browser magnifies it by a fifth and
+  resamples on a grid that slides every frame. On a screen made of one-pixel
+  zebra rows and text antialiasing that is a fizz of pixels crawling about —
+  and no easing touches it, because it is the resample and not the motion.
+
+  The fix turns the artifact into the point: the softness of a magnified
+  bitmap and the shimmer of a moving sample grid are the same thing, and under
+  a blur they read as an image coming into focus, which is what an iOS
+  app-open and Linear's load both are. `blur(9px)` to 0 over 520ms on its own
+  shorter ease-out, so the long tail is crisp — at 520ms the scale is 1.020
+  and the filter is already gone. A blur still on screen at rest is just a
+  soft app.
+
+  **Its cost is not measured on real hardware.** Headless Chromium here is
+  SwiftShader, where a full-screen blur is far more expensive than on a GPU,
+  and it doubled the count of frames over 20ms (28 against 15) while leaving
+  the median at 16.7ms. That says nothing useful about a real machine. If the
+  reveal ever janks, this is the first thing to take out — delete `focus` from
+  the `animation` shorthand and the rest stands.
+- **It starts two frames after the module resolves.** `init()` returns at the
+  app's busiest moment — iced is opening the database, hydrating the view and
+  decoding covers — and a settle that begins there is competing for the frames
+  it is made of. Two `requestAnimationFrame`s put it after iced has painted at
+  least once: about 30ms more splash, for an animation in calmer water.
 - **The canvas does not fade — only the splash does.** Fading them opposite
   each other sounds like a cross-dissolve and is not one. Two half-transparent
   layers over the page means the splash's background hides nothing from the
