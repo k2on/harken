@@ -67,7 +67,8 @@ iced/                    the desktop and browser client
   src/art.rs             …and the square derived from the name, for the nine
                          albums in thirteen that have no picture
   nix/readme.nix         its section of README.md
-  web/                   the browser shell `nix run .#web` serves
+  web/                   the browser shell `nix run .#web` serves — and the
+                         splash the wasm module is fetched behind
   nix/default.nix        the desktop package and `iced`
   nix/web.nix            the wasm build, `web` and `web-build`
 mobile/                  the phone client; src/ is UI and a socket, nothing else
@@ -2649,6 +2650,58 @@ Two things that are easy to get wrong and cost a round each:
 the status line carries the pane and anything half-typed — a swallowed `5`,
 or a `g` still waiting for its pair — because invisible pending input is the
 one thing that makes a modal keymap feel broken.
+
+## The page opens on the mark, and the app arrives rather than appearing
+
+A wasm module is a megabyte or two to fetch and instantiate, so a browser peer
+spends a second or three on a blank page before iced paints anything. It said
+`loading harken…` in the top-left corner, which is a status line for a
+developer. It shows the trumpet in the middle of the page now, and when the
+module is up the app **fades in while it grows the last six percent into
+place** — the way Linear opens and the way a Hyprland login does. A fade alone
+reads as a picture being turned up; the scale is what makes it an arrival.
+
+Only a browser has this, for the same reason the media session and the device
+picker do: the desktop binary is already running when its window appears, so
+there is nothing to wait for and nothing to reveal.
+
+Six things it needed:
+
+- **The splash covers the canvas; the canvas does not start invisible.** Those
+  look equivalent and fail differently. A module that never resolves leaves a
+  page saying "loading" rather than a blank one saying nothing — and the second
+  is indistinguishable from the app having loaded and drawn nothing, which is
+  the failure this program has already been bitten by four times in other
+  clothes.
+- **The mark is `favicon.svg`, which is generated.** It sits beside
+  `index.html` in both web derivations already, and an SVG loaded through an
+  `<img>` still resolves its own `prefers-color-scheme` — so the one file in
+  `branding/` that carries both themes serves the tab strip and the splash from
+  one copy, and this page names no colour. The background is the CSS system
+  colour `Canvas`, which `color-scheme: light dark` above it already resolves:
+  the app grows out of the page's own ground rather than out of a value copied
+  from `branding/` that nothing would keep in step.
+- **The easing is cubic, and quintic is not a near-enough substitute.** The
+  first version used `cubic-bezier(0.22, 1, 0.36, 1)` — an ease-out quint,
+  which is the usual choice for a panel — and it is 90% finished in a quarter
+  of its duration. Three percent of scale under that curve is a jump nobody can
+  see, so it measured as working and looked like a plain fade. A curve that
+  lands late is what makes a small movement legible: `cubic-bezier(0.33, 1,
+  0.68, 1)` over 620ms, from 0.94.
+- **The splash goes the same way the app comes.** It fades out while scaling
+  *up* to 1.06, so the two read as one movement continuing rather than as a lid
+  coming off something underneath.
+- **The transform comes off the canvas when it is over.** winit reads the
+  pointer out of the canvas's bounding box, and a transform moves it — so the
+  class is dropped on `animationend` and a click lands exactly where it did
+  before. Nobody is clicking during the reveal; leaving a transform on forever
+  would be a permanent half-pixel lie.
+- **`transitionend` is not a guarantee, so the timeout is the one that has to
+  be there.** A suppressed transition — reduced motion, a background tab —
+  fires no event, and the splash would stay up over a running app. Whichever
+  lands first removes it. And reduced motion still gets the fade, because what
+  it says — *this is ready now* — is not decoration.
+
 
 ## Both clients maintain their list; only one of them re-reads anything
 
