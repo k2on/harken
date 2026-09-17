@@ -687,6 +687,40 @@ struct Picker {
     /// keys, so none of them reach the vim layer — which is what makes a
     /// modeless keymap safe beside a box you can type a name into.
     naming: Option<String>,
+    /// How wide this panel is, worked out once from what is in it.
+    ///
+    /// On the `Picker` rather than computed where it is wanted, because it is
+    /// wanted in two places that must agree: `view_picker` draws the panel and
+    /// `submenu_origin` decides whether it opens left or right, and iced lays
+    /// out after both. One number, stored, cannot be two answers.
+    width: f32,
+}
+
+/// The last row of the picker, which is a row and not a key.
+const NEW_PLAYLIST: &str = "New playlist\u{2026}";
+
+impl Picker {
+    /// As wide as the longest name it holds, within the panel's range.
+    ///
+    /// Counted in characters against `ENTRY_CHAR`, which is an estimate — so
+    /// `view_picker` truncates to whatever the answer actually affords rather
+    /// than trusting the count twice. A name too long for the maximum gets an
+    /// ellipsis through its middle, the same as a track title in the table.
+    fn width_for(lists: &[(harken::Id<harken::tables::Playlist>, String, bool)]) -> f32 {
+        let longest = lists
+            .iter()
+            .map(|(_, name, _)| name.chars().count())
+            .chain(std::iter::once(NEW_PLAYLIST.chars().count()))
+            .max()
+            .unwrap_or(0);
+        (ENTRY_CHROME + longest as f32 * ENTRY_CHAR)
+            .clamp(App::PICKER_MIN_WIDTH, App::PICKER_MAX_WIDTH)
+    }
+
+    /// …and how many characters of a name that width affords.
+    fn label_chars(&self) -> usize {
+        (((self.width - ENTRY_CHROME) / ENTRY_CHAR).floor().max(0.0)) as usize
+    }
 }
 
 /// One line of the sidebar: somewhere the cursor can be and something it can
@@ -890,6 +924,19 @@ const ENTRY_RADIUS: f32 = 4.0;
 const PANEL_ENTRY: f32 = 27.0;
 const ENTRY_PAD_X: f32 = 10.0;
 const ENTRY_GAP: f32 = 8.0;
+/// Roughly how wide one character is at size 13, in pixels.
+///
+/// The same kind of estimate `PER_PORTION` is, and unavailable for the same
+/// reason: iced lays text out in pixels and a panel has to be *placed* before
+/// it is laid out. It errs the opposite way, though, because the cost is the
+/// opposite: a panel sized from this is its own width, so erring wide is a
+/// strip of empty panel and erring narrow is an ellipsis through somebody's
+/// playlist name. Inter's advance at 13px averages about 6.5 across mixed
+/// case; 7 is a shade over, on purpose.
+const ENTRY_CHAR: f32 = 7.0;
+/// Everything in a panel row that is not the label: the panel's padding either
+/// side, the row's, the glyph column and the gap after it.
+const ENTRY_CHROME: f32 = PANEL_PADDING * 2.0 + ENTRY_PAD_X * 2.0 + icon::TRANSPORT + ENTRY_GAP;
 
 /// The chrome all three context windows share: the ground, the border, the
 /// corner and the padding.
@@ -1893,7 +1940,20 @@ impl App {
     /// entries are `PANEL_ENTRY`, the one row height every panel here draws.
     const MENU_TITLE: f32 = 24.0;
     /// …and the picker's, which is a panel and also a submenu.
-    const PICKER_WIDTH: f32 = 340.0;
+    ///
+    /// **A range rather than a width**, because a submenu is as wide as its
+    /// longest name and no wider — 340 of panel beside a three-playlist menu
+    /// was two thirds empty, which reads as a panel that failed to fill rather
+    /// than one sized to what is in it. `Picker::width_for` is the one
+    /// computation and the answer is kept on the `Picker`, so the panel
+    /// `view_picker` draws and the one `submenu_origin` places cannot be two
+    /// different numbers — the trap `SUBMENU_CHROME` documents, avoided by
+    /// having only one of them.
+    ///
+    /// The minimum is what the `New playlist…` row needs, so a panel holding
+    /// one short name is not narrower than its own last row.
+    const PICKER_MIN_WIDTH: f32 = 180.0;
+    const PICKER_MAX_WIDTH: f32 = 340.0;
     const PICKER_MAX_HEIGHT: f32 = 420.0;
     /// A submenu is the panel's own padding and then a row per playlist, and
     /// nothing else — it draws no header, so there is no title, no hint and no
@@ -2040,22 +2100,23 @@ impl App {
     /// The only place that knows both halves: `vim` produced the action from
     /// keys, and this is what the action means in a music library.
     fn act(&mut self, action: vim::Action) -> Task<Message> {
-        // Whatever is over the page takes the motions while it is up, and
-        // which one that is is `focus`'s to say rather than this chain's.
+        // Whatever is over the page takes the keys while it is up, and which
+        // one that is is `focus`'s to say rather than a chain here's.
         // `<Space>` is deliberately not one of them anywhere: the transport
         // should not stop working because a panel is up.
         //
-        // All three answer the same four things, because all three are a
-        // `vim::Grid::column` and nothing else: walk it, run the row, close
-        // it, and leave the transport alone.
+        // **Moving is not one of them either, any more.** Every grid in this
+        // program answers a motion the same three ways — step the shape, land,
+        // or hand it to whatever is beyond that edge — so `travel` is one call
+        // wherever the keyboard is, and it asks `focus()` itself. What is left
+        // below is only what an overlay answers *differently* from a pane:
+        // what `<Enter>` runs and what `<Esc>` closes.
+        if let vim::Action::Move(motion) = action {
+            return self.travel(motion);
+        }
         let focus = self.focus();
         if !matches!(focus, Focus::Pane(_)) {
             return match action {
-                vim::Action::Move(motion) => match focus {
-                    Focus::Menu => self.menu_travel(motion),
-                    Focus::Picker => self.picker_travel(motion),
-                    _ => self.devices_travel(motion),
-                },
                 vim::Action::Activate => match focus {
                     Focus::Menu => self.update(Message::MenuActivate),
                     Focus::Picker => self.update(Message::PickerActivate),
@@ -2087,7 +2148,8 @@ impl App {
             };
         }
         match action {
-            vim::Action::Move(motion) => self.travel(motion),
+            // Answered above, wherever the keyboard is.
+            vim::Action::Move(_) => Task::none(),
             vim::Action::Activate => self.activate(),
             vim::Action::Cycle => {
                 self.pane = self.pane.next();
@@ -2158,15 +2220,101 @@ impl App {
     /// said which way, the shape said whether it could, and this decides that
     /// "it could not, and there was no axis for it" means the next pane along.
     fn travel(&mut self, motion: vim::Motion) -> Task<Message> {
-        let pane = self.pane;
-        match self.shape(pane).step(self.at(pane), motion) {
-            Some(at) => return self.land(pane, at),
-            None => match pane.beyond(motion) {
-                Some(next) => self.pane = next,
-                None => return Task::none(),
-            },
+        let focus = self.focus();
+        match self.grid(focus).step(self.cursor_in(focus), motion) {
+            Some(at) => self.land_in(focus, at),
+            None => self.cross(focus, motion),
         }
-        self.reveal()
+    }
+
+    /// The shape of whichever grid has the keyboard.
+    ///
+    /// Every one of them is a `vim::Grid`, which is what lets there be one
+    /// `travel`: an overlay is a column and a page of cards is not, and that
+    /// difference is the only thing any of them has to say.
+    fn grid(&self, focus: Focus) -> vim::Grid {
+        match focus {
+            Focus::Pane(pane) => self.shape(pane),
+            Focus::Menu => vim::Grid::column(self.menu.as_ref().map_or(0, |m| m.entries().len())),
+            // One cell longer than the playlists, because the row that makes
+            // one is a row: `j` walks onto it like anything else.
+            Focus::Picker => {
+                vim::Grid::column(self.picker.as_ref().map_or(0, |p| p.lists.len() + 1))
+            }
+            // …and the same, for the row that stops it everywhere.
+            Focus::Devices => vim::Grid::column(self.listening.devices().len() + 1),
+        }
+    }
+
+    /// …and where its cursor is.
+    fn cursor_in(&self, focus: Focus) -> usize {
+        match focus {
+            Focus::Pane(pane) => self.at(pane),
+            Focus::Menu => self.menu.as_ref().map_or(0, |m| m.at),
+            Focus::Picker => self.picker.as_ref().map_or(0, |p| p.at),
+            Focus::Devices => self.devices.unwrap_or(0),
+        }
+    }
+
+    /// …and what putting it down somewhere new costs.
+    ///
+    /// A pane pays the most — landing in the sidebar is also showing what you
+    /// landed on, and either pane has to be scrolled to keep the cursor on
+    /// screen. An overlay is a number, except the menu, whose `menu_land` is
+    /// the one place a submenu's fate is decided.
+    fn land_in(&mut self, focus: Focus, at: usize) -> Task<Message> {
+        match focus {
+            Focus::Pane(pane) => return self.land(pane, at),
+            Focus::Menu => self.menu_land(at),
+            Focus::Picker => {
+                if let Some(picker) = &mut self.picker {
+                    picker.at = at;
+                }
+            }
+            Focus::Devices => self.devices = Some(at),
+        }
+        Task::none()
+    }
+
+    /// Where a motion the grid *refused* takes the keyboard.
+    ///
+    /// **A refused step means "not mine"**, and this is the one place that is
+    /// answered. It started as `Pane::beyond` — a refused `h` in the table is
+    /// the sidebar — and the menus want exactly the same sentence: a menu's
+    /// right-hand edge is its submenu and a submenu's left-hand edge is the
+    /// entry it hangs off. Written inline in each `*_travel` they were three
+    /// copies of one idea that had already drifted once; here they are three
+    /// arms of one match, and a grid that grows a neighbour adds a fourth.
+    ///
+    /// `vim::Grid::column` refuses both horizontal motions, which is what
+    /// makes this reachable at all — and it is why none of this is in
+    /// `vim.rs`: a shape knows it has an edge, and only this file knows what
+    /// is on the other side of one.
+    fn cross(&mut self, focus: Focus, motion: vim::Motion) -> Task<Message> {
+        use vim::Motion::{Left, Right};
+        match (focus, motion) {
+            (Focus::Pane(pane), _) => match pane.beyond(motion) {
+                Some(next) => {
+                    self.pane = next;
+                    self.reveal()
+                }
+                None => Task::none(),
+            },
+            // On the one entry that owns a submenu. `enter_submenu` answers
+            // `None` on every other, and falling through is doing nothing,
+            // which is what `l` in a list has always done.
+            (Focus::Menu, Right(_)) => self.enter_submenu().unwrap_or_else(Task::none),
+            // The keys go back to the parent and the panel stays up, which is
+            // exactly what pointing back at that entry does. `a`'s picker has
+            // no parent, so `h` there has nowhere to go.
+            (Focus::Picker, Left(_)) if self.menu.is_some() => {
+                if let Some(picker) = &mut self.picker {
+                    picker.keys = false;
+                }
+                Task::none()
+            }
+            _ => Task::none(),
+        }
     }
 
     /// Put the cursor down somewhere, and do everything that follows from it.
@@ -2273,18 +2421,32 @@ impl App {
         self.land(pane, next)
     }
 
-    /// Move inside the row menu, through the same shape everything else here
-    /// uses. Four entries at most, so it is the same one-column grid a hundred
-    /// rows get.
-    fn menu_travel(&mut self, motion: vim::Motion) -> Task<Message> {
-        let Some(menu) = &self.menu else {
-            return Task::none();
-        };
-        let shape = vim::Grid::column(menu.entries().len());
-        if let Some(at) = shape.step(menu.at, motion) {
-            self.menu_land(at);
+    /// Step into the submenu the cursor is on — what `l` does, and the other
+    /// half of `h` in `picker_travel`.
+    ///
+    /// Which entry has one is `RowMenu::entries`, the same question the
+    /// chevron and the dwell both ask, rather than an index written down here.
+    /// `None` is "this entry has no submenu", so the caller can fall through.
+    fn enter_submenu(&mut self) -> Option<Task<Message>> {
+        let menu = self.menu.as_ref()?;
+        if !matches!(
+            menu.entries().get(menu.at),
+            Some(Entry {
+                message: Message::OpenPicker,
+                ..
+            })
+        ) {
+            return None;
         }
-        Task::none()
+        // Already up, because the pointer rested here and it was *shown*. Step
+        // in rather than opening it again: a second `open_picker` re-reads
+        // `playlists_of` and puts the cursor back on the first row of a panel
+        // you are already looking at.
+        if let Some(picker) = &mut self.picker {
+            picker.keys = true;
+            return Some(Task::none());
+        }
+        Some(self.update(Message::OpenPicker))
     }
 
     /// How long the cursor rests on an entry before its submenu opens, in
@@ -2368,40 +2530,6 @@ impl App {
         self.picker = None;
     }
 
-    /// Move inside the picker, through the same shape the panes use.
-    ///
-    /// One column, one cell longer than the playlists, because the row that
-    /// makes a new one is a row: `j` walks onto it like anything else and
-    /// `<Enter>` there starts naming. One shape, one cursor, nothing extra to
-    /// learn.
-    fn picker_travel(&mut self, motion: vim::Motion) -> Task<Message> {
-        let Some(picker) = &mut self.picker else {
-            return Task::none();
-        };
-        let shape = vim::Grid::column(picker.lists.len() + 1);
-        if let Some(at) = shape.step(picker.at, motion) {
-            picker.at = at;
-        }
-        Task::none()
-    }
-
-    /// What `a` reads: every playlist, with the ones this track is already on
-    /// marked. One query for one track, asked when the picker opens — the same
-    /// trade the phone makes, and for the same reason.
-    /// Walk the device picker. One more cell than there are devices, because
-    /// the last row is "stop everywhere" — the same shape the playlist picker
-    /// has, so `j` reaches it without a second key to learn.
-    fn devices_travel(&mut self, motion: vim::Motion) -> Task<Message> {
-        let Some(at) = self.devices else {
-            return Task::none();
-        };
-        let cells = self.listening.devices().len() + 1;
-        if let Some(next) = vim::Grid::column(cells).step(at, motion) {
-            self.devices = Some(next);
-        }
-        Task::none()
-    }
-
     /// Run the row the device cursor is on.
     ///
     /// A device that cannot be heard is not a target here either, exactly as
@@ -2451,10 +2579,11 @@ impl App {
         // Placed once the rows are known, because how tall it is decides
         // where it fits — see `submenu_origin`. The `+ 1` is the row that
         // makes a new playlist, which is a row like any other.
+        let width = Picker::width_for(&lists);
         let origin = self
             .menu
             .as_ref()
-            .map(|m| Self::submenu_origin(m, lists.len() + 1, self.window));
+            .map(|m| Self::submenu_origin(m, lists.len() + 1, width, self.window));
         self.picker = Some(Picker {
             media: item.id,
             title: item.title,
@@ -2463,6 +2592,7 @@ impl App {
             origin,
             keys: true,
             naming: None,
+            width,
         });
         Task::none()
     }
@@ -3379,14 +3509,14 @@ impl App {
     /// So: to the right of the parent when there is room and to its left when
     /// there is not, never over it; and down from the entry, slid up only as
     /// far as it takes to stay on the glass.
-    fn submenu_origin(menu: &RowMenu, rows: usize, window: iced::Size) -> iced::Point {
+    fn submenu_origin(menu: &RowMenu, rows: usize, width: f32, window: iced::Size) -> iced::Point {
         // Lapped over the parent by both panels' padding, so the two read as
         // one thing that grew rather than as two that happen to touch — and
         // the entries inside them meet edge to edge, which is the most the
         // overlap can be without covering a word of the menu.
         let right = menu.origin.x + Self::MENU_WIDTH - Self::SUBMENU_OVERLAP;
-        let x = match right + Self::PICKER_WIDTH + Self::EDGE > window.width {
-            true => (menu.origin.x - Self::PICKER_WIDTH + Self::SUBMENU_OVERLAP).max(Self::EDGE),
+        let x = match right + width + Self::EDGE > window.width {
+            true => (menu.origin.x - width + Self::SUBMENU_OVERLAP).max(Self::EDGE),
             false => right,
         };
         let height = Self::submenu_height(rows);
@@ -4336,6 +4466,10 @@ impl App {
     /// is what the question is about, and a panel over it would put the answer
     /// on top of the thing it describes.
     fn view_picker(picker: &Picker, focused: bool) -> Element<'_, Message> {
+        // What the width it was built at actually affords. The count is an
+        // estimate either way, so the truncation is made against the answer
+        // rather than against the question a second time.
+        let budget = picker.label_chars();
         let rows =
             picker.lists.iter().enumerate().fold(
                 column![].spacing(0),
@@ -4347,7 +4481,7 @@ impl App {
                     // where every other name goes.
                     let line = panel_entry(
                         on.then(|| Element::from(icon::tick(lit))),
-                        cell(name.clone(), NAME, lit, *on, false),
+                        cell(middle(name, budget), Length::Fill, lit, *on, false),
                         None,
                     );
                     col.push(
@@ -4379,7 +4513,7 @@ impl App {
                 // holds is *what this row is* and this row makes one.
                 let line = panel_entry(
                     Some(icon::line(glyphs::PLUS, lit).into()),
-                    cell("New playlist\u{2026}".into(), NAME, lit, false, true),
+                    cell(NEW_PLAYLIST.into(), Length::Fill, lit, false, true),
                     None,
                 );
                 mouse_area(
@@ -4428,7 +4562,7 @@ impl App {
             .into(),
         };
 
-        panel(inside, Self::PICKER_WIDTH)
+        panel(inside, picker.width)
             .max_height(Self::PICKER_MAX_HEIGHT)
             .into()
     }
@@ -4440,7 +4574,8 @@ impl App {
             ("j  k", "down, up"),
             (
                 "h  l",
-                "left, right \u{2014} and out of a list, the next pane",
+                "left, right \u{2014} out of a list, the next pane; in a menu, \
+                 a submenu",
             ),
             ("{n}j", "a count: 5j is five down"),
             ("gg  G", "first, last. 7G is the seventh"),
@@ -5481,7 +5616,7 @@ mod cards {
 /// whatever the mouse was doing.
 #[cfg(all(test, feature = "demo"))]
 mod context {
-    use super::{vim, Anchor, App, Entry, Focus, Message, Pane, PANEL_PADDING};
+    use super::{vim, Anchor, App, Entry, Focus, Message, Pane, Picker, PANEL_PADDING};
 
     /// The demo's own boot, which is a seeded peer and nothing else — on a
     /// database of this test's own, because cargo runs them on threads and
@@ -5646,6 +5781,125 @@ mod context {
             let _ = app.update(Message::Tick);
         }
         assert!(app.picker.is_some(), "and it is offered a second time");
+    }
+
+    /// A submenu is as wide as its longest name, and no wider.
+    ///
+    /// 340 of panel beside three playlists was two thirds empty, which reads
+    /// as a panel that failed to fill rather than one sized to what is in it.
+    /// Both bounds are asserted, because "fits the content" passes trivially
+    /// if the answer is always the maximum — falsify it by returning
+    /// `PICKER_MAX_WIDTH` and the first half fails.
+    ///
+    /// And a name longer than the panel can ever be gets an ellipsis rather
+    /// than a wider panel: `label_chars` is read back from the width that was
+    /// actually chosen, so the two cannot disagree about how much fits.
+    #[test]
+    fn a_submenu_is_as_wide_as_its_longest_name() {
+        // The demo's own playlists, so the ids are ones `apply` minted.
+        let mut app = app("width");
+        let id = app.peer.as_ref().unwrap().rows()[2].id;
+        let _ = app.update(Message::RowMenu(id, Anchor::Dots));
+        let _ = app.update(Message::MenuAt(1));
+        let _ = app.update(Message::MenuActivate);
+        let lists = app.picker.as_ref().unwrap().lists.clone();
+        assert!(!lists.is_empty(), "this has to be measuring something");
+
+        let narrow = Picker::width_for(&lists);
+        assert!(
+            narrow < App::PICKER_MAX_WIDTH,
+            "Favorites and Piano do not need {narrow}px of {}",
+            App::PICKER_MAX_WIDTH
+        );
+        assert!(
+            narrow >= App::PICKER_MIN_WIDTH,
+            "…but not narrower than its own `New playlist…` row: {narrow}"
+        );
+        assert_eq!(
+            app.picker.as_ref().unwrap().width,
+            narrow,
+            "and the panel is drawn at the width it was measured for"
+        );
+
+        // A long name grows it, up to the cap and no further — and what the
+        // row can then draw is read back from the answer rather than guessed
+        // a second time.
+        let mut long = lists.clone();
+        long[0].1 = "Music to read the collected works of Gibbon to".to_string();
+        let wide = Picker::width_for(&long);
+        assert!(wide > narrow, "a longer name is a wider panel");
+        assert_eq!(wide, App::PICKER_MAX_WIDTH, "and it stops at the cap");
+        let budget = Picker {
+            width: wide,
+            ..app.picker.take().unwrap()
+        }
+        .label_chars();
+        assert!(
+            budget < long[0].1.chars().count(),
+            "so that name is shortened rather than the panel widened"
+        );
+    }
+
+    /// `l` steps into a submenu and `h` steps back out, which is the one rule
+    /// the panes already had.
+    ///
+    /// **A refused step means "not mine"** — `vim::Grid::column` refuses both
+    /// horizontal motions, so `cross` gets to say what is on the other side of
+    /// that edge, exactly as `Pane::beyond` says the sidebar is on the other
+    /// side of the table's. Before this, `<Enter>` was the only way in and
+    /// nothing at all was the way out.
+    ///
+    /// Falsify it by deleting the `Focus::Menu` arm of `cross`: `l` opens
+    /// nothing. Delete the `Focus::Picker` arm and `h` never comes back.
+    #[test]
+    fn l_and_h_walk_into_a_submenu_and_back_out() {
+        let mut app = app("hjkl");
+        let id = app.peer.as_ref().unwrap().rows()[2].id;
+        let _ = app.update(Message::RowMenu(id, Anchor::Dots));
+        let _ = app.update(Message::MenuAt(1));
+        assert_eq!(app.focus(), Focus::Menu, "on the entry that owns one");
+
+        let _ = app.act(vim::Action::Move(vim::Motion::Right(1)));
+        assert!(app.picker.is_some(), "`l` opened it");
+        assert_eq!(app.focus(), Focus::Picker, "…and stepped in");
+
+        let _ = app.act(vim::Action::Move(vim::Motion::Left(1)));
+        assert_eq!(app.focus(), Focus::Menu, "`h` stepped back out");
+        assert!(app.picker.is_some(), "…and left the panel up");
+
+        // `l` on an entry with no submenu is the nothing `l` in a list is.
+        let mut bare = super::context::app("hjkl-no");
+        let id = bare.peer.as_ref().unwrap().rows()[2].id;
+        let _ = bare.update(Message::RowMenu(id, Anchor::Dots));
+        let _ = bare.update(Message::MenuAt(0));
+        let _ = bare.act(vim::Action::Move(vim::Motion::Right(1)));
+        assert!(bare.picker.is_none(), "`Play` has nowhere to go");
+    }
+
+    /// …and the arrows are those same two keys, which is the half that makes
+    /// the test above cover both without running it twice.
+    ///
+    /// `vim::Keys` is where they meet. Falsify it by mapping `ArrowRight` to
+    /// anything else: the assertion names the motion it produced.
+    #[test]
+    fn the_arrows_are_the_same_motions_as_hl() {
+        use iced::keyboard::{key::Named, Key, Modifiers};
+        let mut keys = vim::Keys::new();
+        let letter = |keys: &mut vim::Keys, c: char| {
+            keys.press(&Key::Character(c.to_string().into()), Modifiers::default())
+        };
+        let named =
+            |keys: &mut vim::Keys, n: Named| keys.press(&Key::Named(n), Modifiers::default());
+        assert_eq!(
+            letter(&mut keys, 'l'),
+            named(&mut keys, Named::ArrowRight),
+            "l and the right arrow"
+        );
+        assert_eq!(
+            letter(&mut keys, 'h'),
+            named(&mut keys, Named::ArrowLeft),
+            "h and the left arrow"
+        );
     }
 
     /// …and pointing back at the parent takes the keys back from it.
@@ -5866,7 +6120,12 @@ mod context {
             let _ = app.update(Message::MenuAt(1));
             let _ = app.update(Message::MenuActivate);
             let menu = app.menu.as_ref().unwrap();
-            let at = app.picker.as_ref().unwrap().origin.unwrap();
+            let panel = app.picker.as_ref().unwrap();
+            let at = panel.origin.unwrap();
+            // The width it is *drawn* at, not the maximum: a submenu is as
+            // wide as its longest name, and placing it by anything else is the
+            // same class of mistake as the height that started this test.
+            let wide = panel.width;
             assert!(at.x >= App::EDGE, "at {width}px it starts at {}", at.x);
 
             // Below about 550 the two cannot both be on the glass at all, and
@@ -5875,10 +6134,7 @@ mod context {
             // starts where the menu's labels end, or its last ends where they
             // begin.
             if width >= 600 {
-                let mine = (
-                    at.x + PANEL_PADDING,
-                    at.x + App::PICKER_WIDTH - PANEL_PADDING,
-                );
+                let mine = (at.x + PANEL_PADDING, at.x + wide - PANEL_PADDING);
                 let theirs = (
                     menu.origin.x + PANEL_PADDING,
                     menu.origin.x + App::MENU_WIDTH - PANEL_PADDING,
@@ -5889,8 +6145,7 @@ mod context {
                 );
                 // …and they really do overlap, which is the other half: a
                 // submenu that merely touches is two panels.
-                let laps = at.x < menu.origin.x + App::MENU_WIDTH
-                    && at.x + App::PICKER_WIDTH > menu.origin.x;
+                let laps = at.x < menu.origin.x + App::MENU_WIDTH && at.x + wide > menu.origin.x;
                 assert!(laps, "at {width}px the two only touch, at {}", at.x);
             }
         }

@@ -1148,6 +1148,21 @@ every row is one line. Four things about it are load-bearing:
     both — so this is the keyboard agreeing with the pointer rather than a
     second rule. `a`'s picker has no parent and is only itself, which is why
     the condition is "is there a menu" and not "is this a picker".
+  - **It is as wide as its longest name, and no wider.** A fixed 340 beside
+    three playlists was two thirds empty, which reads as a panel that failed to
+    fill rather than one sized to what is in it. `PICKER_MIN_WIDTH` and
+    `PICKER_MAX_WIDTH` are a range now and `Picker::width_for` picks within it,
+    counting characters against `ENTRY_CHAR` — an estimate, the same kind
+    `PER_PORTION` is and unavailable for the same reason, but erring the
+    opposite way: a panel sized from it is its own width, so erring wide is a
+    strip of empty panel and erring narrow is an ellipsis through somebody's
+    playlist name.
+
+    **The answer is kept on the `Picker`**, because it is wanted in two places
+    that must agree — `view_picker` draws the panel and `submenu_origin`
+    decides whether it opens left or right — and one stored number cannot be
+    two. `label_chars` reads the budget back off that same width, so the
+    estimate is consulted once rather than twice.
   - **It laps over its parent, and the overlap is not a taste.**
     `SUBMENU_OVERLAP` is both panels' `PANEL_PADDING`, so the *entries* inside
     them meet edge to edge while the panels themselves overlap — which is what
@@ -2482,12 +2497,48 @@ selection — moving onto a row shows it, with no `<Enter>` in between, because
 needing a key to confirm what you have already moved onto is a keystroke that
 only ever means "yes, that one". `<Enter>` there steps into the table instead.
 
-**`step` returning `None` means "not mine", and that is the whole pane
-mechanism.** There is one rule and every shape is written in terms of it, in
+**`step` returning `None` means "not mine", and that is the whole *edge*
+mechanism** — panes were only the first thing it was used for. There is one rule and every shape is written in terms of it, in
 `vim::along`: **a step is refused only when the cursor is already at that
 edge.** So `5j` three cells from the end goes to the end — there was somewhere
 to go — and `j` at the end refuses, because there was not. `Pane::beyond` then
 reads a refused `h` as "the sidebar" and a refused `j` as nothing at all.
+
+**There is one `travel`, and it walks whichever grid has the keyboard.** There
+were four — one per pane plus one each for the menu, the playlist picker and
+the device picker — and all four were the same three steps: get the shape, step
+it, and on a refusal ask what is next door. `act` chose between them with a
+match on `Focus`, which is the same shape the file already deleted once when
+`Focus` replaced the three places that each decided who had the keyboard.
+
+So `travel` asks `focus()` itself and the four helpers it needs are one match
+each: `grid` (how many cells and columns), `cursor_in` (where it is),
+`land_in` (what putting it down costs — a pane also scrolls and, in the
+sidebar, shows what you landed on) and `cross` (what is beyond a refused
+edge). `Pane::beyond` is one arm of `cross` now rather than the only answer to
+the question, and the motion arm of `act`'s overlay chain is gone: what is left
+there is only what an overlay answers *differently* from a pane, which is what
+`<Enter>` runs and what `<Esc>` closes.
+
+That is what made `l` into a submenu a three-line change rather than a fourth
+`*_travel`. `vim::Grid::column` refuses both horizontal motions, so a menu's
+right-hand edge and a submenu's left-hand edge were already being *offered* to
+somebody — there was just nobody to take them. Now:
+
+- **`l` or `→` in a menu steps into the submenu**, on the one entry that owns
+  one — which `RowMenu::entries` says, the same question the chevron and the
+  dwell ask. `enter_submenu` takes the keys rather than reopening when the
+  pointer has already shown it: a second `open_picker` would re-read
+  `playlists_of` and put the cursor back on the first row of a panel you are
+  already looking at.
+- **`h` or `←` in a submenu steps back out**, which is exactly what pointing
+  back at the parent entry does — the keys return and the panel stays up.
+  `a`'s picker has no parent, so `h` there does the nothing a column always
+  did.
+
+None of it is in `vim.rs`, and that is the line: **a shape knows it has an
+edge, and only `main.rs` knows what is on the other side of one.** Teaching
+`Grid` about submenus would be teaching a keyboard library what a playlist is.
 
 It did not start that way, and the first version had a real bug in it. A
 `List` refused `h` and `l` outright while a `Grid` *clamped* them, on the
