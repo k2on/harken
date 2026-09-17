@@ -2938,6 +2938,69 @@ it came from, because it was three separate problems:
 Holding under spamming is the part that matters. A fast first tap is easy; a
 tap that costs the same as the four hundredth is the property.
 
+## libcosmic does not build for the web, and the blocker is not ours
+
+Attempted on `claude/wizardly-cori-nkdj8u`, as the first step of swapping this
+client to libcosmic so it would draw COSMIC's own menus and tables. The swap
+was not made, because the step it was conditioned on does not pass. What was
+established, by building rather than by reading:
+
+- **libcosmic builds natively here, and its own toolkit half builds for
+  wasm.** `iced_core`, `iced_runtime`, `iced_widget`, `iced_wgpu`, `wgpu` and
+  `winit` all compiled to `wasm32-unknown-unknown` from their fork. That much
+  was never the problem.
+- **`cosmic-config` assumes a filesystem**, unconditionally: `atomicwrites`
+  and `notify` are plain `[dependencies]`, not target-gated, and
+  `cosmic-config` is a plain dependency of `libcosmic`. That one is *small* —
+  986 lines, nine `notify` uses, five `dirs`/`xdg` — and target-gating both
+  crates plus stubbing `ConfigTransaction::commit` was enough to get past it.
+  A real wasm backend for it (in-memory, or `localStorage`) is a day, not a
+  project.
+- **`iced_winit`'s web backend is stale, and that is the wall.** It imports
+  `winit::platform::web::{EventLoopExtWebSys, WindowExtWebSys,
+  WindowAttributesExtWebSys}` and calls `spawn_app`, `canvas` and
+  `with_canvas`. None of those exist in the winit their fork depends on:
+  winit `0.31.0-beta.2` split every platform into its own crate, so web is the
+  `winit-web` *crate* and `winit::platform::web` is gone. Their iced fork's
+  web code is written against winit 0.30's API.
+
+  Beside it, `missing field is_booted in initializer of Runner` — their own
+  wasm-only code failing against their own current struct. Two independent
+  ways of saying the same thing: **nobody compiles this path.**
+
+So getting there means porting a windowing backend across a breaking
+restructure, in a fork we do not control, against a beta of winit. That is not
+a patch; and it would have to be carried forward every time they rebase iced,
+which they do.
+
+**And the toolchain moves.** libcosmic master declares `rust-version` 1.93;
+this workspace is on the engine's 1.90, pinned by `Cargo.toml`. Adopting it
+means bumping petros's toolchain for every Petros app, not just this one.
+
+**What the swap would cost if it were made desktop-only**, which is the one
+shape that works today: the web build goes, and the web build is the only one
+that can make a sound — `Player::AUDIBLE` is false on the desktop, so the
+desktop client is a remote control. Trading the build that plays music for the
+build that matches the desktop's menus is only worth it *after* the desktop
+has its own audio (`rodio`, so `cpal`, so ALSA, plus an HTTP reader), which is
+already written down above as worth doing when there is a media store to
+stream from. There now is one.
+
+**And their context menu is not better than this one where it counts.**
+`cosmic::widget::context_menu` is real and cosmic-files uses it, but
+`menu::ItemWidth` is `Uniform(u16)` or `Static(u16)` — both a width somebody
+picks, defaulting to 240 — with no variant that measures the longest entry.
+That is the bug fixed one section above, at 240 instead of 198. There is no
+`Duration` or `Instant` anywhere in their menu widget either, so submenus open
+the instant the pointer crosses them; `SUBMENU_DWELL` exists because that is a
+panel flashing under a cursor on its way to `Go to …`.
+
+What theirs has that this cannot: a real Wayland popup *surface*
+(`window_id`, `on_surface_action`), which can extend past the edge of the
+window. Everything `fit`, `menu_origin` and `submenu_origin` do is arithmetic
+to avoid that edge, because `pin` inside a `stack!` is clipped to the window.
+That is the one part worth wanting.
+
 ## Not verified
 
 iOS has never been built from this repository — no machine here can run the
