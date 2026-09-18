@@ -28,6 +28,7 @@
 
 mod art;
 mod covers;
+mod frost;
 mod glyphs;
 mod icon;
 mod listening;
@@ -1062,9 +1063,9 @@ fn panel<'a>(
         .style(|theme: &cosmic::Theme| {
             let palette = palette::of(theme);
             container::Style {
-                background: Some(cosmic::iced::Background::Color(
-                    palette.background.weak.color,
-                )),
+                // No background: `frost` draws the ground, blurred, under
+                // every one of these. An opaque fill here would hide it.
+                background: None,
                 border: cosmic::iced::Border {
                     color: palette.background.strong.color,
                     width: PANEL_BORDER,
@@ -3720,7 +3721,7 @@ impl App {
                         .on_release(Message::MenuActivate),
                     )
                 });
-        panel(
+        let body = panel(
             column![
                 // Which track this is about. A menu opened by a right click can
                 // land a row away from where the eye was, and a menu that does not
@@ -3740,8 +3741,9 @@ impl App {
             ]
             .spacing(0),
             menu.width,
-        )
-        .into()
+        );
+
+        frost::frost(body, PANEL_RADIUS)
     }
 
     /// Playlists, then albums, then artists — each read back by the domain, so
@@ -4664,9 +4666,10 @@ impl App {
             .into(),
         };
 
-        panel(inside, picker.width)
-            .max_height(Self::PICKER_MAX_HEIGHT)
-            .into()
+        frost::frost(
+            panel(inside, picker.width).max_height(Self::PICKER_MAX_HEIGHT),
+            PANEL_RADIUS,
+        )
     }
 
     /// The keymap, because one that has to be read in the source is one nobody
@@ -5036,7 +5039,7 @@ impl App {
             .on_release(Message::PickDevice(None)),
         );
 
-        panel(
+        let body = panel(
             column![
                 container(
                     text("Playing on")
@@ -5048,8 +5051,9 @@ impl App {
             ]
             .spacing(0),
             DEVICES_WIDTH,
-        )
-        .into()
+        );
+
+        frost::frost(body, PANEL_RADIUS)
     }
 
     fn view_signed_out(&self) -> Element<'_, Message> {

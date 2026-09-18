@@ -1,3 +1,1014 @@
+diff --git a/renderer/src/fallback.rs b/renderer/src/fallback.rs
+index 2a0bdea..feaa77e 100644
+--- a/renderer/src/fallback.rs
++++ b/renderer/src/fallback.rs
+@@ -441,6 +441,29 @@ where
+ }
+ 
+ #[cfg(feature = "wgpu-bare")]
++impl<A, B> iced_wgpu::blur::Renderer for Renderer<A, B>
++where
++    A: iced_wgpu::blur::Renderer,
++    B: core::Renderer,
++{
++    fn draw_blur(
++        &mut self,
++        bounds: Rectangle,
++        radius: [f32; 4],
++        sigma: f32,
++        tint: core::Color,
++    ) {
++        match self {
++            Self::Primary(renderer) => {
++                renderer.draw_blur(bounds, radius, sigma, tint);
++            }
++            Self::Secondary(_) => {
++                log::warn!("Blur is not supported with this renderer.");
++            }
++        }
++    }
++}
++
+ impl<A, B> iced_wgpu::primitive::Renderer for Renderer<A, B>
+ where
+     A: iced_wgpu::primitive::Renderer,
+diff --git a/wgpu/src/blur.rs b/wgpu/src/blur.rs
+new file mode 100644
+index 0000000..5a68652
+--- /dev/null
++++ b/wgpu/src/blur.rs
+@@ -0,0 +1,579 @@
++//! A blur of whatever has already been drawn.
++//!
++//! This is frosted glass, done in the renderer rather than by a compositor. The
++//! difference matters: COSMIC's own frosting is `ext-background-effect-v1`, a
++//! Wayland protocol, so it is unavailable on X11, on macOS, on Windows, and in
++//! a browser, where the whole program is one canvas with nothing behind it.
++//! What is behind a *panel*, though, is something this renderer drew a moment
++//! ago and can therefore read back.
++//!
++//! **The surface cannot be read, which is the constraint the design falls out
++//! of.** `window::Compositor` configures it `RENDER_ATTACHMENT` and nothing
++//! else, so it can be neither sampled nor copied — and widening that is not
++//! portable, because a WebGL canvas is not a texture wgpu may read. So a frame
++//! that contains a blur is drawn into a texture of our own instead, and blitted
++//! to the surface at the end. A frame that contains no blur is drawn straight
++//! at the surface exactly as before, so the cost is paid only while a frosted
++//! panel is actually on screen.
++//!
++//! Three passes per layer that asks for one, at quarter resolution:
++//! horizontal, vertical, then a rounded-rect composite back into the scene.
++//! Quarter resolution is not only a saving — it is most of the blur, since one
++//! texel there reaches four pixels, and the nine taps then span sixteen.
++//!
++//! **Sampling the target you are writing to is the thing to not do**, and the
++//! reason the pass is ended and begun again around all of this. The blur passes
++//! read the scene while nothing is writing it; the composite writes the scene
++//! while reading only the scratch texture it just filled.
++
++use crate::core::{Color, Rectangle};
++
++/// A rounded panel that shows a blurred copy of what is behind it.
++#[derive(Debug, Clone, Copy, PartialEq)]
++pub struct Blur {
++    /// Where the panel is, in logical coordinates.
++    pub bounds: Rectangle,
++    /// Its corners, in the order iced packs them.
++    pub radius: [f32; 4],
++    /// How far the blur reaches, in logical pixels.
++    pub sigma: f32,
++    /// Mixed over the blurred pixels by its own alpha, because a frosted panel
++    /// is not only blurred — it is also carried towards the theme's own ground,
++    /// or nothing on it would be legible.
++    pub tint: Color,
++}
++
++/// The blurs of a single layer.
++pub type Batch = Vec<Blur>;
++
++/// A renderer that can blur what it has already drawn.
++///
++/// Separate from [`crate::primitive::Renderer`] because a custom primitive is
++/// handed a `TextureView` and this needs the `Texture` behind it, and because a
++/// primitive cannot end the render pass it is being drawn inside.
++pub trait Renderer: crate::core::Renderer {
++    /// Blurs whatever is behind `bounds`, and stamps it back with rounded
++    /// corners and a tint.
++    ///
++    /// Drawn *under* everything else in the same layer, so the panel this is
++    /// for should carry its border and its contents as usual and leave its
++    /// background to this.
++    fn draw_blur(
++        &mut self,
++        bounds: Rectangle,
++        radius: [f32; 4],
++        sigma: f32,
++        tint: Color,
++    );
++}
++
++/// How much smaller the scratch textures are than the scene.
++const DOWNSCALE: u32 = 4;
++
++#[repr(C)]
++#[derive(Debug, Clone, Copy, bytemuck::Zeroable, bytemuck::Pod)]
++struct Uniforms {
++    rect: [f32; 4],
++    radius: [f32; 4],
++    tint: [f32; 4],
++    screen: [f32; 2],
++    step: [f32; 2],
++}
++
++/// The alignment a dynamic uniform offset must have. 256 is the maximum any
++/// backend asks for, so using it unconditionally costs a little padding and
++/// never has to ask the device.
++const STRIDE: u64 = 256;
++
++#[derive(Debug, Clone)]
++pub struct Pipeline {
++    blur: wgpu::RenderPipeline,
++    panel: wgpu::RenderPipeline,
++    copy: wgpu::RenderPipeline,
++    sampler: wgpu::Sampler,
++    source_layout: wgpu::BindGroupLayout,
++    uniforms_layout: wgpu::BindGroupLayout,
++}
++
++impl Pipeline {
++    pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
++        let source_layout =
++            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
++                label: Some("iced_wgpu.blur.source_layout"),
++                entries: &[
++                    wgpu::BindGroupLayoutEntry {
++                        binding: 0,
++                        visibility: wgpu::ShaderStages::FRAGMENT,
++                        ty: wgpu::BindingType::Texture {
++                            sample_type: wgpu::TextureSampleType::Float {
++                                filterable: true,
++                            },
++                            view_dimension: wgpu::TextureViewDimension::D2,
++                            multisampled: false,
++                        },
++                        count: None,
++                    },
++                    wgpu::BindGroupLayoutEntry {
++                        binding: 1,
++                        visibility: wgpu::ShaderStages::FRAGMENT,
++                        ty: wgpu::BindingType::Sampler(
++                            wgpu::SamplerBindingType::Filtering,
++                        ),
++                        count: None,
++                    },
++                ],
++            });
++
++        let uniforms_layout =
++            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
++                label: Some("iced_wgpu.blur.uniforms_layout"),
++                entries: &[wgpu::BindGroupLayoutEntry {
++                    binding: 0,
++                    visibility: wgpu::ShaderStages::VERTEX
++                        | wgpu::ShaderStages::FRAGMENT,
++                    ty: wgpu::BindingType::Buffer {
++                        ty: wgpu::BufferBindingType::Uniform,
++                        has_dynamic_offset: true,
++                        min_binding_size: wgpu::BufferSize::new(
++                            std::mem::size_of::<Uniforms>() as u64,
++                        ),
++                    },
++                    count: None,
++                }],
++            });
++
++        let layout =
++            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
++                label: Some("iced_wgpu.blur.pipeline_layout"),
++                bind_group_layouts: &[&source_layout, &uniforms_layout],
++                immediate_size: 0,
++            });
++
++        let shader =
++            device.create_shader_module(wgpu::ShaderModuleDescriptor {
++                label: Some("iced_wgpu.blur.shader"),
++                source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(
++                    include_str!("shader/blur.wgsl"),
++                )),
++            });
++
++        let targets = [Some(wgpu::ColorTargetState {
++            format,
++            blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
++            write_mask: wgpu::ColorWrites::ALL,
++        })];
++
++        // The two full-screen passes write every pixel of their target, so they
++        // replace rather than blend — blending a blur into a stale scratch
++        // texture is last frame's panel showing through this frame's.
++        let opaque = [Some(wgpu::ColorTargetState {
++            format,
++            blend: Some(wgpu::BlendState::REPLACE),
++            write_mask: wgpu::ColorWrites::ALL,
++        })];
++
++        let full = |label, entry_point, targets: &[Option<
++            wgpu::ColorTargetState,
++        >], topology| {
++            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
++                label: Some(label),
++                layout: Some(&layout),
++                vertex: wgpu::VertexState {
++                    module: &shader,
++                    entry_point: Some(match topology {
++                        wgpu::PrimitiveTopology::TriangleStrip => "vs_panel",
++                        _ => "vs_full",
++                    }),
++                    buffers: &[],
++                    compilation_options:
++                        wgpu::PipelineCompilationOptions::default(),
++                },
++                fragment: Some(wgpu::FragmentState {
++                    module: &shader,
++                    entry_point: Some(entry_point),
++                    targets,
++                    compilation_options:
++                        wgpu::PipelineCompilationOptions::default(),
++                }),
++                primitive: wgpu::PrimitiveState {
++                    topology,
++                    ..Default::default()
++                },
++                depth_stencil: None,
++                multisample: wgpu::MultisampleState::default(),
++                multiview_mask: None,
++                cache: None,
++            })
++        };
++
++        Self {
++            blur: full(
++                "iced_wgpu.blur.gaussian",
++                "fs_blur",
++                &opaque,
++                wgpu::PrimitiveTopology::TriangleList,
++            ),
++            panel: full(
++                "iced_wgpu.blur.panel",
++                "fs_panel",
++                &targets,
++                wgpu::PrimitiveTopology::TriangleStrip,
++            ),
++            copy: full(
++                "iced_wgpu.blur.copy",
++                "fs_copy",
++                &opaque,
++                wgpu::PrimitiveTopology::TriangleList,
++            ),
++            sampler: device.create_sampler(&wgpu::SamplerDescriptor {
++                label: Some("iced_wgpu.blur.sampler"),
++                address_mode_u: wgpu::AddressMode::ClampToEdge,
++                address_mode_v: wgpu::AddressMode::ClampToEdge,
++                address_mode_w: wgpu::AddressMode::ClampToEdge,
++                mag_filter: wgpu::FilterMode::Linear,
++                min_filter: wgpu::FilterMode::Linear,
++                ..Default::default()
++            }),
++            source_layout,
++            uniforms_layout,
++        }
++    }
++}
++
++/// The textures and the uniform buffer, which belong to a renderer rather than
++/// to the device because they are sized by the window.
++#[derive(Debug, Default)]
++pub struct State {
++    targets: Option<Targets>,
++    uniforms: Option<(wgpu::Buffer, wgpu::BindGroup, u64)>,
++    /// The next free slot of the uniform buffer, for this frame.
++    ///
++    /// **Every layer that blurs needs slots of its own, and this is why.**
++    /// `queue.write_buffer` is ordered before the whole command buffer, so two
++    /// layers writing the same offsets would both run against whichever wrote
++    /// last — the second panel's sigma, silently, on the first. A `Cell`
++    /// because the render loop holds this by shared reference: `frame` is
++    /// borrowed out of `targets` for the length of the loop.
++    slot: std::cell::Cell<u64>,
++}
++
++#[derive(Debug)]
++struct Targets {
++    size: (u32, u32),
++    /// Everything drawn this frame, which is what a blur reads.
++    scene: wgpu::TextureView,
++    scene_source: wgpu::BindGroup,
++    /// Quarter size, and used in turn: horizontal into `a`, vertical into `b`.
++    a: wgpu::TextureView,
++    a_source: wgpu::BindGroup,
++    b: wgpu::TextureView,
++    b_source: wgpu::BindGroup,
++}
++
++impl State {
++    /// The view every layer of a blurred frame is drawn into.
++    ///
++    /// `None` when the frame has no blur in it, which is the ordinary case and
++    /// means "draw straight at the surface".
++    pub fn scene(&self) -> Option<&wgpu::TextureView> {
++        self.targets.as_ref().map(|targets| &targets.scene)
++    }
++
++    /// Makes the offscreen textures, or keeps them if the window has not moved.
++    pub fn prepare(
++        &mut self,
++        pipeline: &Pipeline,
++        device: &wgpu::Device,
++        format: wgpu::TextureFormat,
++        size: (u32, u32),
++        slots: u64,
++    ) {
++        let size = (size.0.max(1), size.1.max(1));
++
++        if self.targets.as_ref().is_none_or(|t| t.size != size) {
++            let texture = |label, (width, height): (u32, u32)| {
++                device
++                    .create_texture(&wgpu::TextureDescriptor {
++                        label: Some(label),
++                        size: wgpu::Extent3d {
++                            width,
++                            height,
++                            depth_or_array_layers: 1,
++                        },
++                        mip_level_count: 1,
++                        sample_count: 1,
++                        dimension: wgpu::TextureDimension::D2,
++                        format,
++                        usage: wgpu::TextureUsages::RENDER_ATTACHMENT
++                            | wgpu::TextureUsages::TEXTURE_BINDING,
++                        view_formats: &[],
++                    })
++                    .create_view(&wgpu::TextureViewDescriptor::default())
++            };
++
++            let source = |label, view: &wgpu::TextureView| {
++                device.create_bind_group(&wgpu::BindGroupDescriptor {
++                    label: Some(label),
++                    layout: &pipeline.source_layout,
++                    entries: &[
++                        wgpu::BindGroupEntry {
++                            binding: 0,
++                            resource: wgpu::BindingResource::TextureView(view),
++                        },
++                        wgpu::BindGroupEntry {
++                            binding: 1,
++                            resource: wgpu::BindingResource::Sampler(
++                                &pipeline.sampler,
++                            ),
++                        },
++                    ],
++                })
++            };
++
++            let small = (
++                (size.0 / DOWNSCALE).max(1),
++                (size.1 / DOWNSCALE).max(1),
++            );
++
++            let scene = texture("iced_wgpu.blur.scene", size);
++            let a = texture("iced_wgpu.blur.a", small);
++            let b = texture("iced_wgpu.blur.b", small);
++
++            self.targets = Some(Targets {
++                size,
++                scene_source: source("iced_wgpu.blur.scene_source", &scene),
++                a_source: source("iced_wgpu.blur.a_source", &a),
++                b_source: source("iced_wgpu.blur.b_source", &b),
++                scene,
++                a,
++                b,
++            });
++        }
++
++        self.slot.set(0);
++
++        // Every pass recorded this frame needs a slice of its own, because they
++        // are all written before any of them runs.
++        let needed = slots.max(1) * STRIDE;
++
++        if self.uniforms.as_ref().is_none_or(|(_, _, size)| *size < needed) {
++            let buffer = device.create_buffer(&wgpu::BufferDescriptor {
++                label: Some("iced_wgpu.blur.uniforms"),
++                size: needed,
++                usage: wgpu::BufferUsages::UNIFORM
++                    | wgpu::BufferUsages::COPY_DST,
++                mapped_at_creation: false,
++            });
++
++            let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
++                label: Some("iced_wgpu.blur.uniforms_group"),
++                layout: &pipeline.uniforms_layout,
++                entries: &[wgpu::BindGroupEntry {
++                    binding: 0,
++                    resource: wgpu::BindingResource::Buffer(
++                        wgpu::BufferBinding {
++                            buffer: &buffer,
++                            offset: 0,
++                            size: wgpu::BufferSize::new(
++                                std::mem::size_of::<Uniforms>() as u64,
++                            ),
++                        },
++                    ),
++                }],
++            });
++
++            self.uniforms = Some((buffer, group, needed));
++        }
++    }
++
++    /// Runs the two blur passes once, then composites every panel of this layer
++    /// from the one blurred copy — they all read the same scene, so blurring it
++    /// per panel would be the same work repeated.
++    #[allow(clippy::too_many_arguments)]
++    pub fn render(
++        &self,
++        pipeline: &Pipeline,
++        queue: &wgpu::Queue,
++        encoder: &mut wgpu::CommandEncoder,
++        blurs: &Batch,
++        scale: f32,
++        size: (u32, u32),
++    ) {
++        let (Some(targets), Some((buffer, group, _))) =
++            (self.targets.as_ref(), self.uniforms.as_ref())
++        else {
++            return;
++        };
++
++        // Two blur passes and a composite per panel.
++        let base = self.slot.get();
++        self.slot.set(base + 2 + blurs.len() as u64);
++
++        let screen = [size.0 as f32, size.1 as f32];
++        let small = [
++            (size.0 / DOWNSCALE).max(1) as f32,
++            (size.1 / DOWNSCALE).max(1) as f32,
++        ];
++
++        // The widest sigma on this layer decides the one blur they share. A
++        // panel asking for less gets a little more, which is invisible; the
++        // alternative is a blurred copy per distinct sigma, for a difference
++        // nobody can see.
++        let sigma = blurs
++            .iter()
++            .map(|blur| blur.sigma * scale)
++            .fold(0.0_f32, f32::max)
++            .max(1.0);
++
++        // Nine taps reach four steps either side, and the texels are already
++        // `DOWNSCALE` pixels wide.
++        let reach = sigma / DOWNSCALE as f32 / 4.0;
++
++        let blank = Uniforms {
++            rect: [0.0; 4],
++            radius: [0.0; 4],
++            tint: [0.0; 4],
++            screen,
++            step: [0.0; 2],
++        };
++
++        queue.write_buffer(
++            buffer,
++            base * STRIDE,
++            bytemuck::bytes_of(&Uniforms {
++                step: [reach / small[0], 0.0],
++                ..blank
++            }),
++        );
++        queue.write_buffer(
++            buffer,
++            (base + 1) * STRIDE,
++            bytemuck::bytes_of(&Uniforms {
++                step: [0.0, reach / small[1]],
++                ..blank
++            }),
++        );
++
++        for (index, blur) in blurs.iter().enumerate() {
++            let bounds = blur.bounds * scale;
++
++            queue.write_buffer(
++                buffer,
++                (base + index as u64 + 2) * STRIDE,
++                bytemuck::bytes_of(&Uniforms {
++                    rect: [
++                        bounds.x,
++                        bounds.y,
++                        bounds.width,
++                        bounds.height,
++                    ],
++                    radius: blur.radius.map(|r| r * scale),
++                    tint: [
++                        blur.tint.r,
++                        blur.tint.g,
++                        blur.tint.b,
++                        blur.tint.a,
++                    ],
++                    screen,
++                    step: [0.0; 2],
++                }),
++            );
++        }
++
++        let mut run = |label,
++                        target: &wgpu::TextureView,
++                        source: &wgpu::BindGroup,
++                        which: &wgpu::RenderPipeline,
++                        offset: u64,
++                        vertices: u32| {
++            let mut pass =
++                encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
++                    label: Some(label),
++                    color_attachments: &[Some(
++                        wgpu::RenderPassColorAttachment {
++                            view: target,
++                            depth_slice: None,
++                            resolve_target: None,
++                            ops: wgpu::Operations {
++                                load: wgpu::LoadOp::Load,
++                                store: wgpu::StoreOp::Store,
++                            },
++                        },
++                    )],
++                    depth_stencil_attachment: None,
++                    timestamp_writes: None,
++                    occlusion_query_set: None,
++                    multiview_mask: None,
++                });
++
++            pass.set_pipeline(which);
++            pass.set_bind_group(0, source, &[]);
++            pass.set_bind_group(1, group, &[offset as u32]);
++            pass.draw(0..vertices, 0..1);
++        };
++
++        run(
++            "iced_wgpu.blur.horizontal",
++            &targets.a,
++            &targets.scene_source,
++            &pipeline.blur,
++            base * STRIDE,
++            3,
++        );
++        run(
++            "iced_wgpu.blur.vertical",
++            &targets.b,
++            &targets.a_source,
++            &pipeline.blur,
++            (base + 1) * STRIDE,
++            3,
++        );
++
++        for index in 0..blurs.len() {
++            run(
++                "iced_wgpu.blur.panel",
++                &targets.scene,
++                &targets.b_source,
++                &pipeline.panel,
++                (base + index as u64 + 2) * STRIDE,
++                4,
++            );
++        }
++    }
++
++    /// Puts the finished scene on the surface.
++    pub fn present(
++        &self,
++        pipeline: &Pipeline,
++        encoder: &mut wgpu::CommandEncoder,
++        frame: &wgpu::TextureView,
++    ) {
++        let (Some(targets), Some((_, group, _))) =
++            (self.targets.as_ref(), self.uniforms.as_ref())
++        else {
++            return;
++        };
++
++        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
++            label: Some("iced_wgpu.blur.present"),
++            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
++                view: frame,
++                depth_slice: None,
++                resolve_target: None,
++                ops: wgpu::Operations {
++                    load: wgpu::LoadOp::Load,
++                    store: wgpu::StoreOp::Store,
++                },
++            })],
++            depth_stencil_attachment: None,
++            timestamp_writes: None,
++            occlusion_query_set: None,
++            multiview_mask: None,
++        });
++
++        pass.set_pipeline(&pipeline.copy);
++        pass.set_bind_group(0, &targets.scene_source, &[]);
++        pass.set_bind_group(1, group, &[0]);
++        pass.draw(0..3, 0..1);
++    }
++}
+diff --git a/wgpu/src/engine.rs b/wgpu/src/engine.rs
+index d86499e..750dd4b 100644
+--- a/wgpu/src/engine.rs
++++ b/wgpu/src/engine.rs
+@@ -1,4 +1,5 @@
+ use crate::graphics::{Antialiasing, Shell};
++use crate::blur;
+ use crate::primitive;
+ use crate::quad;
+ use crate::text;
+@@ -12,6 +13,7 @@ pub struct Engine {
+     pub(crate) queue: wgpu::Queue,
+     pub(crate) format: wgpu::TextureFormat,
+ 
++    pub(crate) blur_pipeline: blur::Pipeline,
+     pub(crate) quad_pipeline: quad::Pipeline,
+     pub(crate) text_pipeline: text::Pipeline,
+     pub(crate) triangle_pipeline: triangle::Pipeline,
+@@ -33,6 +35,7 @@ impl Engine {
+         Self {
+             format,
+ 
++            blur_pipeline: blur::Pipeline::new(&device, format),
+             quad_pipeline: quad::Pipeline::new(&device, format),
+             text_pipeline: text::Pipeline::new(&device, &queue, format),
+             triangle_pipeline: triangle::Pipeline::new(
+diff --git a/wgpu/src/layer.rs b/wgpu/src/layer.rs
+index d4a96ef..6806a1d 100644
+--- a/wgpu/src/layer.rs
++++ b/wgpu/src/layer.rs
+@@ -7,6 +7,7 @@ use crate::graphics::Mesh;
+ use crate::graphics::color;
+ use crate::graphics::layer;
+ use crate::graphics::mesh;
++use crate::blur::{self, Blur};
+ use crate::graphics::text::{Editor, Paragraph};
+ use crate::image::{self, Image};
+ use crate::primitive::{self, Primitive};
+@@ -19,6 +20,9 @@ pub type Stack = layer::Stack<Layer>;
+ #[derive(Debug)]
+ pub struct Layer {
+     pub bounds: Rectangle,
++    /// Drawn before everything else in the layer, because a frosted panel is a
++    /// ground for its own contents.
++    pub blurs: blur::Batch,
+     pub quads: quad::Batch,
+     pub triangles: triangle::Batch,
+     pub primitives: primitive::Batch,
+@@ -30,7 +34,8 @@ pub struct Layer {
+ 
+ impl Layer {
+     pub fn is_empty(&self) -> bool {
+-        self.quads.is_empty()
++        self.blurs.is_empty()
++            && self.quads.is_empty()
+             && self.triangles.is_empty()
+             && self.primitives.is_empty()
+             && self.images.is_empty()
+@@ -39,6 +44,24 @@ impl Layer {
+             && self.pending_text.is_empty()
+     }
+ 
++    pub fn draw_blur(
++        &mut self,
++        bounds: Rectangle,
++        radius: [f32; 4],
++        sigma: f32,
++        tint: crate::core::Color,
++        transformation: Transformation,
++    ) {
++        let scale = transformation.scale_factor();
++
++        self.blurs.push(Blur {
++            bounds: bounds * transformation,
++            radius: radius.map(|radius| radius * scale),
++            sigma: sigma * scale,
++            tint,
++        });
++    }
++
+     pub fn draw_quad(
+         &mut self,
+         quad: renderer::Quad,
+@@ -327,6 +350,7 @@ impl graphics::Layer for Layer {
+         self.quads.clear();
+         self.triangles.clear();
+         self.primitives.clear();
++        self.blurs.clear();
+         self.text.clear();
+         self.images.clear();
+         self.pending_meshes.clear();
+@@ -334,6 +358,10 @@ impl graphics::Layer for Layer {
+     }
+ 
+     fn start(&self) -> usize {
++        if !self.blurs.is_empty() {
++            return 1;
++        }
++
+         if !self.quads.is_empty() {
+             return 1;
+         }
+@@ -374,7 +402,7 @@ impl graphics::Layer for Layer {
+             return 2;
+         }
+ 
+-        if !self.quads.is_empty() {
++        if !self.quads.is_empty() || !self.blurs.is_empty() {
+             return 1;
+         }
+ 
+@@ -382,6 +410,7 @@ impl graphics::Layer for Layer {
+     }
+ 
+     fn merge(&mut self, layer: &mut Self) {
++        self.blurs.append(&mut layer.blurs);
+         self.quads.append(&mut layer.quads);
+         self.triangles.append(&mut layer.triangles);
+         self.primitives.append(&mut layer.primitives);
+@@ -394,6 +423,7 @@ impl Default for Layer {
+     fn default() -> Self {
+         Self {
+             bounds: Rectangle::INFINITE,
++            blurs: blur::Batch::default(),
+             quads: quad::Batch::default(),
+             triangles: triangle::Batch::default(),
+             primitives: primitive::Batch::default(),
+diff --git a/wgpu/src/lib.rs b/wgpu/src/lib.rs
+index 03a7204..abc8d89 100644
+--- a/wgpu/src/lib.rs
++++ b/wgpu/src/lib.rs
+@@ -22,6 +22,7 @@
+ )]
+ #![cfg_attr(docsrs, feature(doc_cfg))]
+ #![allow(missing_docs)]
++pub mod blur;
+ pub mod layer;
+ pub mod primitive;
+ pub mod settings;
+@@ -82,6 +83,7 @@ pub struct Renderer {
+     default_text_size: Pixels,
+     layers: layer::Stack,
+ 
++    blur: blur::State,
+     quad: quad::State,
+     triangle: triangle::State,
+     text: text::State,
+@@ -108,6 +110,7 @@ impl Renderer {
+             default_text_size,
+             layers: layer::Stack::new(),
+ 
++            blur: blur::State::default(),
+             quad: quad::State::new(),
+             triangle: triangle::State::new(
+                 &engine.device,
+@@ -426,6 +429,33 @@ impl Renderer {
+     ) {
+         use std::mem::ManuallyDrop;
+ 
++        // A frame with a frosted panel in it is drawn into a texture of our
++        // own and blitted at the end; a frame without one goes straight at the
++        // surface, exactly as before. The surface is configured
++        // `RENDER_ATTACHMENT` and nothing else, so it can be neither sampled
++        // nor copied — see `blur.rs`.
++        let blurring = self.layers.iter().any(|layer| !layer.blurs.is_empty());
++
++        if blurring {
++            self.blur.prepare(
++                &self.engine.blur_pipeline,
++                &self.engine.device,
++                self.engine.format,
++                (viewport.physical_width(), viewport.physical_height()),
++                self.layers
++                    .iter()
++                    .filter(|layer| !layer.blurs.is_empty())
++                    .map(|layer| 2 + layer.blurs.len() as u64)
++                    .sum(),
++            );
++        }
++
++        let surface = frame;
++        let frame = match blurring {
++            true => self.blur.scene().unwrap_or(surface),
++            false => surface,
++        };
++
+         let mut render_pass = ManuallyDrop::new(encoder.begin_render_pass(
+             &wgpu::RenderPassDescriptor {
+                 label: Some("iced_wgpu render pass"),
+@@ -484,6 +514,42 @@ impl Renderer {
+                 continue;
+             };
+ 
++            if !layer.blurs.is_empty() {
++                // Nothing may sample the texture it is writing, so the pass
++                // ends, the blur runs, and the pass begins again over it.
++                let _ = ManuallyDrop::into_inner(render_pass);
++
++                self.blur.render(
++                    &self.engine.blur_pipeline,
++                    &self.engine.queue,
++                    encoder,
++                    &layer.blurs,
++                    scale_factor as f32,
++                    (viewport.physical_width(), viewport.physical_height()),
++                );
++
++                render_pass = ManuallyDrop::new(encoder.begin_render_pass(
++                    &wgpu::RenderPassDescriptor {
++                        label: Some("iced_wgpu render pass"),
++                        color_attachments: &[Some(
++                            wgpu::RenderPassColorAttachment {
++                                view: frame,
++                                depth_slice: None,
++                                resolve_target: None,
++                                ops: wgpu::Operations {
++                                    load: wgpu::LoadOp::Load,
++                                    store: wgpu::StoreOp::Store,
++                                },
++                            },
++                        )],
++                        depth_stencil_attachment: None,
++                        timestamp_writes: None,
++                        occlusion_query_set: None,
++                        multiview_mask: None,
++                    },
++                ));
++            }
++
+             if !layer.quads.is_empty() {
+                 let render_span = debug::render(debug::Primitive::Quad);
+                 self.quad.render(
+@@ -662,6 +728,10 @@ impl Renderer {
+ 
+         let _ = ManuallyDrop::into_inner(render_pass);
+ 
++        if blurring {
++            self.blur.present(&self.engine.blur_pipeline, encoder, surface);
++        }
++
+         debug::layers_rendered(|| {
+             self.layers
+                 .iter()
+@@ -765,6 +835,19 @@ impl core::Renderer for Renderer {
+     }
+ }
+ 
++impl blur::Renderer for Renderer {
++    fn draw_blur(
++        &mut self,
++        bounds: Rectangle,
++        radius: [f32; 4],
++        sigma: f32,
++        tint: Color,
++    ) {
++        let (layer, transformation) = self.layers.current_mut();
++        layer.draw_blur(bounds, radius, sigma, tint, transformation);
++    }
++}
++
+ impl core::text::Renderer for Renderer {
+     type Font = Font;
+     type Paragraph = Paragraph;
+diff --git a/wgpu/src/shader/blur.wgsl b/wgpu/src/shader/blur.wgsl
+new file mode 100644
+index 0000000..bf76755
+--- /dev/null
++++ b/wgpu/src/shader/blur.wgsl
+@@ -0,0 +1,123 @@
++// A blur of whatever has already been drawn, and the rounded panel that shows it.
++//
++// Three entry points over one bind group layout, because they are three steps of
++// one effect: two separable Gaussian passes at quarter resolution, and a
++// composite that stamps the result back into the scene through a rounded-rect
++// mask. `fs_copy` is the fourth, and only exists to get the finished scene onto
++// the surface — see `blur.rs` for why the scene cannot be the surface itself.
++
++struct Uniforms {
++    // The panel, in physical pixels: x, y, width, height.
++    rect: vec4<f32>,
++    // Its corners, in the order iced packs them: top left, top right,
++    // bottom right, bottom left.
++    radius: vec4<f32>,
++    // Mixed over the blurred pixels by its own alpha. A frosted panel is not
++    // only blurred, it is also lightened or darkened towards the theme.
++    tint: vec4<f32>,
++    // The viewport, in physical pixels.
++    screen: vec2<f32>,
++    // One tap of the current blur pass, in UV. Horizontal is (1/w, 0) times
++    // however far the sigma reaches; vertical is (0, 1/h).
++    step: vec2<f32>,
++}
++
++@group(0) @binding(0) var source: texture_2d<f32>;
++@group(0) @binding(1) var source_sampler: sampler;
++@group(1) @binding(0) var<uniform> uniforms: Uniforms;
++
++struct Full {
++    @builtin(position) position: vec4<f32>,
++    @location(0) uv: vec2<f32>,
++}
++
++// One oversized triangle rather than two, so there is no seam down the diagonal
++// and no vertex buffer to bind.
++@vertex
++fn vs_full(@builtin(vertex_index) index: u32) -> Full {
++    let x = f32(i32(index) / 2) * 4.0 - 1.0;
++    let y = f32(i32(index) & 1) * 4.0 - 1.0;
++
++    var out: Full;
++    out.position = vec4<f32>(x, y, 0.0, 1.0);
++    out.uv = vec2<f32>((x + 1.0) * 0.5, 1.0 - (y + 1.0) * 0.5);
++    return out;
++}
++
++// Nine taps, unrolled. The weights are a normalised Gaussian, and they are
++// written out rather than indexed because a runtime index into a constant array
++// is the one thing naga will not lower to GLSL ES for the WebGL backend.
++@fragment
++fn fs_blur(in: Full) -> @location(0) vec4<f32> {
++    let d1 = uniforms.step;
++    let d2 = uniforms.step * 2.0;
++    let d3 = uniforms.step * 3.0;
++    let d4 = uniforms.step * 4.0;
++
++    var sum = textureSample(source, source_sampler, in.uv) * 0.2270270270;
++    sum += textureSample(source, source_sampler, in.uv + d1) * 0.1945945946;
++    sum += textureSample(source, source_sampler, in.uv - d1) * 0.1945945946;
++    sum += textureSample(source, source_sampler, in.uv + d2) * 0.1216216216;
++    sum += textureSample(source, source_sampler, in.uv - d2) * 0.1216216216;
++    sum += textureSample(source, source_sampler, in.uv + d3) * 0.0540540541;
++    sum += textureSample(source, source_sampler, in.uv - d3) * 0.0540540541;
++    sum += textureSample(source, source_sampler, in.uv + d4) * 0.0162162162;
++    sum += textureSample(source, source_sampler, in.uv - d4) * 0.0162162162;
++    return sum;
++}
++
++// Straight through, for getting the offscreen scene onto the surface.
++@fragment
++fn fs_copy(in: Full) -> @location(0) vec4<f32> {
++    return textureSample(source, source_sampler, in.uv);
++}
++
++struct Panel {
++    @builtin(position) position: vec4<f32>,
++    // Where this fragment is on the screen, so the blurred copy is sampled at
++    // the place it was blurred from rather than at an offset into the panel.
++    @location(0) uv: vec2<f32>,
++    // …and where it is inside the panel, for the corner.
++    @location(1) local: vec2<f32>,
++}
++
++// A triangle strip of four: (0,0) (1,0) (0,1) (1,1).
++@vertex
++fn vs_panel(@builtin(vertex_index) index: u32) -> Panel {
++    let corner = vec2<f32>(f32(index & 1u), f32((index >> 1u) & 1u));
++    let px = uniforms.rect.xy + corner * uniforms.rect.zw;
++
++    var out: Panel;
++    out.position = vec4<f32>(
++        px.x / uniforms.screen.x * 2.0 - 1.0,
++        1.0 - px.y / uniforms.screen.y * 2.0,
++        0.0,
++        1.0,
++    );
++    out.uv = px / uniforms.screen;
++    out.local = px - (uniforms.rect.xy + uniforms.rect.zw * 0.5);
++    return out;
++}
++
++// iced's own, from `quad.wgsl`, so a frosted panel and an ordinary one round
++// their corners by the same arithmetic.
++fn rounded_box_sdf(p: vec2<f32>, size: vec2<f32>, corners: vec4<f32>) -> f32 {
++    var box_half = select(corners.yz, corners.xw, p.x > 0.0);
++    var corner = select(box_half.y, box_half.x, p.y > 0.0);
++    var q = abs(p) - size + corner;
++    return min(max(q.x, q.y), 0.0) + length(max(q, vec2(0.0))) - corner;
++}
++
++@fragment
++fn fs_panel(in: Panel) -> @location(0) vec4<f32> {
++    let half_size = uniforms.rect.zw * 0.5;
++    let distance = rounded_box_sdf(in.local, half_size, uniforms.radius);
++    // Half a pixel either side of the edge, which is what antialiases it.
++    let alpha = 1.0 - smoothstep(-0.5, 0.5, distance);
++
++    let blurred = textureSample(source, source_sampler, in.uv).rgb;
++    let tinted = mix(blurred, uniforms.tint.rgb, uniforms.tint.a);
++
++    // Premultiplied, because that is the blend this pipeline is built with.
++    return vec4<f32>(tinted * alpha, alpha);
++}
 diff --git a/wgpu/src/window/compositor.rs b/wgpu/src/window/compositor.rs
 index f0c3920..d07b30c 100644
 --- a/wgpu/src/window/compositor.rs

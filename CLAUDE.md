@@ -3155,84 +3155,115 @@ section about already: the rAF sampler measuring a page nobody was served.
 Same shape, and the same fix — read what the program believes before theorising
 about what it does.
 
-### Frosted glass is the compositor's, and a popup is what can have it
+### Frosted glass, twice: the compositor's, and the renderer's
 
-**This was written wrong the first time, and the wrong half was the mechanism.**
-It said the toolkit's entire contribution is "going transparent", from:
+There are two ways to frost a panel and they are not variants of one thing.
 
-```rust
-let new_blur = self.blur_enabled && self.app.core().frosted(theme.cosmic());
-theme.transparent = new_blur;
-```
-
-That is real and it is not the mechanism. libcosmic binds
-**`ext-background-effect-v1`** and asks the compositor for blur *per surface,
-over a region*:
+**The compositor's**, which is what COSMIC does. libcosmic binds
+**`ext-background-effect-v1`** and asks for blur per surface, over a region:
 
 ```rust
 let blur_surface = blur_manager.blur(s, &self.queue_handle);
 blur_surface.set_blur_region(Some(&region));
 ```
 
-`iced::window::enable_blur(id)` is the public command. Three things follow
-that the first reading missed:
+`iced::window::enable_blur(id)` is the public command. Popups are a
+first-class target — the surface lookup tries `self.popmgr.popup_id(id)`
+before layer surfaces, `Core::blur` has a `SurfaceIdWrapper::Popup(_)` arm,
+and `auto_blur` defaults to `System | Popup | Window`. An xdg_popup sits over
+its parent, so what gets blurred is the parent window's own content: swapping
+this client's row menu for libcosmic's `context_menu` really would frost it
+against the track list.
 
-- **A popup is a first-class blur target.** The surface lookup tries
-  `self.popmgr.popup_id(id)` *before* layer surfaces, lock surfaces and
-  subsurfaces; `Core::blur` has an explicit `SurfaceIdWrapper::Popup(_)` arm;
-  and `auto_blur` defaults to `Auto::System | Auto::Popup | Auto::Window`, so
-  it is on unless somebody turns it off.
-- **Which means the blur is of the right thing.** An xdg_popup sits over its
-  parent, so what the compositor blurs behind it is the parent window's own
-  content — the track list. The earlier note said you would get a blurred
-  wallpaper through the menu. That is true of `pin` inside a `stack!`, which
-  is one surface, and false of a popup, which is not. The *condition* named
-  there was correct ("frosting the menu against the list needs the menu to be
-  its own surface"); what was wrong was treating libcosmic's `context_menu`
-  as not meeting it. `create_popup` publishes real `SctkPopupSettings`.
-- **It is still Wayland only**, still needs a compositor advertising
-  `Capability::Blur` — checked explicitly, with
-  `log::error!("Blur effect is not supported.")` when the manager is absent —
-  and still needs the theme's `frosted_windows`.
+**An earlier version of this section said otherwise**, on the reasoning that
+the toolkit's whole contribution is `theme.transparent = …`. That is one
+mechanism and not the one that blurs. The grep that found it ran over `src/`
+and returned a complete, coherent story; the protocol binding is in
+`iced/winit/`, a different crate inside the vendored fork. **A coherent answer
+is not evidence the search was wide enough**, and a vendored dependency's own
+subtree is exactly where the second half of a mechanism hides.
 
-**And the trap is that the widget has two implementations behind one name.**
-`ContextMenu::overlay` returns the popup path only when Wayland *and*
-`window_id != Id::NONE` *and* `on_surface_action.is_some()`; otherwise it
-falls through and draws an ordinary in-window overlay. The defaults are
-`Id::RESERVED` and `None`, so a `context_menu` built the obvious way is an
-overlay — which looks identical on screen and can never frost. Two builder
-calls are the whole difference.
+It is still Wayland-only — the arm is `#[cfg(wayland_platform)]`, the
+compositor must advertise `Capability::Blur`, and the theme must have
+`frosted_windows`. And the widget has two implementations behind one name:
+`ContextMenu::overlay` takes the popup path only when Wayland *and*
+`window_id != Id::NONE` *and* `on_surface_action.is_some()`, and the defaults
+are `Id::RESERVED` and `None` — so a `context_menu` built the obvious way is
+an ordinary in-window overlay, identical on screen and unfrostable forever.
 
-**A browser gets the overlay path**, because that `cfg` is compiled out — so
-`context_menu` on wasm is exactly what `pin` already is, with nothing behind
-the canvas. Getting it there means blurring **in the renderer**: an offscreen
-pass sampled under the panel. Half the machinery exists — `iced_wgpu`'s
-`color.rs` builds an offscreen blit pipeline and `offscreen_blit.wgsl` is
-beside the others — and the blur does not: the only `blur` in any shader is
-`shadow_blur_radius`, a smoothstep on a quad's drop shadow. That is a new
-shader and pipeline in the fork, and it is also what would buy frosting on
-X11, macOS and Windows, where the Wayland arm is compiled out. The renderer
-route is the portable one; the compositor route is the COSMIC-only one.
+**The renderer's**, which is what this repository now has, in
+`iced/wgpu/src/blur.rs` and `iced/src/frost.rs`. It works in a browser, on
+X11, on macOS and on Windows — everywhere wgpu runs — because it never asks
+anybody else what is behind the window. What is behind a *panel* is something
+this renderer drew a moment ago.
 
-`translucent-not-frosted.png` is what the *transparency* alone looks like,
-and it is the argument for not shipping that half on its own: the panel at
-72% over the track list, with "George Frideric Handel" perfectly legible
-straight through it. **Transparency without blur is not frosted glass, it is
-a menu you can read the page through**, and it is worse than opaque.
-Reverted; the screenshot is kept because it is the reason.
+`frosted-menu.png` is the row menu over the track list in Chromium, and
+`frosted-compare.png` is the same region of one page with and without the
+panel: sharp "George Frideric Handel" and crisp zebra rows on the left, and on
+the right not one letter survives. That second image is the evidence, because
+a frosted panel over a dark page and an opaque panel over a dark page are very
+nearly the same picture — which is this file's recurring shape of bug, and the
+reason the comparison was made rather than a single screenshot taken.
 
-The switching cost is unchanged, and is still the argument against:
-`ItemWidth` is `Uniform(u16) | Static(u16)` with no fit-to-content, so the
-middle ellipsis through `Go to Goldberg …ions, BWV 988` comes back, and there
-is no dwell.
+Six things it needed, each a decision:
 
-**How the first version got it wrong is the reusable part.** `grep blur` over
-`src/` found `blur_enabled`, `frosted` and `theme.transparent`, which is a
-complete and coherent story — so the search stopped. The protocol binding is
-in `iced/winit/`, a *different crate* in the vendored fork, and nothing in
-the first set of hits points at it. **A coherent answer is not evidence the
-search was wide enough**, and a vendored dependency's own subtree is exactly
-where the second half of a mechanism hides.
+- **The surface cannot be read, and that is what the design falls out of.**
+  `window::Compositor` configures it `RENDER_ATTACHMENT` and nothing else, so
+  it can be neither sampled nor copied, and widening that is not portable — a
+  WebGL canvas is not a texture wgpu may read back. So a frame *containing a
+  blur* is drawn into a texture of our own and blitted to the surface at the
+  end; a frame without one goes straight at the surface exactly as before.
+  The offscreen pass is paid for only while a frosted panel is on screen.
+- **A custom primitive cannot do it**, which is the first thing to try and the
+  first thing to rule out. `Primitive::render` is handed a `&TextureView` and
+  a copy needs the `Texture`, and it cannot end the render pass it is being
+  drawn inside. So this is in the renderer proper, as `Layer::blurs` drawn
+  before that layer's quads, reached through a `blur::Renderer` trait beside
+  `primitive::Renderer`.
+- **Nothing may sample the target it is writing.** The pass ends, the blur
+  runs, the pass begins again with `LoadOp::Load` — the same shape the
+  triangle pipeline already uses, which is why the insertion point was
+  obvious once found.
+- **Quarter resolution is most of the blur, not just a saving.** One texel
+  there reaches four pixels, so nine taps span sixty-four. Two passes,
+  horizontal then vertical, then a rounded-rect composite back into the scene.
+- **One blurred copy per layer, not per panel.** Every panel in a layer reads
+  the same scene, so they share it and the widest sigma wins. A panel asking
+  for less gets a little more, which nobody can see.
+- **Every layer needs its own slice of the uniform buffer**, and this one is
+  a real bug that was written and then fixed before it could be seen.
+  `queue.write_buffer` is ordered before the *whole* command buffer, so two
+  layers writing the same offsets would both run against whichever wrote last
+  — the second panel's sigma silently applied to the first. It is invisible
+  today because both panels ask for the same sigma, which is exactly the kind
+  of thing that stops being invisible a year later. A `Cell<u64>` cursor,
+  because the render loop holds the state by shared reference: `frame` is
+  borrowed out of it for the length of the loop.
+
+**The tint is not optional and it is not decoration.** `frost.rs` mixes the
+blurred copy towards `palette::of(theme).background.weak` by `TINT`, asked of
+the theme rather than written down, for the reason every other colour here is.
+Pure blur of a dark track list is a dark panel with no edge to it;
+`translucent-not-frosted.png` is the other end of the same axis — 72% alpha
+and no blur at all, with "George Frideric Handel" perfectly legible straight
+through the panel. **Transparency without blur is not frosted glass, it is a
+menu you can read the page through.** The blur is what makes the transparency
+honest.
+
+**And the harness lied twice before any of it was believed.** The first
+screenshot showed a beautifully frosted panel and was of *the wrong build*: a
+`python3 -m http.server 8111` from an earlier session was still bound to that
+port, serving the reverted 72%-alpha experiment, so the new server failed to
+bind in silence and `curl` got a 200 from the old one. What gave it away was a
+`DEBUG` readout in the status line that is in no source file in this
+repository. **Grep the built artifact for a string you can see on screen**;
+it costs one command and it is the only check that catches this.
+
+The second was the documented one, a third time: the menu drew at the origin
+because a Playwright hop is delivered faster than this program samples the
+pointer on its 50ms tick. Gliding *and then settling on the target* is what
+fixes it — the jiggle at the destination is what makes the last point the app
+saw the one that was asked for.
 
 ### Still not done
 

@@ -347,3 +347,22 @@ index 0000000..1aa6dae
 +) -> iced_futures::Subscription<crate::Update<T>> {
 +    iced_futures::Subscription::none()
 +}
+diff --git a/src/lib.rs b/src/lib.rs
+index c44700e..f98ec1c 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -178,6 +178,14 @@ pub mod scroll;
+ pub use theme::{Theme, style};
+ 
+ pub mod widget;
++
++/// Frosted glass: a blur of whatever has already been drawn.
++///
++/// Re-exported because it is the renderer's own trait rather than iced's, and
++/// a widget cannot name `iced_wgpu` from here. Only under `wgpu`, since a
++/// software renderer has no such thing.
++#[cfg(feature = "wgpu")]
++pub use iced_wgpu::blur;
+ type Plain = iced_core::text::paragraph::Plain<<Renderer as iced_core::text::Renderer>::Paragraph>;
+ type Paragraph = <Renderer as iced_core::text::Renderer>::Paragraph;
+ pub type Renderer = iced::Renderer;
