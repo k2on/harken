@@ -1516,6 +1516,75 @@ column goes, because every row of it would repeat the heading; the performer
 takes its place, which is the fact that actually differs down the page — two
 recordings of one work are two performers, not two albums.
 
+## A title is text, so it can be taken away
+
+`iced::widget::text` draws a string and hears nothing — it has no `update`, so
+a pointer dragged across a track title is a pointer dragged across a picture.
+Upstream is fixing that: [iced-rs/iced#3315] puts `.selectable(true)` on
+`text` and `rich_text` with a `selectable_group` that carries one drag across
+siblings, and pop-os/iced — the fork libcosmic vendors — already ships
+`Text::selectable()` and a `HasSelectableText` trait behind a context menu.
+Neither is reachable from here: the first is an open pull request against
+master, the second is a *different iced*, whose `Widget`, `Element` and
+renderer are other types than the ones this program's every widget is written
+against. Taking either means moving off the `iced = "0.14"` that `Cargo.toml`
+pins, which is a `cargoVendorHash` and — for libcosmic — a client rewritten
+around a toolkit with no browser target.
+
+So `iced/src/select.rs` is that feature against the 0.14 we have, over the two
+things a released `Paragraph` already answers: `hit_test` turns a point into a
+byte offset, which is the selection, and `grapheme_position` turns an offset
+back into an x, which is the highlight. Both take a *line*, and the second is
+only ever asked about line 0 — so **this is for text on one line**, which the
+table, its headings and the page headers are. Something that wraps would
+select correctly and highlight only its first line, which is why the cards and
+the play bar still draw a plain `text`.
+
+Five things it needed:
+
+- **The row plays on the release now, and that is the whole interlock.** A
+  drag across a title begins with a press on the row, so a row that played on
+  the press would start the track you were trying to copy the name of.
+  `select` takes the press it lands on — the way both implementations above do
+  — and takes the release *that ends a drag*, so a plain click still reaches
+  the row and a drag never does. `mouse_area` checks `is_event_captured()`
+  after its content, which is what makes one capture enough. The takes list
+  moved with it, for the same reason.
+- **A menu entry is a control, not prose.** `cell` and `label` are the same
+  line in the same grid and differ only in this: the table's is selectable and
+  the playlist picker's is not, because what a press on a panel row means is
+  "this playlist" and a widget that took it to start a selection would be
+  answering a question nobody asked of a menu. They share `ink` so the two
+  cannot come to disagree about what a dimmed column on the cursor's row is.
+- **The selection needs nothing to coordinate it.** Every widget hears every
+  press, so a press somewhere else is how each one learns it is no longer the
+  selection. The consequence is that a drag stops at the edge of the cell it
+  started in — one title, one artist, not a row and not a column. That is what
+  upstream's `selectable_group` is for and there is no way to have it here
+  without one.
+- **The wash is the text's own color at 30%, and that is a rule rather than a
+  shade.** The same cell is drawn on the zebra, on the gold cursor row and on
+  the row that is playing, so a selection color chosen against any one of them
+  is wrong on the other two. The text is legible on all three by construction —
+  `palette::of` already decided that — so a wash of *that* color is too.
+- **`hit_test` answers in bytes and `grapheme_position` asks in graphemes.**
+  The bridge is a `chars().count()`, which is exact for everything without a
+  combining mark on it; upstream and libcosmic both reach for
+  `unicode-segmentation`, and a dependency line for a decomposed é would move
+  `cargoVendorHash` for an edge of a highlight.
+
+`Ctrl+C` copies, `Ctrl+A` takes the whole cell, and both are captured — so the
+vim layer never sees them, which is the same mechanism that lets a focused
+`text_input` swallow its own keys. `<Esc>` is deliberately *not* taken: it
+already closes overlays and drops a search, and a selection is not worth
+shadowing that.
+
+**Not verified on screen from here** — nothing in this container can open a
+window. What is tested is the arithmetic and the word walk; what to look at is
+whether the highlight's right-hand edge lands where the pointer let go.
+
+[iced-rs/iced#3315]: https://github.com/iced-rs/iced/pull/3315
+
 ## The sidebar browses; the now-playing bar plays, in a browser
 
 **The sidebar is a fixed four lines now, and the browsing is pages.** It used

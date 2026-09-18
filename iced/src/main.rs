@@ -38,6 +38,7 @@ mod route;
 /// talks to a real server carries none of it.
 #[cfg(feature = "demo")]
 mod seed;
+mod select;
 mod style;
 mod vim;
 
@@ -51,6 +52,7 @@ use iced::widget::{
 use iced::{Element, Length, Subscription, Task};
 use petros::{AutoCtx, Changes, Client};
 use player::{Player, Track};
+use select::selectable;
 // The tab's title and the platform's media controller are the browser's, the
 // way the `<audio>` element is; the desktop build has neither.
 #[cfg(target_arch = "wasm32")]
@@ -849,10 +851,9 @@ fn middle(body: &str, max: usize) -> String {
 
 /// One cell of the table: a single line, clipped rather than wrapped.
 ///
-/// Every color is asked of the theme rather than written down, which is the
-/// whole of what makes this work in dark mode — and on the cursor's own row,
-/// which is painted in the accent color and needs text chosen against *that*
-/// rather than against the window.
+/// Selectable, which is what the table is for: a title somebody wants is a
+/// title somebody wants to copy. The press that begins a drag is taken by
+/// `select`, which is why the row it sits in plays on the *release*.
 fn cell<'a>(
     body: String,
     width: Length,
@@ -860,43 +861,76 @@ fn cell<'a>(
     accent: bool,
     dim: bool,
 ) -> Element<'a, Message> {
-    // Shortened here rather than by the renderer, because `Wrapping::None`
-    // clips nothing — it draws the whole string, over whatever is next to it.
-    let body = match width {
-        Length::FillPortion(n) => middle(&body, n as usize * PER_PORTION),
-        _ => body,
-    };
-    text(body)
+    selectable(fit(body, width))
         .size(13)
         .width(width)
         .wrapping(text::Wrapping::None)
-        .style(move |theme: &iced::Theme| {
-            let palette = palette::of(theme);
-            let color = if on_cursor {
-                // The row is filled with the accent color, so there is exactly
-                // one color text on it can be: the one that color was paired
-                // with. A dimmed column gets the same hue, not a grey.
-                let text = palette.primary.base.text;
-                if dim {
-                    text.scale_alpha(0.75)
-                } else {
-                    text
-                }
-            } else if accent {
-                palette.primary.base.color
-            } else if dim {
-                palette.background.base.text.scale_alpha(0.6)
-            } else {
-                palette.background.base.text
-            };
-            text::Style { color: Some(color) }
-        })
+        .style(ink(on_cursor, accent, dim))
         .into()
+}
+
+/// The same cell inside a panel, and deliberately not selectable.
+///
+/// A menu entry is a control rather than prose: what a press on it means is
+/// "this playlist", and a widget that took the press to start a selection
+/// would be answering a question nobody asked of a menu.
+fn label<'a>(
+    body: String,
+    width: Length,
+    on_cursor: bool,
+    accent: bool,
+    dim: bool,
+) -> Element<'a, Message> {
+    text(fit(body, width))
+        .size(13)
+        .width(width)
+        .wrapping(text::Wrapping::None)
+        .style(ink(on_cursor, accent, dim))
+        .into()
+}
+
+/// Shortened here rather than by the renderer, because `Wrapping::None` clips
+/// nothing — it draws the whole string, over whatever is next to it.
+fn fit(body: String, width: Length) -> String {
+    match width {
+        Length::FillPortion(n) => middle(&body, n as usize * PER_PORTION),
+        _ => body,
+    }
+}
+
+/// What a line in the table's grid is painted.
+///
+/// Every color is asked of the theme rather than written down, which is the
+/// whole of what makes this work in dark mode — and on the cursor's own row,
+/// which is painted in the accent color and needs text chosen against *that*
+/// rather than against the window.
+fn ink(on_cursor: bool, accent: bool, dim: bool) -> impl Fn(&iced::Theme) -> text::Style {
+    move |theme: &iced::Theme| {
+        let palette = palette::of(theme);
+        let color = if on_cursor {
+            // The row is filled with the accent color, so there is exactly
+            // one color text on it can be: the one that color was paired
+            // with. A dimmed column gets the same hue, not a grey.
+            let text = palette.primary.base.text;
+            if dim {
+                text.scale_alpha(0.75)
+            } else {
+                text
+            }
+        } else if accent {
+            palette.primary.base.color
+        } else if dim {
+            palette.background.base.text.scale_alpha(0.6)
+        } else {
+            palette.background.base.text
+        };
+        text::Style { color: Some(color) }
+    }
 }
 
 /// A column heading, in the same grid as the cells under it.
 fn heading<'a>(label: &'a str, width: Length) -> Element<'a, Message> {
-    text(label)
+    selectable(label)
         .size(11)
         .width(width)
         .style(|theme: &iced::Theme| text::Style {
@@ -914,7 +948,7 @@ fn heading<'a>(label: &'a str, width: Length) -> Element<'a, Message> {
 /// than as one list with a repeated column.
 fn section<'a>(label: String) -> Element<'a, Message> {
     container(
-        text(label)
+        selectable(label)
             .size(12)
             .wrapping(text::Wrapping::None)
             .style(|theme: &iced::Theme| text::Style {
@@ -4091,7 +4125,7 @@ impl App {
                 mouse_area(
                     container(
                         column![
-                            text(who).size(13).style(move |theme: &iced::Theme| {
+                            selectable(who).size(13).style(move |theme: &iced::Theme| {
                                 text::Style {
                                     color: Some(if on_cursor {
                                         palette::of(theme).primary.base.text
@@ -4100,15 +4134,17 @@ impl App {
                                     }),
                                 }
                             }),
-                            text(facts).size(11).style(move |theme: &iced::Theme| {
-                                let palette = palette::of(theme);
-                                text::Style {
-                                    color: Some(match on_cursor {
-                                        true => palette.primary.base.text.scale_alpha(0.7),
-                                        false => palette.background.base.text.scale_alpha(0.5),
-                                    }),
-                                }
-                            }),
+                            selectable(facts)
+                                .size(11)
+                                .style(move |theme: &iced::Theme| {
+                                    let palette = palette::of(theme);
+                                    text::Style {
+                                        color: Some(match on_cursor {
+                                            true => palette.primary.base.text.scale_alpha(0.7),
+                                            false => palette.background.base.text.scale_alpha(0.5),
+                                        }),
+                                    }
+                                }),
                         ]
                         .spacing(2),
                     )
@@ -4124,7 +4160,8 @@ impl App {
                     }),
                 )
                 .on_enter(Message::HoverAt(at))
-                .on_press(Message::Select(Source::Recording(
+                // The release, for the reason the table's rows use one.
+                .on_release(Message::Select(Source::Recording(
                     take.id.clone(),
                     take.performers.clone(),
                 ))),
@@ -4304,12 +4341,12 @@ impl App {
             row![
                 self.picture(name, art, side, if round { side / 2.0 } else { 8.0 }),
                 column![
-                    text(kind)
+                    selectable(kind)
                         .size(10)
                         .style(|theme: &iced::Theme| text::Style {
                             color: Some(palette::of(theme).background.base.text.scale_alpha(0.5)),
                         }),
-                    text(name.to_string())
+                    selectable(name.to_string())
                         .size(26)
                         .wrapping(text::Wrapping::None),
                     // The performer is the one thing on this page that is also
@@ -4323,7 +4360,7 @@ impl App {
                             },)
                     )
                     .on_press(Message::Select(Source::Artist(under.to_string()))),
-                    text(facts)
+                    selectable(facts)
                         .size(11)
                         .style(|theme: &iced::Theme| text::Style {
                             color: Some(palette::of(theme).background.base.text.scale_alpha(0.5)),
@@ -4482,7 +4519,14 @@ impl App {
                             },
                         ))
                         .on_enter(Message::HoverAt(i))
-                        .on_press(Message::PlayItem(item.id))
+                        // On the release, not the press, because the cells
+                        // are selectable: a drag across a title begins with
+                        // a press on this row, and a row that played on one
+                        // would start the track you were trying to copy the
+                        // name of. `select` takes the press it is on and the
+                        // release that *ends a drag*, so a plain click still
+                        // reaches this and a drag never does.
+                        .on_release(Message::PlayItem(item.id))
                         .on_right_press(Message::RowMenu(item.id, Anchor::Pointer)),
                     )
                 });
@@ -4517,7 +4561,7 @@ impl App {
         if titled {
             main = main.push(
                 row![
-                    text(peer.source.title().to_string()).size(22),
+                    selectable(peer.source.title().to_string()).size(22),
                     text(format!("{} tracks", peer.rows().len()))
                         .size(12)
                         .style(style::dim),
@@ -4595,7 +4639,7 @@ impl App {
                     // where every other name goes.
                     let line = panel_entry(
                         on.then(|| Element::from(icon::tick(lit))),
-                        cell(middle(name, budget), Length::Fill, lit, *on, false),
+                        label(middle(name, budget), Length::Fill, lit, *on, false),
                         None,
                     );
                     col.push(
@@ -4627,7 +4671,7 @@ impl App {
                 // holds is *what this row is* and this row makes one.
                 let line = panel_entry(
                     Some(icon::line(glyphs::PLUS, lit).into()),
-                    cell(NEW_PLAYLIST.into(), Length::Fill, lit, false, true),
+                    label(NEW_PLAYLIST.into(), Length::Fill, lit, false, true),
                     None,
                 );
                 mouse_area(
