@@ -3119,6 +3119,67 @@ next. Once the shape above was understood and applied in one pass:
 **59 → 23 → 8 → 3 → 0**. The difference was not effort, it was reading the
 whole error set and looking up every target type *before* editing.
 
+### Three things asked of it in a browser, and what each one showed
+
+**Selecting text.** A page title drawn with `text` cannot be selected — iced's
+text is painted, not a DOM node. libcosmic carries `selectable_text` for
+exactly this, which is *why* pop-os's fork put `selected_fill` and
+`selected_text_color` on `text::Style` at all. The page title uses it now:
+`selectable-title.png` is "Songs" highlighted. Two things to know — the
+selection is **drawn by the widget**, so `getSelection()` in the browser is
+still empty and it does not reach the system clipboard on its own; and this is
+one title, not a policy. Every other label here is still `text`.
+
+**The menu's position was never wrong, and the harness was.** A screenshot had
+it in the top-left corner whatever was clicked, which looks exactly like
+`fit` clamping against a window it cannot measure. It was neither: a temporary
+readout in the status line said `win 1280x800` (so `resize_events` works) and
+`ptr 0,0 · hovers 0` (so the pointer had never been reported). Playwright's
+`mouse.move` in one hop, and a burst of synthetic moves, are delivered faster
+than this program samples them on its 50ms tick — so the menu opened at the
+last position it had actually seen, which was the origin. Paced moves put it
+exactly under the pointer.
+
+**The instrument was pointed at the wrong thing again**, which this file has a
+section about already: the rAF sampler measuring a page nobody was served.
+Same shape, and the same fix — read what the program believes before theorising
+about what it does.
+
+### Frosted glass is the compositor's, and that decides where it can work
+
+libcosmic's own code is unambiguous:
+
+```rust
+let new_blur = self.blur_enabled && self.app.core().frosted(theme.cosmic());
+theme.transparent = new_blur;
+```
+
+The toolkit's entire contribution is **going transparent**. `blur_enabled`
+arrives as `wayland::Event::BlurEnabled`, under `#[cfg(wayland_platform)]`,
+and the blur itself is cosmic-comp's, behind the surface. There is no blur in
+the renderer to borrow instead: the fork's shaders are quad, image, triangle,
+blit, color and vertex, and the only `blur` in any of them is a quad's *shadow*
+radius.
+
+So it blurs **on Wayland, with a frosted theme, and nowhere else** — not on
+X11, where that arm is compiled out, and not in a browser, where the whole
+program is one canvas with nothing behind it.
+
+**And on a COSMIC desktop it would still not frost this menu.** The row menu
+here is `pin` inside a `stack!` — it lives *inside the app's one surface* — so
+compositor blur would blur what is behind the **window**: the wallpaper, other
+windows. You would see a blurred desktop through the menu, not a blurred track
+list. Frosting the menu against the list needs the menu to be its own surface,
+which is what libcosmic's `context_menu` can be (`window_id`,
+`on_surface_action`) and what `pin` can never be.
+
+`translucent-not-frosted.png` is the half that does port, and it is the
+argument against doing it: the panel at 72% over the track list, with "George
+Frideric Handel" perfectly legible straight through it. **Transparency without
+blur is not frosted glass, it is a menu you can read the page through**, and
+it is worse than opaque. Reverted; the screenshot is kept because it is the
+reason.
+
 ### Still not done
 
 - **Run, in a browser.** `harken-on-libcosmic.png` is the whole client —

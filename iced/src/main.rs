@@ -4505,7 +4505,7 @@ impl App {
         if titled {
             main = main.push(
                 row![
-                    text(peer.source.title().to_string()).size(22),
+                    cosmic::widget::selectable_text(peer.source.title().to_string()).size(22),
                     text(format!("{} tracks", peer.rows().len()))
                         .size(12)
                         .class(cosmic::theme::Text::Custom(style::dim)),
