@@ -2977,6 +2977,16 @@ The four patches, in `iced-wasm.patch` and `libcosmic-wasm.patch`:
   that name is a file. One `store` module holds both ends: `std::fs` with
   `atomicwrites` natively, `localStorage` in a browser, keyed by the same path
   string. `system_path` is `None` there and `create_dir_all` is a no-op.
+
+  **And a patch file is only what `git diff` could see.** `subscription_web.rs`
+  is a *new* file, so it was untracked, so it was absent from
+  `libcosmic-wasm.patch` for as long as that patch existed — while `lib.rs`'s
+  half of the same change, `mod subscription_web;`, was in it. The patch
+  applied cleanly and produced a tree that cannot compile, naming a module
+  nobody had written. It never showed here because the working checkout has the
+  file; only a fresh one would have found it. `git add -N` before the diff is
+  the whole fix, and applying the patch to `git archive HEAD` in a scratch
+  directory is what proves it — which is now how these two are regenerated.
 - **A `webgl` feature, because libcosmic had none.** Without it wgpu finds no
   backend at all and the compositor aborts *after* the canvas is on the page.
   This file already knew that — `iced/Cargo.toml` says "WebGL rather than
