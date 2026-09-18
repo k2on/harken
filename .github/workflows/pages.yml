@@ -22,8 +22,21 @@
 # history, and the moment the fork exists this file and this branch should
 # both be deleted.
 #
-# One site per repository, so a run of this replaces whatever `pages.yml` last
-# published, and a push to `main` replaces this. That is Pages, not a policy.
+# One site per repository, so a run of this replaces whatever `main` last
+# published, and the next push to `main` replaces this. That is Pages, not a
+# policy.
+#
+# **It needs one setting changed, and nothing here can change it.** The
+# `github-pages` environment restricts deployments to the default branch, so a
+# dispatch against this one is rejected in about a second, before a runner is
+# assigned and therefore with no logs at all to read. Falsified rather than
+# assumed: run 85 carried the `environment:` block below and died that way;
+# run 86 was the same file with that block and the deploy step removed, and it
+# ran its steps and uploaded the artifact. So the branch may run workflows and
+# may build the site; it may not deploy one.
+#
+# Settings -> Environments -> github-pages -> Deployment branches: add
+# `demo-site`, or allow all branches. Then dispatch this against `demo-site`.
 name: pages
 
 on:
@@ -41,6 +54,9 @@ permissions:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
@@ -53,3 +69,5 @@ jobs:
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site
+      - id: deploy
+        uses: actions/deploy-pages@v4
