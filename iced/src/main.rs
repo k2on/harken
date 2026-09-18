@@ -3752,6 +3752,17 @@ impl App {
     ///
     /// `RowMenu::entries` is still the one definition of what is in it, so the
     /// entries did not move — only what draws them.
+    /// How big a glyph is in libcosmic's menu.
+    ///
+    /// **Not `icon::TRANSPORT`, and that is the whole of why the ticks looked
+    /// broken.** 15px is right in this program's own panels, whose rows are
+    /// `PANEL_ENTRY` — 27 — with 13pt text. `menu_button` is a fixed 36 with
+    /// the toolkit's default size, so the same glyph sits in a row a third
+    /// taller beside larger text, and a Lucide check at 15px in that is a thin
+    /// scratch. A glyph is sized against the row it is in, not against the
+    /// last row it was in.
+    const MENU_GLYPH: f32 = 18.0;
+
     fn row_menu_trees(&self) -> Option<(Vec<cosmic::widget::menu::Tree<Message>>, u16)> {
         let peer = self.peer.as_ref()?;
         let item = peer.rows().get(self.at(Pane::Tracks))?;
@@ -3783,7 +3794,10 @@ impl App {
 
                     let row = Element::from(
                         cosmic::widget::menu::menu_button(vec![
-                            icon::line(entry.glyph, false).into(),
+                            icon::line(entry.glyph, false)
+                                .width(Length::Fixed(Self::MENU_GLYPH))
+                                .height(Length::Fixed(Self::MENU_GLYPH))
+                                .into(),
                             cosmic::widget::Space::new()
                                 .width(Length::Fixed(ENTRY_GAP))
                                 .into(),
@@ -3809,9 +3823,13 @@ impl App {
                             cosmic::widget::menu::Tree::from(Element::from(
                                 cosmic::widget::menu::menu_button(vec![
                                     match on {
-                                        true => Element::from(icon::tick(false)),
+                                        true => Element::from(
+                                            icon::tick(false)
+                                                .width(Length::Fixed(Self::MENU_GLYPH))
+                                                .height(Length::Fixed(Self::MENU_GLYPH)),
+                                        ),
                                         false => cosmic::widget::Space::new()
-                                            .width(Length::Fixed(icon::TRANSPORT))
+                                            .width(Length::Fixed(Self::MENU_GLYPH))
                                             .into(),
                                     },
                                     cosmic::widget::Space::new()
