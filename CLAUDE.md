@@ -1971,6 +1971,38 @@ Six things that are each a decision:
   because the default `publicUrl` is loopback — a Sonos handed
   `http://127.0.0.1:8787/media/…` fetches from itself, and that presents as
   "the speaker plays nothing".
+
+  **And naming an address is not the same as binding one, which is the other
+  half and was missing.** `address` defaults to loopback, for the reverse
+  proxy that terminates TLS; `mediaUrl` is a *string* the bridge hands the
+  house. So a LAN `mediaUrl` beside the default `address` satisfied the
+  assertion, evaluated, started cleanly, and told every speaker to fetch from
+  a port nothing was listening on.
+
+  It presents as "the speaker plays nothing" — the same sentence as the trap
+  above, from the opposite cause — and everything you would check looks
+  right. The queue *lands*: `media_content_id` is exactly the URL harken
+  meant, `queue_size` is the length of the hand-off, and the state is
+  `paused`, because a speaker that cannot fetch is not a speaker that
+  refused. So the bridge, the six service calls and the `clear_playlist` /
+  `enqueue: play` sequence all read as working, and they are. The tell is one
+  `curl` of that URL *from another machine* — from the server itself it
+  answers, which is the whole illusion.
+
+  The assertion asks `mediaBase` rather than `publicUrl` now, so an explicitly
+  loopback `mediaUrl` — the one case no proxy in front can rescue — fails too;
+  it previously passed merely by being set. Binding is a **warning** rather
+  than an assertion, because nix cannot know: a proxy in front of loopback is
+  exactly how the browser half is meant to be served, and a `mediaUrl` naming
+  that proxy is correct. What it can say is that one of the two has to be
+  true.
+
+  Worth knowing which way out is real, because the obvious one can be a dead
+  end: routing the speaker through the public name only works if the speaker
+  can resolve and reach it. On the deployment this was found on, that name
+  resolved to a *tailnet* address, and a Sonos is not on the tailnet — so
+  binding the LAN was the only answer, and `0.0.0.0` rather than the LAN
+  address alone, because nginx reaches this through `localhost`.
 - **`/media` is served with no authentication at all.** That is what lets a
   speaker fetch bytes, and it was true before any of this — worth writing down
   now rather than discovering it later. On a LAN-bound server it is fine; the

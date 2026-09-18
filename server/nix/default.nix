@@ -28,6 +28,35 @@
     let
       cfg = config.services.harken;
       harken = inputs.self.packages.${pkgs.stdenv.hostPlatform.system};
+
+      # A URL nothing off this machine can fetch: this machine talking to
+      # itself, or a wildcard that is not an address at all.
+      selfAddressed = url:
+        lib.any (needle: lib.hasInfix needle url) [
+          "127.0.0.1"
+          "localhost"
+          "::1"
+          "0.0.0.0"
+        ];
+
+      # Whether what is bound answers on this machine and nowhere else.
+      # `0.0.0.0` is deliberately not in here: as a *bind* it means every
+      # interface, which is the opposite of what it means in a URL — which
+      # is why this is its own list rather than `selfAddressed cfg.address`.
+      loopbackOnly = lib.elem cfg.address [
+        "127.0.0.1"
+        "localhost"
+        "::1"
+        "[::1]"
+      ];
+
+      # What a speaker resolves a `file` against. Total rather than guarded
+      # at each use, so neither the assertion's message nor the warning's
+      # has to care whether `homeAssistant` is there.
+      mediaBase =
+        if cfg.homeAssistant == null then cfg.publicUrl
+        else if cfg.homeAssistant.mediaUrl != null then cfg.homeAssistant.mediaUrl
+        else cfg.publicUrl;
     in
     {
       options.services.harken = {
@@ -48,6 +77,14 @@
             front that terminates TLS — the login sends a browser here and
             back, and a session token crosses on every connect, neither of
             which belongs on plain HTTP off the machine.
+
+            {option}`services.harken.homeAssistant` is the one thing that
+            pulls the other way: a speaker fetches its own bytes, so it needs
+            an address of its own to reach — and naming one in `mediaUrl`
+            does not bind it. Either widen this to `0.0.0.0`, or put
+            something in front that forwards `mediaUrl` here. Leaving both
+            undone is a warning rather than an error, because only the first
+            is this option's to know about.
           '';
         };
 
@@ -308,22 +345,53 @@
             # `http://127.0.0.1:8787/media/…` is the failure that looks like
             # "the speaker plays nothing" and is really "the speaker fetched
             # from itself".
-            assertion =
-              cfg.homeAssistant == null
-              || cfg.homeAssistant.mediaUrl != null
-              || !(
-                lib.hasInfix "127.0.0.1" cfg.publicUrl
-                || lib.hasInfix "localhost" cfg.publicUrl
-                || lib.hasInfix "0.0.0.0" cfg.publicUrl
-              );
+            #
+            # Asked of `mediaBase` rather than of `publicUrl`, because the
+            # question is what a speaker is *given*: this held only while
+            # `mediaUrl` was unset, so setting it to a loopback address of
+            # its own — the one thing no proxy in front can rescue — was the
+            # exact failure the comment describes and went unchecked.
+            assertion = cfg.homeAssistant == null || !(selfAddressed mediaBase);
             message = ''
               services.harken: the house's speakers would be told to fetch
-              from ${cfg.publicUrl}, which is this machine talking to itself.
+              from ${mediaBase}, which is this machine talking to itself.
               Set services.harken.homeAssistant.mediaUrl to an address a
               speaker can reach.
             '';
           }
         ];
+
+        # The assertion above checks the address a speaker is *told*; this is
+        # the other half, and the half that was missing. Setting `mediaUrl`
+        # satisfies it whatever the server is bound to — so a LAN address
+        # beside the default loopback `address` passes evaluation, starts
+        # cleanly, and hands the house a URL nothing is listening on.
+        #
+        # It presents as "the speaker plays nothing", and every part you
+        # would check looks right: the queue lands, the speaker accepts it,
+        # `media_content_id` is exactly the URL harken meant, `queue_size` is
+        # the length of the hand-off — and the state is `paused`, because a
+        # speaker that cannot fetch is not a speaker that refused. The tell
+        # is `curl` from another machine, not from this one.
+        #
+        # A warning rather than an assertion, because it cannot know: a
+        # reverse proxy in front of loopback is exactly how the browser half
+        # of this is meant to be served, and a `mediaUrl` naming that proxy
+        # is correct. What it can say is that one of the two has to be true.
+        warnings =
+          lib.optional
+            (cfg.homeAssistant != null && loopbackOnly && !(selfAddressed mediaBase))
+            ''
+              services.harken: the house's speakers are told to fetch from
+              ${mediaBase}, and this server is bound to ${cfg.address} —
+              which answers on this machine and nowhere else. Unless
+              something in front forwards ${mediaBase} to it, a speaker gets
+              no bytes and sits paused holding the right queue.
+
+              Either set services.harken.address = "0.0.0.0" (with
+              openFirewall, or a firewall rule of your own) so the LAN can
+              reach it, or point mediaUrl at a proxy that can.
+            '';
 
         # Made rather than required, so the default works on a machine where
         # nobody has put anything in it yet: an empty library is a library
