@@ -366,8 +366,37 @@ index c44700e..f98ec1c 100644
  type Plain = iced_core::text::paragraph::Plain<<Renderer as iced_core::text::Renderer>::Paragraph>;
  type Paragraph = <Renderer as iced_core::text::Renderer>::Paragraph;
  pub type Renderer = iced::Renderer;
+diff --git a/src/theme/style/button.rs b/src/theme/style/button.rs
+index f361512..135f97b 100644
+--- a/src/theme/style/button.rs
++++ b/src/theme/style/button.rs
+@@ -171,8 +171,22 @@ pub fn appearance(
+             }
+         }
+         Button::MenuItem => {
+-            let (background, text, icon) = color(&cosmic.background(theme.transparent).component);
+-            appearance.background = Some(Background::Color(background));
++            let component = &cosmic.background(theme.transparent).component;
++            let (background, text, icon) = color(component);
++
++            // **A resting menu item paints nothing, because the panel behind
++            // it already painted exactly this.** `menu_bar`'s own appearance
++            // reads `background(...).component.base` for the panel, and this
++            // read the same value for every row on top of it — redundant on a
++            // solid panel, and fatal on a frosted one, where it covered the
++            // blur the panel had just composited. That is what a frosted menu
++            // with a sharp rim of blur around a flat middle was.
++            //
++            // Hover and pressed still paint, because those differ from the
++            // panel and are the only thing an item's background ever had to
++            // say.
++            appearance.background = (background != Color::from(component.base))
++                .then_some(Background::Color(background));
+             appearance.icon_color = icon;
+             appearance.text_color = text;
+             corner_radii = &cosmic.corner_radii.radius_s;
 diff --git a/src/widget/menu.rs b/src/widget/menu.rs
-index 6ddb8f3..2c47dca 100644
+index 6ddb8f3..2d02ead 100644
 --- a/src/widget/menu.rs
 +++ b/src/widget/menu.rs
 @@ -79,3 +79,45 @@ pub use crate::style::menu_bar::{Appearance, StyleSheet};
@@ -400,7 +429,7 @@ index 6ddb8f3..2c47dca 100644
 +        const SIGMA: f32 = 18.0;
 +        // …and carried most of the way to the menu's own ground, so it reads
 +        // as a panel on a plane of its own rather than as a smear.
-+        const TINT: f32 = 0.18;
++        const TINT: f32 = 0.12;
 +
 +        iced_wgpu::blur::Renderer::draw_blur(
 +            _renderer,

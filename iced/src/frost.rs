@@ -50,7 +50,7 @@ const SIGMA: f32 = 18.0;
 /// whether the feature works or has never once run — and it took somebody
 /// saying "i dont see any blur" to catch it. **A screenshot you had to zoom to
 /// read is not evidence the effect is visible.**
-const TINT: f32 = 0.18;
+const TINT: f32 = 0.12;
 
 pub fn frost<'a, Message: 'a>(
     content: impl Into<Element<'a, Message, cosmic::Theme, cosmic::Renderer>>,
