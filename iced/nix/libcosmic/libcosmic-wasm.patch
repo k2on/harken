@@ -367,7 +367,7 @@ index c44700e..f98ec1c 100644
  type Paragraph = <Renderer as iced_core::text::Renderer>::Paragraph;
  pub type Renderer = iced::Renderer;
 diff --git a/src/widget/menu.rs b/src/widget/menu.rs
-index 6ddb8f3..9863180 100644
+index 6ddb8f3..2c47dca 100644
 --- a/src/widget/menu.rs
 +++ b/src/widget/menu.rs
 @@ -79,3 +79,45 @@ pub use crate::style::menu_bar::{Appearance, StyleSheet};
@@ -400,7 +400,7 @@ index 6ddb8f3..9863180 100644
 +        const SIGMA: f32 = 18.0;
 +        // …and carried most of the way to the menu's own ground, so it reads
 +        // as a panel on a plane of its own rather than as a smear.
-+        const TINT: f32 = 0.45;
++        const TINT: f32 = 0.18;
 +
 +        iced_wgpu::blur::Renderer::draw_blur(
 +            _renderer,

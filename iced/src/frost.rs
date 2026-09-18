@@ -41,7 +41,16 @@ const SIGMA: f32 = 18.0;
 /// like a smear. A pure blur of a dark track list is a dark panel with no edge
 /// to it; the tint is what puts the panel on a plane of its own and what keeps
 /// its text legible against whatever happened to be underneath.
-const TINT: f32 = 0.45;
+///
+/// **It was 0.45 and that was too much to see.** Forty-five percent of a dark
+/// grey over a blurred dark page is a dark grey: the blur was real, measurable
+/// and invisible at the size anybody looks at it, and the only reason it
+/// looked like it worked here was a 3x crop and a side-by-side. That is this
+/// file's recurring shape of bug — a grid of gold squares looks the same
+/// whether the feature works or has never once run — and it took somebody
+/// saying "i dont see any blur" to catch it. **A screenshot you had to zoom to
+/// read is not evidence the effect is visible.**
+const TINT: f32 = 0.18;
 
 pub fn frost<'a, Message: 'a>(
     content: impl Into<Element<'a, Message, cosmic::Theme, cosmic::Renderer>>,
