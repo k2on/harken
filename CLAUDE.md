@@ -3291,9 +3291,40 @@ saw the one that was asked for.
   browser.
 - **`iced/nix/` is untouched**, so `nix build .#harken-iced` and the web
   derivation still describe the old dependency.
-- **The dependency is a path.** `Cargo.toml` points at a checkout carrying
-  `iced/nix/libcosmic/`'s patches; the committable answer is a fork of
-  pop-os/libcosmic with them applied, pinned by git rev the way petros is.
+- **The dependency is a path, and that is what stops CI dead.** `Cargo.toml`
+  points at a checkout carrying `iced/nix/libcosmic/`'s patches — to libcosmic
+  *and* to its vendored `iced` submodule — so `nix build .#harken-demo` has
+  nothing to fetch and **no runner can compile this branch at all**. The
+  committable answer is a fork of pop-os/libcosmic with the patches applied,
+  pinned by git rev the way petros is; it needs a fork of pop-os/iced under it
+  too, since the submodule is patched as well.
+
+  Until then the `demo-site` branch carries the *output*: an orphan branch of
+  `index.html`, `favicon.svg` and the `pkg/` wasm-bindgen produced, with a
+  `pages.yml` of its own that uploads it rather than building it. Worse than
+  `main`'s in every way but the one that matters — it runs. Delete the branch
+  and its workflow the day the fork lands.
+
+  Three things about publishing from a branch that is not the default one,
+  each of which cost a round:
+
+  - **A `workflow_dispatch` workflow must exist on the default branch to be
+    dispatchable.** `pages-demo.yml`, present only on `demo-site`, answers a
+    bare `404` from the dispatch API. What GitHub resolves on the default
+    branch is the *name*; what it then runs is the file at the ref — so the
+    branch's copy is called `pages.yml` and shadows `main`'s for a dispatch
+    against it, leaving `main`'s push build untouched.
+  - **The `github-pages` environment allows the default branch only**, and it
+    rejects before a runner is assigned — about one second, no steps, and
+    **no logs at all**, which reads like the run never happened. Settings →
+    Environments → github-pages → Deployment branches is the one place that
+    changes, and nothing in this repository can change it.
+  - **That was falsified rather than assumed**, because "failed instantly with
+    no logs" is also what a YAML error looks like. Run 85 carried the
+    `environment:` block and died that way; run 86 was the same file with that
+    block and the deploy step removed, and it ran its steps and uploaded the
+    artifact. So the branch may run workflows and may build the site; it may
+    not deploy one. One extra dispatch, and it turns a guess into a fact.
 - **The toolchain.** Built with stable 1.94 because libcosmic declares 1.93;
   the engine pins 1.90, so adopting this moves petros's toolchain for every
   Petros app. `rustfmt.toml` also asks for `imports_granularity`, which is
