@@ -1,74 +1,30 @@
-// The tab's title and the platform's media controller — the same two facts
-// twice: what is playing, and whether it is. Written here rather than in
-// Rust because both are the page's, the way the <audio> element is.
-//
-// The remote is a mailbox and not a callback. A handler runs on the
-// browser's stack, and the app's state lives behind iced's update loop, so
-// what a lock-screen button can do is leave a note; the tick that already
-// watches for the end of a track collects it. Last one wins: two presses
-// inside 50ms are one instruction, which is what a person pressing twice
-// meant anyway.
-let pending = "";
-let wired = false;
 
-function on(name, fn) {
-  // An action the browser does not know throws rather than being ignored,
-  // and the ones it knows differ per platform, so each is set on its own.
-  try {
-    navigator.mediaSession.setActionHandler(name, fn);
-  } catch (e) {
-    /* not on this platform */
+export async function cover(url, bound) {
+  let store = null;
+  try { store = await caches.open('harken-covers-v1'); } catch (e) { store = null; }
+  let response = store ? await store.match(url) : null;
+  if (!response) {
+    response = await fetch(url, { mode: 'cors' });
+    if (!response.ok) throw new Error('HTTP ' + response.status);
+    // Put the clone, read the original: a Response body is a stream and can be
+    // consumed exactly once, so reading it first leaves the cache nothing.
+    if (store) { try { await store.put(url, response.clone()); } catch (e) {} }
   }
-}
-
-function wire() {
-  if (wired) return;
-  wired = true;
-  on("play", () => { pending = "play"; });
-  on("pause", () => { pending = "pause"; });
-  on("stop", () => { pending = "pause"; });
-  on("nexttrack", () => { pending = "next"; });
-  on("previoustrack", () => { pending = "prev"; });
-  on("seekto", (d) => {
-    if (d && typeof d.seekTime === "number") pending = "seek:" + d.seekTime;
-  });
-}
-
-export function announce(title, artist, album, playing) {
-  // Windows draws the tab's title in its own window list, so the tab is the
-  // one place this has to be right even where there is no media session.
-  document.title = title ? (artist ? title + " — " + artist : title) : "harken";
-  if (!("mediaSession" in navigator)) return;
-  wire();
-  navigator.mediaSession.metadata = title
-    ? new MediaMetadata({ title: title, artist: artist, album: album })
-    : null;
-  navigator.mediaSession.playbackState = !title
-    ? "none"
-    : playing
-      ? "playing"
-      : "paused";
-}
-
-export function position(duration, at) {
-  if (!("mediaSession" in navigator)) return;
-  if (!navigator.mediaSession.setPositionState) return;
-  // The dictionary is validated: a position past the duration, or a duration
-  // that is not a number yet, throws rather than being clamped.
-  if (!(duration > 0) || !(at >= 0) || at > duration) return;
-  try {
-    navigator.mediaSession.setPositionState({
-      duration: duration,
-      position: at,
-      playbackRate: 1,
-    });
-  } catch (e) {
-    /* the element has not read enough of the stream to agree yet */
-  }
-}
-
-export function take_remote() {
-  const p = pending;
-  pending = "";
-  return p;
+  // Decoded from the bytes, never from the URL. A canvas that has drawn a
+  // cross-origin image is *tainted* and `getImageData` on it throws a
+  // SecurityError — but a blob we are already holding is same-origin whatever
+  // it came from, so going through the fetched bytes is what makes the pixels
+  // readable at all.
+  const source = await createImageBitmap(await response.blob());
+  const long = Math.max(source.width, source.height);
+  const scale = long > bound ? bound / long : 1;
+  const w = Math.max(1, Math.round(source.width * scale));
+  const h = Math.max(1, Math.round(source.height * scale));
+  const canvas = typeof OffscreenCanvas === 'function'
+    ? new OffscreenCanvas(w, h)
+    : Object.assign(document.createElement('canvas'), { width: w, height: h });
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  context.drawImage(source, 0, 0, w, h);
+  source.close();
+  return { width: w, height: h, data: context.getImageData(0, 0, w, h).data };
 }
