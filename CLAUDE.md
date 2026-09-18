@@ -3265,6 +3265,29 @@ pointer on its 50ms tick. Gliding *and then settling on the target* is what
 fixes it — the jiggle at the destination is what makes the last point the app
 saw the one that was asked for.
 
+### The window chrome is the desktop's, and a browser has none
+
+libcosmic draws client-side decorations — a header bar with the three window
+buttons, a rounded window corner, and the border padding inside it. On a
+desktop that is right and load-bearing: nothing else draws them, so without
+them there is no way to close or move the window. In a browser the window is
+the tab and its chrome is the browser's, so what libcosmic draws there is
+three buttons that promise something the page cannot do, above a canvas that
+should be filling the tab.
+
+`core.window.use_template = false` under `cfg(target_arch = "wasm32")`, in
+`init`. `use_template` rather than `show_headerbar` because the corner and the
+padding are chrome too, and because everything else the template carries — the
+nav bar, the context drawer, the dialogs — is something this app has never
+used, so dropping the lot costs nothing and `view()` is drawn raw. The ground
+under it is already harken's own, since the root container paints itself from
+`palette::of(theme)`.
+
+The same `cfg` as `Player::AUDIBLE`, the media session, the device picker and
+the splash, and for the same reason: it is a fact about there being no window,
+not a preference. `frosted-menu.png` is the browser after it — edge to edge,
+and four more rows for the space the header bar was taking.
+
 ### Still not done
 
 - **Run, in a browser.** `harken-on-libcosmic.png` is the whole client —

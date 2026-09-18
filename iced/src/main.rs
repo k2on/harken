@@ -6711,6 +6711,31 @@ impl cosmic::Application for App {
     fn init(core: Core, _flags: ()) -> (Self, Task<cosmic::Action<Message>>) {
         let (mut app, task) = App::boot();
         app.core = core;
+
+        // **In a browser the window is the tab, and its chrome is the
+        // browser's.** libcosmic draws client-side decorations — a header bar,
+        // the three window buttons, a rounded window corner and the border
+        // padding inside it — which is exactly right on a desktop, where
+        // nothing else is going to draw them, and is three dead buttons over a
+        // canvas here. Worse than dead: they are the one part of the picture
+        // that promises something the page cannot do.
+        //
+        // `use_template` is the switch rather than `show_headerbar` because
+        // the corner and the padding are chrome too, and because everything
+        // else the template adds — the nav bar, the context drawer, the
+        // dialogs — is something this app does not use, so dropping it costs
+        // nothing. `view()` is then drawn raw, and the ground under it is
+        // already harken's own: the root container paints itself from
+        // `palette::of(theme)` for the reason that rule exists.
+        //
+        // The same `cfg` as `Player::AUDIBLE`, the media session, the device
+        // picker and the splash, and for the same reason each of those has
+        // it: this is a fact about there being no window, not a preference.
+        #[cfg(target_arch = "wasm32")]
+        {
+            app.core.window.use_template = false;
+        }
+
         (app, task.map(cosmic::Action::App))
     }
 
