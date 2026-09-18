@@ -3299,8 +3299,23 @@ harken's four entries, and the gold cursor row blurring through the top of it.
 decides for itself when it is up — so the ⋯ button and `m` are no longer ways
 in, and a right click is the only one. The ⋯ column stays drawn because the
 geometry does: `dots_x` and `columns_in` divide the same width. The 200ms
-submenu dwell goes with it, and `Add to playlist` opens the centred picker
-rather than a panel beside the entry.
+submenu dwell goes with it, so a submenu opens the instant the pointer crosses
+its parent.
+
+**`Add to playlist` is a real submenu, and the ticks cost a cache.**
+`playlists_of` wants `&mut` at the store and `view` has `&self`, so the answer
+has to be in hand before the menu is built. It is filled from `ContextMenu`'s
+`on_open` rather than on every cursor move — hovering down two hundred rows
+would otherwise be two hundred queries for a menu nobody opened, which is the
+cost `SUBMENU_DWELL` existed to avoid, met again from the other side. Making a
+playlist is still the picker's: `create_playlist` and `add_to_playlist` are two
+entries and the first one's id is not known until it has been applied.
+
+**Their default width had to go.** `ItemWidth::Uniform(240)` wraps `Go to
+George Frideric Handel` onto a second line inside a row whose height is fixed,
+and clips it — which is the bug one section up, met again in their widget. The
+setter takes any number, so `RowMenu::width_for` still decides it and nothing
+truncates. `submenu.png` is the result.
 
 **And the old menu is kept rather than deleted**, at the owner's request: the
 `RowMenu` struct, `view_menu`, `menu_origin`, `submenu_origin`, the dwell and

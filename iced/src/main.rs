@@ -491,6 +491,11 @@ enum Message {
     OpenPicker,
     /// Move its cursor, by click rather than by `j`.
     PickerAt(usize),
+    /// libcosmic's menu just opened: read what the row under the cursor is
+    /// already on, so its submenu has ticks.
+    MenuOpened,
+    /// Toggle one of them, from that submenu.
+    MenuToggle(harken::Id<harken::tables::Playlist>, Id),
     /// The same, for the row menu.
     MenuAt(usize),
     /// Run the entry it is on.
@@ -1439,6 +1444,16 @@ struct App {
     picker: Option<Picker>,
     /// The three dots, or a right click.
     menu: Option<RowMenu>,
+    /// Which playlists the row under the cursor is on, for the submenu of
+    /// libcosmic's menu.
+    ///
+    /// **Cached because `view` cannot ask.** `playlists_of` wants `&mut` at
+    /// the store and a view has `&self`, so the answer has to be in hand
+    /// before the menu is built. Filled from `ContextMenu`'s `on_open` rather
+    /// than on every cursor move: hovering down two hundred rows would
+    /// otherwise be two hundred queries for a menu nobody opened, which is
+    /// the cost `SUBMENU_DWELL` used to exist to avoid.
+    menu_lists: Vec<(harken::Id<harken::tables::Playlist>, String, bool)>,
     /// How big the window is, so a menu opened near an edge can open the
     /// other way. Seeded with what `main` asks for and kept in step by
     /// `window::resize_events`.
@@ -1963,6 +1978,7 @@ impl App {
             help: false,
             picker: None,
             menu: None,
+            menu_lists: Vec::new(),
             nav: Nav::Push,
             routed: None,
             cursor: cosmic::iced::Point::ORIGIN,
@@ -3233,6 +3249,52 @@ impl App {
                 }
                 Ok(())
             }
+            Message::MenuOpened => {
+                let at = self.at(Pane::Tracks);
+                let Some(peer) = &mut self.peer else {
+                    return Task::none();
+                };
+                let Some(item) = peer.rows().get(at).cloned() else {
+                    return Task::none();
+                };
+                let mut store = peer.client.store();
+                let on: std::collections::BTreeSet<_> = harken::playlists_of(&mut store, item.id)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|p| p.id)
+                    .collect();
+                self.menu_lists = harken::playlists(&mut store)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|p| (p.id, p.name, on.contains(&p.id)))
+                    .collect();
+                drop(store);
+                Ok(())
+            }
+            Message::MenuToggle(list, media) => {
+                // Marked here rather than by re-reading, the way the picker
+                // does it: the answer is known and a query per tap is a query
+                // per tap.
+                let was = match self.menu_lists.iter_mut().find(|(id, _, _)| *id == list) {
+                    Some(row) => {
+                        row.2 = !row.2;
+                        !row.2
+                    }
+                    None => false,
+                };
+                let outcome = match &mut self.peer {
+                    Some(peer) => {
+                        let m = if was {
+                            mutators::remove_from_playlist(list, media)
+                        } else {
+                            mutators::add_to_playlist(list, media)
+                        };
+                        peer.client.mutate(m).map(|_| ()).map_err(|e| e.to_string())
+                    }
+                    None => Ok(()),
+                };
+                outcome
+            }
             Message::PickerActivate => {
                 // The last row makes a playlist; every other row toggles one.
                 let Some(picker) = &mut self.picker else {
@@ -3690,7 +3752,7 @@ impl App {
     ///
     /// `RowMenu::entries` is still the one definition of what is in it, so the
     /// entries did not move — only what draws them.
-    fn row_menu_trees(&self) -> Option<Vec<cosmic::widget::menu::Tree<Message>>> {
+    fn row_menu_trees(&self) -> Option<(Vec<cosmic::widget::menu::Tree<Message>>, u16)> {
         let peer = self.peer.as_ref()?;
         let item = peer.rows().get(self.at(Pane::Tracks))?;
 
@@ -3706,11 +3768,20 @@ impl App {
             width: 0.0,
         };
 
-        Some(
-            menu.entries()
+        let entries = menu.entries();
+        let width = RowMenu::width_for(&entries) as u16;
+
+        Some((
+            entries
                 .into_iter()
                 .map(|entry| {
-                    cosmic::widget::menu::Tree::from(Element::from(
+                    // The one entry that owns a submenu, asked the way the
+                    // chevron and the dwell used to ask it — `matches!` on the
+                    // message rather than a flag beside the label to keep in
+                    // step with it.
+                    let owns_submenu = matches!(entry.message, Message::OpenPicker);
+
+                    let row = Element::from(
                         cosmic::widget::menu::menu_button(vec![
                             icon::line(entry.glyph, false).into(),
                             cosmic::widget::Space::new()
@@ -3718,11 +3789,46 @@ impl App {
                                 .into(),
                             text(entry.label).into(),
                         ])
-                        .on_press(entry.message),
-                    ))
+                        .on_press_maybe((!owns_submenu).then_some(entry.message)),
+                    );
+
+                    if !owns_submenu {
+                        return cosmic::widget::menu::Tree::from(row);
+                    }
+
+                    // Every playlist, each ticked or not, and nothing else —
+                    // the question the sheet on the phone asks. Making one is
+                    // not here: `create_playlist` and `add_to_playlist` are
+                    // two entries and the first one's id is not known until it
+                    // has been applied, so that still belongs to the picker,
+                    // which `a` still opens.
+                    let children: Vec<cosmic::widget::menu::Tree<Message>> = self
+                        .menu_lists
+                        .iter()
+                        .map(|(list, name, on)| {
+                            cosmic::widget::menu::Tree::from(Element::from(
+                                cosmic::widget::menu::menu_button(vec![
+                                    match on {
+                                        true => Element::from(icon::tick(false)),
+                                        false => cosmic::widget::Space::new()
+                                            .width(Length::Fixed(icon::TRANSPORT))
+                                            .into(),
+                                    },
+                                    cosmic::widget::Space::new()
+                                        .width(Length::Fixed(ENTRY_GAP))
+                                        .into(),
+                                    text(name.clone()).into(),
+                                ])
+                                .on_press(Message::MenuToggle(*list, item.id)),
+                            ))
+                        })
+                        .collect();
+
+                    cosmic::widget::menu::Tree::with_children(row, children)
                 })
                 .collect(),
-        )
+            width,
+        ))
     }
 
     fn view_menu(menu: &RowMenu, focused: bool) -> Element<'_, Message> {
@@ -6629,7 +6735,16 @@ impl App {
         // opening, the placement and the dismissal, and on Wayland it can be a
         // real popup surface, which `pin` inside a `stack!` can never be.
         let base: Element<'_, Message> = match self.row_menu_trees() {
-            Some(trees) => cosmic::widget::context_menu(base, Some(trees)).into(),
+            Some((trees, width)) => cosmic::widget::context_menu(base, Some(trees))
+                // **Not their default 240.** At that width `Go to George
+                // Frideric Handel` wraps onto a second line inside a row whose
+                // height is fixed, and the second line is clipped — which is
+                // the bug this file already documents one section up, met
+                // again in their widget. `ItemWidth::Uniform` takes any
+                // number, so `RowMenu::width_for` still decides it.
+                .item_width(cosmic::widget::menu::ItemWidth::Uniform(width))
+                .on_open(Message::MenuOpened)
+                .into(),
             None => base.into(),
         };
 
