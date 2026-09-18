@@ -45,9 +45,10 @@ pub struct Playing {
 /// sees one happen.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Act {
-    /// Put this list on, from `at`, at this point. The socket turns it into
-    /// one `play_media` and the rest as `enqueue: add`, which is what leaves
-    /// the speaker's own next and previous working.
+    /// Put this list on, from `at`, at this point. The socket clears the
+    /// queue, turns it into one `play_media` with `enqueue: play` and the
+    /// rest as `enqueue: add`, which is what leaves the speaker's own next
+    /// and previous working.
     Start {
         entity: DeviceId,
         urls: Vec<String>,
@@ -696,16 +697,28 @@ pub mod ha {
                 position_ms,
                 playing,
             } => {
-                // The one it should be on replaces whatever was there, and the
-                // rest go after it — which is what leaves the speaker's own
-                // next and previous working, and the Sonos app with a queue in
-                // it. Previous walks back as far as the track you started
-                // from and no further; before that is harken's queue and not
-                // the speaker's, and asking for it is a fresh hand-off.
+                // The queue is cleared, the one it should be on goes in, and
+                // the rest go after it — which is what leaves the speaker's
+                // own next and previous working, and the Sonos app with a
+                // queue in it. Previous walks back as far as the track you
+                // started from and no further; before that is harken's queue
+                // and not the speaker's, and asking for it is a fresh
+                // hand-off.
+                //
+                // `play` rather than `replace`, because for a bare URL the
+                // Sonos integration reads `replace` as `play_uri` — a direct
+                // `SetAVTransportURI` that detaches the transport from the
+                // queue. The adds still land, so the speaker holds a queue it
+                // is not playing from: `NrTracks` is 1 against a `Q:0` of
+                // however many hand-offs have accumulated, and `media_next_track`
+                // has nowhere to go. It does not refuse, it blocks, until SoCo
+                // gives up at 9.5s and raises `SonosUpdateError`. And nothing
+                // cleared the queue, which is why it accumulated.
                 let Some(first) = urls.get(at) else {
                     return;
                 };
-                if !call(config, &entity, "play_media", Some(media(first, "replace"))) {
+                call(config, &entity, "clear_playlist", None);
+                if !call(config, &entity, "play_media", Some(media(first, "play"))) {
                     return;
                 }
                 for url in urls.iter().skip(at + 1).take(WINDOW) {
