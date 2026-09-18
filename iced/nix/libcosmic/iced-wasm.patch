@@ -1,8 +1,8 @@
 diff --git a/renderer/src/fallback.rs b/renderer/src/fallback.rs
-index 2a0bdea..feaa77e 100644
+index 2a0bdea..8efa354 100644
 --- a/renderer/src/fallback.rs
 +++ b/renderer/src/fallback.rs
-@@ -441,6 +441,29 @@ where
+@@ -441,6 +441,27 @@ where
  }
  
  #[cfg(feature = "wgpu-bare")]
@@ -17,14 +17,12 @@ index 2a0bdea..feaa77e 100644
 +        radius: [f32; 4],
 +        sigma: f32,
 +        tint: core::Color,
-+    ) {
++    ) -> bool {
 +        match self {
 +            Self::Primary(renderer) => {
-+                renderer.draw_blur(bounds, radius, sigma, tint);
++                renderer.draw_blur(bounds, radius, sigma, tint)
 +            }
-+            Self::Secondary(_) => {
-+                log::warn!("Blur is not supported with this renderer.");
-+            }
++            Self::Secondary(_) => false,
 +        }
 +    }
 +}
@@ -34,10 +32,10 @@ index 2a0bdea..feaa77e 100644
      A: iced_wgpu::primitive::Renderer,
 diff --git a/wgpu/src/blur.rs b/wgpu/src/blur.rs
 new file mode 100644
-index 0000000..5a68652
+index 0000000..2f4cc7f
 --- /dev/null
 +++ b/wgpu/src/blur.rs
-@@ -0,0 +1,579 @@
+@@ -0,0 +1,585 @@
 +//! A blur of whatever has already been drawn.
 +//!
 +//! This is frosted glass, done in the renderer rather than by a compositor. The
@@ -98,13 +96,19 @@ index 0000000..5a68652
 +    /// Drawn *under* everything else in the same layer, so the panel this is
 +    /// for should carry its border and its contents as usual and leave its
 +    /// background to this.
++    ///
++    /// **Answers whether it will actually happen**, because a caller that has
++    /// dropped its own background on the strength of this needs to know when
++    /// nothing took its place. A software renderer says `false`, and the
++    /// panel must then paint itself the ordinary opaque way — a panel with no
++    /// ground at all is see-through, which is worse than never having asked.
 +    fn draw_blur(
 +        &mut self,
 +        bounds: Rectangle,
 +        radius: [f32; 4],
 +        sigma: f32,
 +        tint: Color,
-+    );
++    ) -> bool;
 +}
 +
 +/// How much smaller the scratch textures are than the scene.
@@ -745,7 +749,7 @@ index d4a96ef..6806a1d 100644
              triangles: triangle::Batch::default(),
              primitives: primitive::Batch::default(),
 diff --git a/wgpu/src/lib.rs b/wgpu/src/lib.rs
-index 03a7204..abc8d89 100644
+index 03a7204..12edb84 100644
 --- a/wgpu/src/lib.rs
 +++ b/wgpu/src/lib.rs
 @@ -22,6 +22,7 @@
@@ -860,7 +864,7 @@ index 03a7204..abc8d89 100644
          debug::layers_rendered(|| {
              self.layers
                  .iter()
-@@ -765,6 +835,19 @@ impl core::Renderer for Renderer {
+@@ -765,6 +835,20 @@ impl core::Renderer for Renderer {
      }
  }
  
@@ -871,9 +875,10 @@ index 03a7204..abc8d89 100644
 +        radius: [f32; 4],
 +        sigma: f32,
 +        tint: Color,
-+    ) {
++    ) -> bool {
 +        let (layer, transformation) = self.layers.current_mut();
 +        layer.draw_blur(bounds, radius, sigma, tint, transformation);
++        true
 +    }
 +}
 +

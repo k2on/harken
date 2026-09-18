@@ -157,13 +157,35 @@ impl<Message> cosmic::iced::advanced::Widget<Message, cosmic::Theme, cosmic::Ren
         let palette = palette::of(theme);
         let ground = palette.background.weak.color;
 
-        blur::Renderer::draw_blur(
+        let frosted = blur::Renderer::draw_blur(
             renderer,
             layout.bounds(),
             self.radius,
             SIGMA,
             Color { a: TINT, ..ground },
         );
+
+        // **A panel whose ground did not get painted is see-through, which is
+        // worse than never having asked for glass.** `panel` drops its own
+        // background on the strength of this, so when there is no wgpu
+        // renderer behind us — the `fallback::Renderer`'s tiny-skia half, if
+        // wgpu ever fails to start — something has to put the ordinary opaque
+        // ground back.
+        if !frosted {
+            use cosmic::iced::advanced::Renderer as _;
+
+            renderer.fill_quad(
+                renderer::Quad {
+                    bounds: layout.bounds(),
+                    border: cosmic::iced::Border {
+                        radius: self.radius.into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                ground,
+            );
+        }
 
         self.content
             .as_widget()

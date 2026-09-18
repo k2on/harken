@@ -3240,6 +3240,23 @@ Six things it needed, each a decision:
   because the render loop holds the state by shared reference: `frame` is
   borrowed out of it for the length of the loop.
 
+**libcosmic's own menus frost too, from the same one call.** Their
+`context_menu` and the text context menu `selectable_text` opens — the
+Copy / Select All panel — both paint through `widget/menu/menu_inner.rs`, so
+one `crate::widget::menu::frost` before the panel's `fill_quad` does both.
+`frosted-their-menu.png` is that panel over the page title, with "209 tracks"
+smeared across its top edge and the gold playing row bleeding through the
+bottom. It is the same picture the compositor would paint on a COSMIC desktop,
+arrived at from the other end.
+
+**`draw_blur` answers whether it ran, and that is not a nicety.** A caller
+drops its own background on the strength of asking, so a caller that is not
+told when nothing took its place draws a panel with no ground at all — which
+is see-through, and worse than never having asked. The `fallback::Renderer`'s
+tiny-skia half says `false` and both callers paint the ordinary opaque way.
+Written the wrong way round first, in `frost.rs`, where it would only ever
+have shown up if wgpu failed to start.
+
 **The tint is not optional and it is not decoration.** `frost.rs` mixes the
 blurred copy towards `palette::of(theme).background.weak` by `TINT`, asked of
 the theme rather than written down, for the reason every other colour here is.

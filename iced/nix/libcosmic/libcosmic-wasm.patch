@@ -366,3 +366,82 @@ index c44700e..f98ec1c 100644
  type Plain = iced_core::text::paragraph::Plain<<Renderer as iced_core::text::Renderer>::Paragraph>;
  type Paragraph = <Renderer as iced_core::text::Renderer>::Paragraph;
  pub type Renderer = iced::Renderer;
+diff --git a/src/widget/menu.rs b/src/widget/menu.rs
+index 6ddb8f3..9863180 100644
+--- a/src/widget/menu.rs
++++ b/src/widget/menu.rs
+@@ -79,3 +79,45 @@ pub use crate::style::menu_bar::{Appearance, StyleSheet};
+ pub(crate) use menu_bar::{menu_roots_children, menu_roots_diff};
+ pub use menu_inner::{CloseCondition, ItemHeight, ItemWidth, PathHighlight};
+ pub(crate) use menu_inner::{Direction, Menu, init_root_menu};
++/// Frosted glass behind a menu panel, where the renderer can do it.
++///
++/// **The compositor's frosting and this are different mechanisms.** On Wayland
++/// a menu that is a real popup surface gets `ext-background-effect-v1` and the
++/// compositor blurs what is behind the surface. Everywhere else — X11, macOS,
++/// Windows, and a browser, where the whole program is one canvas — a menu is
++/// an ordinary overlay inside the app's own surface, and nothing outside the
++/// app is going to blur anything. What is behind it there is something this
++/// renderer drew a moment ago, so `iced_wgpu` reads it back. See `blur.rs`.
++///
++/// Answers `false` when there is no such renderer, and the caller must then
++/// paint its background the ordinary opaque way.
++pub(crate) fn frost(
++    _renderer: &mut crate::Renderer,
++    _bounds: iced::Rectangle,
++    _radius: [f32; 4],
++    _tint: iced::Color,
++) -> bool {
++    #[cfg(feature = "wgpu")]
++    {
++        // Wide enough that no letter behind the panel survives, which is the
++        // test that matters: a menu you can read the page through is worse
++        // than an opaque one.
++        const SIGMA: f32 = 18.0;
++        // …and carried most of the way to the menu's own ground, so it reads
++        // as a panel on a plane of its own rather than as a smear.
++        const TINT: f32 = 0.45;
++
++        iced_wgpu::blur::Renderer::draw_blur(
++            _renderer,
++            _bounds,
++            _radius,
++            SIGMA,
++            iced::Color {
++                a: TINT,
++                .._tint
++            },
++        )
++    }
++    #[cfg(not(feature = "wgpu"))]
++    false
++}
+diff --git a/src/widget/menu/menu_inner.rs b/src/widget/menu/menu_inner.rs
+index f01682b..6b24b7b 100644
+--- a/src/widget/menu/menu_inner.rs
++++ b/src/widget/menu/menu_inner.rs
+@@ -803,7 +803,23 @@ impl<'b, Message: Clone + 'static> Menu<'b, Message> {
+                                 shadow: Shadow::default(),
+                                 snap: true,
+                             };
+-                            let menu_color = styling.background;
++                            // Frosted, where the renderer can: the blur paints
++                            // the panel's ground itself, so the quad is left
++                            // with nothing but its border. Where it cannot,
++                            // `frost` says so and the ordinary fill stands —
++                            // a translucent panel over an unblurred page is
++                            // the one outcome worse than an opaque one.
++                            let frosted = crate::widget::menu::frost(
++                                r,
++                                menu_quad.bounds,
++                                styling.menu_border_radius,
++                                styling.background,
++                            );
++                            let menu_color = if frosted {
++                                crate::iced::Color::TRANSPARENT
++                            } else {
++                                styling.background
++                            };
+                             r.fill_quad(menu_quad, menu_color);
+                             // draw path hightlight
+                             if let (true, Some(active)) = (draw_path, ms.index)
