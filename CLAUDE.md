@@ -3282,6 +3282,35 @@ pointer on its 50ms tick. Gliding *and then settling on the target* is what
 fixes it — the jiggle at the destination is what makes the last point the app
 saw the one that was asked for.
 
+### The row menu is libcosmic's now, and the old one is kept beside it
+
+Right-clicking a track opens `cosmic::widget::context_menu`, wrapped once
+around the page rather than once per row: their widget opens itself on a right
+click anywhere in its content, and which row that was is a question this window
+already answers, since hovering moves the cursor in a content pane. Two hundred
+rows each carrying a menu widget would be two hundred overlays rebuilt every
+frame for the one that can be open.
+
+`RowMenu::entries` is untouched and still the one definition of what is in it —
+only what draws them moved. `frosted-menu.png` is the result: their panel,
+harken's four entries, and the gold cursor row blurring through the top of it.
+
+**What it cost, plainly.** Their `ContextMenu` has no programmatic open — it
+decides for itself when it is up — so the ⋯ button and `m` are no longer ways
+in, and a right click is the only one. The ⋯ column stays drawn because the
+geometry does: `dots_x` and `columns_in` divide the same width. The 200ms
+submenu dwell goes with it, and `Add to playlist` opens the centred picker
+rather than a panel beside the entry.
+
+**And the old menu is kept rather than deleted**, at the owner's request: the
+`RowMenu` struct, `view_menu`, `menu_origin`, `submenu_origin`, the dwell and
+all seven of their tests still compile and still pass. They are no longer
+reachable from the view, which is worth saying out loud because this file has a
+section about exactly that shape — `set_artwork` was correct, tested, recorded
+in `mutations.txt`, and could not run. **Seven passing tests over a menu nothing
+can open are not evidence of anything a user can reach.** They are there so the
+swap is one edit to undo, and they should go the day it is settled.
+
 ### The window chrome is the desktop's, and a browser has none
 
 libcosmic draws client-side decorations — a header bar with the three window

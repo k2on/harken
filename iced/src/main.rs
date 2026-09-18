@@ -2425,13 +2425,13 @@ impl App {
                         .as_ref()
                         .and_then(|p| p.rows().get(self.at(Pane::Tracks)))
                         .map(|i| i.id);
-                    match id {
-                        Some(id) => {
-                            self.cursor.y = Self::MENU_BY_KEY_Y;
-                            self.update(Message::RowMenu(id, Anchor::Dots))
-                        }
-                        None => Task::none(),
-                    }
+                    // Opened the menu below until libcosmic's took over, and
+                    // theirs cannot be opened from here — a `ContextMenu`
+                    // decides for itself when it is up. Kept rather than
+                    // deleted, with the rest of that menu, so the swap is one
+                    // edit to undo.
+                    let _ = id;
+                    Task::none()
                 }
                 // Where the sound is. A letter rather than a motion for the
                 // same reason `a` and `m` are: it asks a question about the
@@ -3679,6 +3679,52 @@ impl App {
     /// accent — the way a native menu leaves the parent entry marked rather
     /// than lit. Two accent-filled rows would be two answers to "where does
     /// the next key go".
+    /// The row menu, as libcosmic's own menu trees.
+    ///
+    /// **One `context_menu` around the page rather than one per row.** Their
+    /// widget opens itself on a right click anywhere in its content, and which
+    /// row that was is a question this window already answers: hovering moves
+    /// the cursor in a content pane, so the row under the pointer *is* the
+    /// cursor row. Two hundred rows each wrapping a menu widget would be two
+    /// hundred overlays rebuilt every frame for one that can be open.
+    ///
+    /// `RowMenu::entries` is still the one definition of what is in it, so the
+    /// entries did not move — only what draws them.
+    fn row_menu_trees(&self) -> Option<Vec<cosmic::widget::menu::Tree<Message>>> {
+        let peer = self.peer.as_ref()?;
+        let item = peer.rows().get(self.at(Pane::Tracks))?;
+
+        let menu = RowMenu {
+            media: item.id,
+            title: item.title.clone(),
+            album: peer.detail_of(item.id).album,
+            artist: item.creator.clone(),
+            origin: cosmic::iced::Point::new(0.0, 0.0),
+            at: 0,
+            dwell: 0,
+            offered: false,
+            width: 0.0,
+        };
+
+        Some(
+            menu.entries()
+                .into_iter()
+                .map(|entry| {
+                    cosmic::widget::menu::Tree::from(Element::from(
+                        cosmic::widget::menu::menu_button(vec![
+                            icon::line(entry.glyph, false).into(),
+                            cosmic::widget::Space::new()
+                                .width(Length::Fixed(ENTRY_GAP))
+                                .into(),
+                            text(entry.label).into(),
+                        ])
+                        .on_press(entry.message),
+                    ))
+                })
+                .collect(),
+        )
+    }
+
     fn view_menu(menu: &RowMenu, focused: bool) -> Element<'_, Message> {
         let rows =
             menu.entries()
@@ -4454,14 +4500,14 @@ impl App {
                             false,
                             true,
                         ))
-                        // The same menu a right click opens, for anyone who
-                        // does not know a right click opens one.
-                        .push(
-                            button(icon::more(on_cursor))
-                                .class(cosmic::theme::iced::Button::Text)
-                                .padding([0, 6])
-                                .on_press(Message::RowMenu(item.id, Anchor::Dots)),
-                        );
+                        // **Drawn, and no longer a way in.** It used to open
+                        // the menu below; libcosmic's `context_menu` owns that
+                        // now and has no programmatic open, so a right click
+                        // is the only way to ask. The column stays because the
+                        // geometry does — `dots_x` and `columns_in` divide the
+                        // same width — and because an empty column is cheaper
+                        // to keep than a layout to re-derive twice.
+                        .push(container(icon::more(on_cursor)).padding([0, 6]));
                     col.push(
                         // The background belongs to a container spanning the whole
                         // width, not to a button around the title: a stripe that
@@ -4472,8 +4518,7 @@ impl App {
                             },
                         ))
                         .on_enter(Message::HoverAt(i))
-                        .on_press(Message::PlayItem(item.id))
-                        .on_right_press(Message::RowMenu(item.id, Anchor::Pointer)),
+                        .on_press(Message::PlayItem(item.id)),
                     )
                 });
 
@@ -6579,6 +6624,15 @@ impl App {
 
         // Everything above the page is a layer of one stack, and the pointer
         // is tracked on the root so that `pin` below shares its origin.
+        // The row menu is libcosmic's `context_menu` now, so it is a wrapper
+        // around the page rather than a layer over it: their widget owns the
+        // opening, the placement and the dismissal, and on Wayland it can be a
+        // real popup surface, which `pin` inside a `stack!` can never be.
+        let base: Element<'_, Message> = match self.row_menu_trees() {
+            Some(trees) => cosmic::widget::context_menu(base, Some(trees)).into(),
+            None => base.into(),
+        };
+
         let mut layers = stack![mouse_area(base).on_move(Message::Hover)];
 
         if let Some(menu) = &self.menu {
