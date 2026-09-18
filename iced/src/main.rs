@@ -493,7 +493,7 @@ enum Message {
     PickerAt(usize),
     /// libcosmic's menu just opened: read what the row under the cursor is
     /// already on, so its submenu has ticks.
-    MenuOpened,
+    MenuOpened(Id),
     /// Toggle one of them, from that submenu.
     MenuToggle(harken::Id<harken::tables::Playlist>, Id),
     /// The same, for the row menu.
@@ -1454,6 +1454,8 @@ struct App {
     /// otherwise be two hundred queries for a menu nobody opened, which is
     /// the cost `SUBMENU_DWELL` used to exist to avoid.
     menu_lists: Vec<(harken::Id<harken::tables::Playlist>, String, bool)>,
+    /// …and which row they are for, because every row now carries a menu.
+    menu_lists_for: Option<Id>,
     /// How big the window is, so a menu opened near an edge can open the
     /// other way. Seeded with what `main` asks for and kept in step by
     /// `window::resize_events`.
@@ -1979,6 +1981,7 @@ impl App {
             picker: None,
             menu: None,
             menu_lists: Vec::new(),
+            menu_lists_for: None,
             nav: Nav::Push,
             routed: None,
             cursor: cosmic::iced::Point::ORIGIN,
@@ -3249,12 +3252,11 @@ impl App {
                 }
                 Ok(())
             }
-            Message::MenuOpened => {
-                let at = self.at(Pane::Tracks);
+            Message::MenuOpened(id) => {
                 let Some(peer) = &mut self.peer else {
                     return Task::none();
                 };
-                let Some(item) = peer.rows().get(at).cloned() else {
+                let Some(item) = peer.rows().iter().find(|i| i.id == id).cloned() else {
                     return Task::none();
                 };
                 let mut store = peer.client.store();
@@ -3268,6 +3270,7 @@ impl App {
                     .into_iter()
                     .map(|p| (p.id, p.name, on.contains(&p.id)))
                     .collect();
+                self.menu_lists_for = Some(id);
                 drop(store);
                 Ok(())
             }
@@ -3766,10 +3769,11 @@ impl App {
     /// What their larger text and padding costs over `ENTRY_CHAR`'s estimate.
     const MENU_SLACK: f32 = 56.0;
 
-    fn row_menu_trees(&self) -> Option<(Vec<cosmic::widget::menu::Tree<Message>>, u16)> {
-        let peer = self.peer.as_ref()?;
-        let item = peer.rows().get(self.at(Pane::Tracks))?;
-
+    fn row_menu_trees(
+        &self,
+        peer: &Peer,
+        item: &Item,
+    ) -> (Vec<cosmic::widget::menu::Tree<Message>>, u16) {
         let menu = RowMenu {
             media: item.id,
             title: item.title.clone(),
@@ -3782,6 +3786,13 @@ impl App {
             width: 0.0,
         };
 
+        // The ticks are for *this* row, and are only in hand once its own menu
+        // has opened. A row whose menu has never been opened shows the
+        // playlists with none ticked for one frame and the real answer on the
+        // next, which is the cost of `playlists_of` wanting `&mut` where a
+        // view has `&self`.
+        let mine = self.menu_lists_for == Some(item.id);
+
         let entries = menu.entries();
         // `width_for` counts characters against `ENTRY_CHAR`, which was
         // measured against this program's own 13pt menu rows. `menu_button`
@@ -3791,7 +3802,7 @@ impl App {
         // a clipped second line, which is the failure being fixed.
         let width = (RowMenu::width_for(&entries) + Self::MENU_SLACK) as u16;
 
-        Some((
+        (
             entries
                 .into_iter()
                 .map(|entry| {
@@ -3836,6 +3847,7 @@ impl App {
                     let children: Vec<cosmic::widget::menu::Tree<Message>> = self
                         .menu_lists
                         .iter()
+                        .filter(|_| mine)
                         .map(|(list, name, on)| {
                             cosmic::widget::menu::Tree::from(Element::from(
                                 cosmic::widget::menu::menu_button(vec![
@@ -3854,7 +3866,7 @@ impl App {
                                         .into(),
                                     text(name.clone()).into(),
                                 ])
-                                .on_press(Message::MenuToggle(*list, item.id)),
+                                .on_press(Message::MenuToggle(*list, menu.media)),
                             ))
                         })
                         .collect();
@@ -3863,7 +3875,7 @@ impl App {
                 })
                 .collect(),
             width,
-        ))
+        )
     }
 
     fn view_menu(menu: &RowMenu, focused: bool) -> Element<'_, Message> {
@@ -4523,29 +4535,6 @@ impl App {
     }
 
     fn view_list(&self, peer: &'_ Peer) -> Element<'_, Message> {
-        // **The menu belongs to the track list, not to the window.** Wrapping
-        // the page meant a right click on the sidebar, the play bar or the
-        // status line opened a menu about a track — a menu is *about* the
-        // thing under the pointer, and everywhere else there is no track to be
-        // about. One wrapper here rather than one per row: their widget opens
-        // itself on a right click anywhere in its content, and which row that
-        // was is the cursor, which hovering already moves.
-        let listed = self.view_list_inner(peer);
-        match self.row_menu_trees() {
-            Some((trees, width)) => cosmic::widget::context_menu(listed, Some(trees))
-                // **Not their default 240.** At that width `Go to Goldberg
-                // Variations, BWV 988` wraps onto a second line inside a row
-                // whose height is fixed, and the second line is clipped —
-                // which is the bug this file documents one section up, met
-                // again in their widget.
-                .item_width(cosmic::widget::menu::ItemWidth::Uniform(width))
-                .on_open(Message::MenuOpened)
-                .into(),
-            None => listed,
-        }
-    }
-
-    fn view_list_inner(&self, peer: &'_ Peer) -> Element<'_, Message> {
         let playing = self.player.track().map(|t| t.id);
         let sounding = self.player.is_playing();
         // Only drawn while this pane has the keyboard. A dimmed cursor here
@@ -4672,17 +4661,49 @@ impl App {
                         // same width — and because an empty column is cheaper
                         // to keep than a layout to re-derive twice.
                         .push(container(icon::more(on_cursor)).padding([0, 6]));
+                    // **The menu belongs to the row, not to the list and not
+                    // to the cursor.** Built from the cursor it was wrong the
+                    // moment a menu was already open: their overlay captures
+                    // the pointer outright, so moving to a second row never
+                    // reaches that row's `on_enter` and never reaches its
+                    // right press either, and the cursor stayed where it was —
+                    // so right-clicking a second row opened a menu about the
+                    // first. A row that carries its own menu cannot be wrong
+                    // about which row it is.
+                    let (trees, width) = self.row_menu_trees(peer, item);
+                    let id = item.id;
+
                     col.push(
-                        // The background belongs to a container spanning the whole
-                        // width, not to a button around the title: a stripe that
-                        // stops where the text does is not a row.
-                        mouse_area(container(line).width(Length::Fill).padding([3, 4]).style(
-                            move |theme: &cosmic::Theme| {
-                                row_style(theme, on_cursor, focused, i % 2 == 1)
-                            },
-                        ))
-                        .on_enter(Message::HoverAt(i))
-                        .on_press(Message::PlayItem(item.id)),
+                        cosmic::widget::context_menu(
+                            // The background belongs to a container spanning the whole
+                            // width, not to a button around the title: a stripe that
+                            // stops where the text does is not a row.
+                            mouse_area(container(line).width(Length::Fill).padding([3, 4]).style(
+                                move |theme: &cosmic::Theme| {
+                                    row_style(theme, on_cursor, focused, i % 2 == 1)
+                                },
+                            ))
+                            .on_enter(Message::HoverAt(i))
+                            // **The right press lands the cursor too.** The menu's
+                            // entries are built for the row the cursor is on, and
+                            // the cursor is moved by `on_enter` — which an open
+                            // menu's own overlay is above, so moving from one row
+                            // to another *while a menu is up* never reaches the
+                            // row underneath. Right-clicking a second row then
+                            // opened a menu still about the first. Landing it here
+                            // is the same rule the old menu had: opening a menu
+                            // moves the selection to what it is about.
+                            .on_right_press(Message::HoverAt(i))
+                            .on_press(Message::PlayItem(item.id)),
+                            Some(trees),
+                        )
+                        // **Not their default 240.** At that width `Go to
+                        // Goldberg Variations, BWV 988` wraps onto a second
+                        // line inside a row whose height is fixed, and the
+                        // second line is clipped — which is the bug this file
+                        // documents one section up, met again in their widget.
+                        .item_width(cosmic::widget::menu::ItemWidth::Uniform(width))
+                        .on_open(Message::MenuOpened(id)),
                     )
                 });
 
