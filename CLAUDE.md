@@ -1294,10 +1294,12 @@ every row is one line. Four things about it are load-bearing:
     from `width_for`: it fails with `"Go to Johann Sebastian Bach" is cut in a
     menu 198px wide`, which is the bug it was written for.
 
-    **Not verified on screen from here** — nothing in this container can open a
-    window. The arithmetic is tested and the estimate errs wide, so the thing
-    to look at is whether `ENTRY_CHAR` leaves a strip of empty panel on the
-    long entries.
+    **Verified on screen**, eventually: `iced/nix/libcosmic/row-menu.png` is
+    this menu open in a browser with `Go to Goldberg Variations, BWV 988`
+    drawn *whole*. It took porting the client to libcosmic to get a window
+    that could be screenshotted from here, which is a long way round — but the
+    rule this section is about is the one thing in the picture you can check
+    at a glance, and `ENTRY_CHAR` leaves no visible strip of empty panel.
   - **A chevron, not an ellipsis.** `Add to playlist` ends in `›` drawn at the
     right of the row, which is what a submenu looks like everywhere and the one
     thing `…` could not say: `Add to playlist…` and `Rename…` are the same
@@ -3119,8 +3121,28 @@ whole error set and looking up every target type *before* editing.
 
 ### Still not done
 
-- **Not run.** It compiles and the tests pass; nothing here can open a window,
-  and the wasm build has not been attempted against this tree.
+- **Run, in a browser.** `harken-on-libcosmic.png` is the whole client —
+  sidebar, table, zebra, the ⋯ column, the status line, the play bar — drawn
+  by Chromium over WebGL, with **harken's gold** on the cursor row rather than
+  COSMIC's blue, which is `palette::of` resolving through `cosmic::Theme`.
+  `row-menu.png` and `submenu.png` are the row menu and its playlist submenu,
+  and between them they show every rule the menu section above documents: the
+  entry drawn whole rather than cut, the chevron, the parent staying lit while
+  its submenu is up, the submenu level with that entry and lapping it by one
+  `PANEL_PADDING` so the highlight's edge touches it, and the submenu sized to
+  its own longest name with no header of its own.
+
+  The wasm is 19.5 MB release, 17.1 MB after wasm-bindgen and before
+  `wasm-opt` — against a megabyte or two for the iced build, which is the
+  size cost of the toolkit made concrete.
+
+  **The covers do not load here**, and that is this container rather than the
+  port: Chromium does not trust the agent proxy's CA, so every Wikimedia fetch
+  is `ERR_CERT_AUTHORITY_INVALID` and the derived squares stand in — which is
+  the documented fallback doing its job.
+
+  **Still not run natively**, and no window here can be opened without the
+  browser.
 - **`iced/nix/` is untouched**, so `nix build .#harken-iced` and the web
   derivation still describe the old dependency.
 - **The dependency is a path.** `Cargo.toml` points at a checkout carrying
