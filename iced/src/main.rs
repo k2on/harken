@@ -494,6 +494,14 @@ enum Message {
     /// libcosmic's menu just opened: read what the row under the cursor is
     /// already on, so its submenu has ticks.
     MenuOpened(Id),
+    /// …and closed, by any path, including the compositor dismissing it.
+    ///
+    /// **It carries the row, and that is not decoration.** Every row owns a
+    /// menu now, so right-clicking a second row opens that one *and* closes
+    /// the first — two messages, in an order nothing here chooses. A bare
+    /// `MenuClosed` let the first row's close undo the second row's open, and
+    /// the highlight came straight back.
+    MenuClosed(Id),
     /// Toggle one of them, from that submenu.
     MenuToggle(harken::Id<harken::tables::Playlist>, Id),
     /// The same, for the row menu.
@@ -1456,6 +1464,16 @@ struct App {
     menu_lists: Vec<(harken::Id<harken::tables::Playlist>, String, bool)>,
     /// …and which row they are for, because every row now carries a menu.
     menu_lists_for: Option<Id>,
+    /// Whether one of those menus is up.
+    ///
+    /// **So the cursor can stop being drawn while it is.** The table's
+    /// highlight is a *cursor* — only ever "where the next `j` goes" — and the
+    /// rule has always been that it is not drawn unless its pane has the
+    /// keyboard. libcosmic's menu takes the pointer outright and does not give
+    /// this window a way to move the cursor onto the row it was opened on, so
+    /// leaving the highlight up meant a menu about one row and a highlight on
+    /// another. A cursor that cannot be made truthful should not be drawn.
+    menu_open: Option<Id>,
     /// How big the window is, so a menu opened near an edge can open the
     /// other way. Seeded with what `main` asks for and kept in step by
     /// `window::resize_events`.
@@ -1982,6 +2000,7 @@ impl App {
             menu: None,
             menu_lists: Vec::new(),
             menu_lists_for: None,
+            menu_open: None,
             nav: Nav::Push,
             routed: None,
             cursor: cosmic::iced::Point::ORIGIN,
@@ -3252,7 +3271,15 @@ impl App {
                 }
                 Ok(())
             }
+            Message::MenuClosed(id) => {
+                // Only if it is still the one that is up.
+                if self.menu_open == Some(id) {
+                    self.menu_open = None;
+                }
+                Ok(())
+            }
             Message::MenuOpened(id) => {
+                self.menu_open = Some(id);
                 let Some(peer) = &mut self.peer else {
                     return Task::none();
                 };
@@ -4542,7 +4569,12 @@ impl App {
         // different from it, which is a worse thing to show than nothing: the
         // sidebar's highlight is a *selection* and has to persist, but this
         // one only ever means "where the next `j` goes".
-        let focused = self.has_keys(Pane::Tracks);
+        //
+        // …and not while one of the rows' menus is up, for the same reason:
+        // libcosmic's menu gives this window no way to move the cursor onto
+        // the row it was opened on, so drawing it would mean a menu about one
+        // row and a highlight on another. See `menu_open`.
+        let focused = self.has_keys(Pane::Tracks) && self.menu_open.is_none();
         let cursor = focused.then_some(self.at(Pane::Tracks));
 
         // An album is the one place a track number means anything. Everywhere
@@ -4703,7 +4735,8 @@ impl App {
                         // second line is clipped — which is the bug this file
                         // documents one section up, met again in their widget.
                         .item_width(cosmic::widget::menu::ItemWidth::Uniform(width))
-                        .on_open(Message::MenuOpened(id)),
+                        .on_open(Message::MenuOpened(id))
+                        .on_close(Message::MenuClosed(id)),
                     )
                 });
 

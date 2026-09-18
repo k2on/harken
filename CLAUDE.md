@@ -3284,12 +3284,29 @@ saw the one that was asked for.
 
 ### The row menu is libcosmic's now, and the old one is kept beside it
 
-Right-clicking a track opens `cosmic::widget::context_menu`, wrapped once
-around the page rather than once per row: their widget opens itself on a right
-click anywhere in its content, and which row that was is a question this window
-already answers, since hovering moves the cursor in a content pane. Two hundred
-rows each carrying a menu widget would be two hundred overlays rebuilt every
-frame for the one that can be open.
+Right-clicking a track opens `cosmic::widget::context_menu`, and **every row
+carries its own**, which is not where this started and is the only thing that
+works. Their widget opens itself on a right click anywhere in its content, so
+one wrapped around the page was the obvious build — which row it was about
+being a question this window already answers, since hovering moves the cursor
+in a content pane. That was wrong twice:
+
+- **Around the page, a right click anywhere opened a track's menu** — over the
+  sidebar, over the play bar, over the empty space under the last row. A menu
+  about "the row under the cursor" is a menu about a row even when the pointer
+  is nowhere near one.
+- **Moved onto the list, it was one menu behind.** Their overlay captures the
+  pointer while it is up, so a right click on a second row reaches the widget
+  and *not* the row: neither `on_enter` nor `on_right_press` fires, the cursor
+  never moves, and the menu that opens is about the row you had before. With
+  no Escape in between — which is exactly how a person uses a context menu —
+  the entries named the wrong track.
+
+Two hundred rows each carrying a menu widget is the cost, and it is not the one
+it looks like: a `ContextMenu` builds its overlay when it opens, so what a
+frame pays for is a wrapper per row rather than two hundred panels. Against
+that, the row is no longer *inferred* — `on_open(Message::MenuOpened(id))`
+carries it — so the menu cannot be about a row the pointer never reached.
 
 `RowMenu::entries` is untouched and still the one definition of what is in it —
 only what draws them moved. `frosted-menu.png` is the result: their panel,
@@ -3316,6 +3333,27 @@ George Frideric Handel` onto a second line inside a row whose height is fixed,
 and clips it — which is the bug one section up, met again in their widget. The
 setter takes any number, so `RowMenu::width_for` still decides it and nothing
 truncates. `submenu.png` is the result.
+
+**The cursor's highlight goes while a menu is up.** Their menu has no way to
+tell this window "put the cursor on the row I opened on" — the pointer is
+theirs from the moment it opens — so the gold row stays wherever hovering last
+left it while a menu about a different row is on screen. That is the same
+complaint the old menu answered by *landing* the cursor on the row it was about
+(macOS selects an unselected row on a right click, for this reason), and
+landing is not available here. Drawing nothing is: `menu_open` is `Some(id)`
+between `on_open` and `on_close`, and the track list's `focused` is false while
+it is. One highlight, or none — never one about the wrong row.
+
+**`MenuClosed` carries the row, and that is not decoration.** Right-clicking a
+second row opens that one *and* closes the first, as two messages in an order
+this window does not choose — so a bare `MenuClosed` let the first row's close
+undo the second row's open, and the highlight came straight back under the new
+menu. It clears `menu_open` only when it is still the menu that is up.
+
+Measured rather than looked at, which is what this file keeps asking for: the
+row's pixels are `#E9BB45` hovering, `#1E1E1E` with a menu up, and `#E9BB45`
+again after `<Esc>` — so the gate is not a one-way door, which is the half a
+screenshot of the menu alone would not have shown.
 
 **And the old menu is kept rather than deleted**, at the owner's request: the
 `RowMenu` struct, `view_menu`, `menu_origin`, `submenu_origin`, the dwell and
