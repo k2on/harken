@@ -3155,40 +3155,84 @@ section about already: the rAF sampler measuring a page nobody was served.
 Same shape, and the same fix — read what the program believes before theorising
 about what it does.
 
-### Frosted glass is the compositor's, and that decides where it can work
+### Frosted glass is the compositor's, and a popup is what can have it
 
-libcosmic's own code is unambiguous:
+**This was written wrong the first time, and the wrong half was the mechanism.**
+It said the toolkit's entire contribution is "going transparent", from:
 
 ```rust
 let new_blur = self.blur_enabled && self.app.core().frosted(theme.cosmic());
 theme.transparent = new_blur;
 ```
 
-The toolkit's entire contribution is **going transparent**. `blur_enabled`
-arrives as `wayland::Event::BlurEnabled`, under `#[cfg(wayland_platform)]`,
-and the blur itself is cosmic-comp's, behind the surface. There is no blur in
-the renderer to borrow instead: the fork's shaders are quad, image, triangle,
-blit, color and vertex, and the only `blur` in any of them is a quad's *shadow*
-radius.
+That is real and it is not the mechanism. libcosmic binds
+**`ext-background-effect-v1`** and asks the compositor for blur *per surface,
+over a region*:
 
-So it blurs **on Wayland, with a frosted theme, and nowhere else** — not on
-X11, where that arm is compiled out, and not in a browser, where the whole
-program is one canvas with nothing behind it.
+```rust
+let blur_surface = blur_manager.blur(s, &self.queue_handle);
+blur_surface.set_blur_region(Some(&region));
+```
 
-**And on a COSMIC desktop it would still not frost this menu.** The row menu
-here is `pin` inside a `stack!` — it lives *inside the app's one surface* — so
-compositor blur would blur what is behind the **window**: the wallpaper, other
-windows. You would see a blurred desktop through the menu, not a blurred track
-list. Frosting the menu against the list needs the menu to be its own surface,
-which is what libcosmic's `context_menu` can be (`window_id`,
-`on_surface_action`) and what `pin` can never be.
+`iced::window::enable_blur(id)` is the public command. Three things follow
+that the first reading missed:
 
-`translucent-not-frosted.png` is the half that does port, and it is the
-argument against doing it: the panel at 72% over the track list, with "George
-Frideric Handel" perfectly legible straight through it. **Transparency without
-blur is not frosted glass, it is a menu you can read the page through**, and
-it is worse than opaque. Reverted; the screenshot is kept because it is the
-reason.
+- **A popup is a first-class blur target.** The surface lookup tries
+  `self.popmgr.popup_id(id)` *before* layer surfaces, lock surfaces and
+  subsurfaces; `Core::blur` has an explicit `SurfaceIdWrapper::Popup(_)` arm;
+  and `auto_blur` defaults to `Auto::System | Auto::Popup | Auto::Window`, so
+  it is on unless somebody turns it off.
+- **Which means the blur is of the right thing.** An xdg_popup sits over its
+  parent, so what the compositor blurs behind it is the parent window's own
+  content — the track list. The earlier note said you would get a blurred
+  wallpaper through the menu. That is true of `pin` inside a `stack!`, which
+  is one surface, and false of a popup, which is not. The *condition* named
+  there was correct ("frosting the menu against the list needs the menu to be
+  its own surface"); what was wrong was treating libcosmic's `context_menu`
+  as not meeting it. `create_popup` publishes real `SctkPopupSettings`.
+- **It is still Wayland only**, still needs a compositor advertising
+  `Capability::Blur` — checked explicitly, with
+  `log::error!("Blur effect is not supported.")` when the manager is absent —
+  and still needs the theme's `frosted_windows`.
+
+**And the trap is that the widget has two implementations behind one name.**
+`ContextMenu::overlay` returns the popup path only when Wayland *and*
+`window_id != Id::NONE` *and* `on_surface_action.is_some()`; otherwise it
+falls through and draws an ordinary in-window overlay. The defaults are
+`Id::RESERVED` and `None`, so a `context_menu` built the obvious way is an
+overlay — which looks identical on screen and can never frost. Two builder
+calls are the whole difference.
+
+**A browser gets the overlay path**, because that `cfg` is compiled out — so
+`context_menu` on wasm is exactly what `pin` already is, with nothing behind
+the canvas. Getting it there means blurring **in the renderer**: an offscreen
+pass sampled under the panel. Half the machinery exists — `iced_wgpu`'s
+`color.rs` builds an offscreen blit pipeline and `offscreen_blit.wgsl` is
+beside the others — and the blur does not: the only `blur` in any shader is
+`shadow_blur_radius`, a smoothstep on a quad's drop shadow. That is a new
+shader and pipeline in the fork, and it is also what would buy frosting on
+X11, macOS and Windows, where the Wayland arm is compiled out. The renderer
+route is the portable one; the compositor route is the COSMIC-only one.
+
+`translucent-not-frosted.png` is what the *transparency* alone looks like,
+and it is the argument for not shipping that half on its own: the panel at
+72% over the track list, with "George Frideric Handel" perfectly legible
+straight through it. **Transparency without blur is not frosted glass, it is
+a menu you can read the page through**, and it is worse than opaque.
+Reverted; the screenshot is kept because it is the reason.
+
+The switching cost is unchanged, and is still the argument against:
+`ItemWidth` is `Uniform(u16) | Static(u16)` with no fit-to-content, so the
+middle ellipsis through `Go to Goldberg …ions, BWV 988` comes back, and there
+is no dwell.
+
+**How the first version got it wrong is the reusable part.** `grep blur` over
+`src/` found `blur_enabled`, `frosted` and `theme.transparent`, which is a
+complete and coherent story — so the search stopped. The protocol binding is
+in `iced/winit/`, a *different crate* in the vendored fork, and nothing in
+the first set of hits points at it. **A coherent answer is not evidence the
+search was wide enough**, and a vendored dependency's own subtree is exactly
+where the second half of a mechanism hides.
 
 ### Still not done
 
