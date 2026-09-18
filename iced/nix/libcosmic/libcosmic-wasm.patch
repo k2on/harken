@@ -347,6 +347,12 @@ index 0000000..1aa6dae
 +) -> iced_futures::Subscription<crate::Update<T>> {
 +    iced_futures::Subscription::none()
 +}
+diff --git a/iced b/iced
+--- a/iced
++++ b/iced
+@@ -1 +1 @@
+-Subproject commit 5fc4372d877ad2ca6eaab1c0ca5e424f238b9258
++Subproject commit 5fc4372d877ad2ca6eaab1c0ca5e424f238b9258-dirty
 diff --git a/src/lib.rs b/src/lib.rs
 index c44700e..f98ec1c 100644
 --- a/src/lib.rs
@@ -395,6 +401,117 @@ index f361512..135f97b 100644
              appearance.icon_color = icon;
              appearance.text_color = text;
              corner_radii = &cosmic.corner_radii.radius_s;
+diff --git a/src/widget/context_menu.rs b/src/widget/context_menu.rs
+index a2f0c8e..4142105 100644
+--- a/src/widget/context_menu.rs
++++ b/src/widget/context_menu.rs
+@@ -34,6 +34,8 @@ pub fn context_menu<'a, Message: 'static + Clone>(
+         close_on_escape: true,
+         window_id: window::Id::RESERVED,
+         item_width: ItemWidth::Uniform(240),
++        item_height: ItemHeight::Dynamic(40),
++        open_at: None,
+         on_open: None,
+         on_close: None,
+         on_surface_action: None,
+@@ -58,6 +60,19 @@ pub struct ContextMenu<'a, Message> {
+     pub close_on_escape: bool,
+     /// Width of each menu item, and therefore of the menu.
+     pub item_width: ItemWidth,
++    /// Height of each menu item.
++    pub item_height: ItemHeight,
++    /// Open the menu at this point, because the application asked rather than
++    /// the pointer.
++    ///
++    /// A context menu normally decides for itself when it is up, which leaves
++    /// an application no way to offer the same menu from a button or a key —
++    /// and a menu reachable by exactly one gesture is a menu people do not
++    /// find. This is the other way in: set it to `Some(point)` and the menu
++    /// opens there on the next event, whatever the pointer is doing and
++    /// wherever it is. `on_open` fires as it does for a right click, so the
++    /// application has somewhere to put it back to `None`.
++    pub open_at: Option<Point>,
+     /// Emitted when the menu opens, so the application can mark what was right-clicked.
+     #[setters(strip_option)]
+     pub on_open: Option<Message>,
+@@ -137,7 +152,7 @@ impl<Message: Clone + 'static> ContextMenu<'_, Message> {
+                     click_inside: true,
+                 },
+                 item_width: self.item_width,
+-                item_height: ItemHeight::Dynamic(40),
++                item_height: self.item_height,
+                 bar_bounds: bounds,
+                 main_offset: -(bounds.height as i32),
+                 cross_offset: 0,
+@@ -256,6 +271,7 @@ impl<Message: 'static + Clone> Widget<Message, crate::Theme, crate::Renderer>
+             fingers_pressed: Default::default(),
+             menu_bar_state: Default::default(),
+             reported_open: false,
++            requested: None,
+         })
+     }
+ 
+@@ -401,6 +417,35 @@ impl<Message: 'static + Clone> Widget<Message, crate::Theme, crate::Renderer>
+         let state = tree.state.downcast_mut::<LocalState>();
+         let bounds = layout.bounds();
+ 
++        // The application asked for this menu — from a button, or from a key,
++        // where there is no right click to open it and no pointer to open it
++        // under. Acted on the *edge*, because the request stands until the
++        // application sees `on_open` and clears it, and a menu that reopened
++        // on every event in between could never be closed.
++        if self.open_at != state.requested {
++            state.requested = self.open_at;
++            if let Some(at) = self.open_at
++                && self.context_menu.is_some()
++                && !state.menu_bar_state.inner.with_data(|d| d.open)
++            {
++                let at_cursor = mouse::Cursor::Available(at);
++                state.context_cursor = at;
++                state.menu_bar_state.inner.with_data_mut(|d| {
++                    d.open = true;
++                    d.view_cursor = at_cursor;
++                    d.anchor = Some(at);
++                });
++                #[cfg(wayland_platform)]
++                if matches!(WINDOWING_SYSTEM.get(), Some(WindowingSystem::Wayland)) {
++                    let state = tree.state.downcast_mut::<LocalState>();
++                    self.create_popup(layout, at_cursor, renderer, shell, viewport, state);
++                }
++                shell.request_redraw();
++                self.report_open_state(tree.state.downcast_mut::<LocalState>(), shell);
++                return;
++            }
++        }
++
+         // The compositor dismissed our popup: nothing else tells this state about it.
+         #[cfg(wayland_platform)]
+         if let iced::Event::PlatformSpecific(iced::event::PlatformSpecific::Wayland(
+@@ -488,6 +533,7 @@ impl<Message: 'static + Clone> Widget<Message, crate::Theme, crate::Renderer>
+                 state.menu_bar_state.inner.with_data_mut(|state| {
+                     state.open = true;
+                     state.view_cursor = cursor;
++                    state.anchor = None;
+                 });
+                 #[cfg(wayland_platform)]
+                 if matches!(WINDOWING_SYSTEM.get(), Some(WindowingSystem::Wayland)) {
+@@ -581,7 +627,7 @@ impl<Message: 'static + Clone> Widget<Message, crate::Theme, crate::Renderer>
+                 click_inside: true,
+             },
+             item_width: self.item_width,
+-            item_height: ItemHeight::Dynamic(40),
++            item_height: self.item_height,
+             bar_bounds: bounds,
+             main_offset: 0,
+             cross_offset: 0,
+@@ -646,4 +692,7 @@ pub struct LocalState {
+     fingers_pressed: HashSet<Finger>,
+     menu_bar_state: MenuBarState,
+     reported_open: bool,
++    /// The last `open_at` acted on, so a standing request opens the menu once
++    /// rather than on every event for as long as it is set.
++    requested: Option<Point>,
+ }
 diff --git a/src/widget/menu.rs b/src/widget/menu.rs
 index 6ddb8f3..2d02ead 100644
 --- a/src/widget/menu.rs
@@ -445,8 +562,44 @@ index 6ddb8f3..2d02ead 100644
 +    #[cfg(not(feature = "wgpu"))]
 +    false
 +}
+diff --git a/src/widget/menu/menu_bar.rs b/src/widget/menu/menu_bar.rs
+index 8872781..e09be46 100644
+--- a/src/widget/menu/menu_bar.rs
++++ b/src/widget/menu/menu_bar.rs
+@@ -48,6 +48,15 @@ pub(crate) struct MenuBarStateInner {
+     pub(crate) bar_pressed: bool,
+     pub(crate) view_cursor: Cursor,
+     pub(crate) open: bool,
++    /// Where a menu opened *without* a pointer should behave as though the
++    /// pointer were.
++    ///
++    /// A menu bar's root opens because the pointer is over it, and
++    /// `init_root_menu` says exactly that: it refuses unless the cursor is
++    /// inside the root's bounds. A context menu asked for by a button or a key
++    /// has no pointer over anything — so the request names the point instead,
++    /// and that is what the root is opened against.
++    pub(crate) anchor: Option<iced_core::Point>,
+     pub(crate) active_root: Vec<usize>,
+     pub(crate) horizontal_direction: Direction,
+     pub(crate) vertical_direction: Direction,
+@@ -66,6 +75,7 @@ impl MenuBarStateInner {
+ 
+     pub(crate) fn reset(&mut self) {
+         self.open = false;
++        self.anchor = None;
+         self.active_root = Vec::new();
+         self.menu_states.clear();
+     }
+@@ -77,6 +87,7 @@ impl Default for MenuBarStateInner {
+             pressed: false,
+             view_cursor: Cursor::Available([-0.5, -0.5].into()),
+             open: false,
++            anchor: None,
+             active_root: Vec::new(),
+             horizontal_direction: Direction::Positive,
+             vertical_direction: Direction::Positive,
 diff --git a/src/widget/menu/menu_inner.rs b/src/widget/menu/menu_inner.rs
-index f01682b..6b24b7b 100644
+index f01682b..b0b19aa 100644
 --- a/src/widget/menu/menu_inner.rs
 +++ b/src/widget/menu/menu_inner.rs
 @@ -803,7 +803,23 @@ impl<'b, Message: Clone + 'static> Menu<'b, Message> {
@@ -474,3 +627,146 @@ index f01682b..6b24b7b 100644
                              r.fill_quad(menu_quad, menu_color);
                              // draw path hightlight
                              if let (true, Some(active)) = (draw_path, ms.index)
+@@ -1191,6 +1207,13 @@ pub(crate) fn init_root_menu<Message: Clone>(
+     main_offset: f32,
+ ) {
+     menu.tree.inner.with_data_mut(|state| {
++        // A menu the application asked for has no pointer over its root, and
++        // every test below is about the pointer — so the request's own point
++        // stands in for one. Without this the menu is `open` and draws
++        // nothing, which is the hardest of the three states to read.
++        let overlay_cursor = state
++            .anchor
++            .map_or(overlay_cursor, |at| at - overlay_offset);
+         if !(state.menu_states.get(menu.depth).is_none()
+             && (!menu.is_overlay || bar_bounds.contains(overlay_cursor)))
+             || menu.depth > 0
+diff --git a/src/widget/menu/menu_tree.rs b/src/widget/menu/menu_tree.rs
+index 3694375..4e9b876 100644
+--- a/src/widget/menu/menu_tree.rs
++++ b/src/widget/menu/menu_tree.rs
+@@ -178,6 +178,15 @@ pub enum MenuItem<A: MenuAction, L: Into<Cow<'static, str>>> {
+     CheckBox(L, Option<icon::Handle>, bool, A),
+     /// Represents a folder menu item.
+     Folder(L, Vec<MenuItem<A, L>>),
++    /// A folder with a leading icon slot, so it lines up with the entries
++    /// around it.
++    ///
++    /// `Folder` reserves no icon column, which is right in a menu of plain
++    /// labels and wrong the moment any sibling has an icon: the folder's label
++    /// then starts where everybody else's icon is, and a menu of four entries
++    /// reads as two different lists. Pass [`IconSlot::Reserved`] to align it
++    /// with no drawing of its own.
++    FolderIcon(L, IconSlot, Vec<MenuItem<A, L>>),
+     /// Represents a divider between menu items.
+     Divider,
+     /// A menu entry with every option available; see [`Entry`].
+@@ -357,6 +366,68 @@ fn entry_tree<
+     MenuTree::from(Element::from(button))
+ }
+ 
++fn folder_tree<
++    A: MenuAction<Message = Message>,
++    L: Into<Cow<'static, str>> + 'static,
++    Message: 'static + std::clone::Clone,
++>(
++    label: L,
++    icon: IconSlot,
++    children: Vec<MenuItem<A, L>>,
++    key_binds: &HashMap<KeyBind, A>,
++) -> MenuTree<Message> {
++    let spacing = crate::theme::spacing();
++    let l: Cow<'static, str> = label.into();
++    let mut items: Vec<crate::Element<'static, Message>> = Vec::with_capacity(5);
++
++    // The same column `entry_tree` draws, for the same reason: what a row *is*
++    // must not be decided by whether it happens to have a drawing.
++    match icon {
++        IconSlot::Icon(icon) => {
++            items.push(widget::icon::icon(icon).size(14).into());
++            items.push(widget::space::horizontal().width(spacing.space_xxs).into());
++        }
++        IconSlot::Reserved => {
++            items.push(
++                widget::space::horizontal()
++                    .width(Length::Fixed(14.0))
++                    .into(),
++            );
++            items.push(widget::space::horizontal().width(spacing.space_xxs).into());
++        }
++        IconSlot::None => {}
++    }
++
++    items.push(
++        widget::text(l)
++            .ellipsize(iced_core::text::Ellipsize::Middle(
++                iced_core::text::EllipsizeHeightLimit::Lines(1),
++            ))
++            .into(),
++    );
++    items.push(widget::space::horizontal().into());
++    items.push(
++        widget::icon::from_name("pan-end-symbolic")
++            .size(16)
++            .icon()
++            .into(),
++    );
++
++    MenuTree::<Message>::with_children(
++        RcElementWrapper::new(crate::Element::from(menu_button::<'static, _>(items).class(
++            // Menu folders have no on_press so they take on the disabled style by default
++            if children.is_empty() {
++                // This will make the folder use the disabled style if it has no children
++                theme::Button::MenuItem
++            } else {
++                // This will make the folder use the enabled style if it has children
++                theme::Button::MenuFolder
++            },
++        ))),
++        menu_items(key_binds, children),
++    )
++}
++
+ /// Create a list of menu items from a vector of `MenuItem`.
+ ///
+ /// The `MenuItem` can be either an action or a separator.
+@@ -414,35 +485,10 @@ pub fn menu_items<
+                     trees.push(entry_tree(entry, key_binds, key_class.clone()));
+                 }
+                 MenuItem::Folder(label, children) => {
+-                    let l: Cow<'static, str> = label.into();
+-
+-                    trees.push(MenuTree::<Message>::with_children(
+-                        RcElementWrapper::new(crate::Element::from(
+-                            menu_button::<'static, _>(vec![
+-                                widget::text(l.clone())
+-                                    .ellipsize(iced_core::text::Ellipsize::Middle(
+-                                        iced_core::text::EllipsizeHeightLimit::Lines(1),
+-                                    ))
+-                                    .into(),
+-                                widget::space::horizontal().into(),
+-                                widget::icon::from_name("pan-end-symbolic")
+-                                    .size(16)
+-                                    .icon()
+-                                    .into(),
+-                            ])
+-                            .class(
+-                                // Menu folders have no on_press so they take on the disabled style by default
+-                                if children.is_empty() {
+-                                    // This will make the folder use the disabled style if it has no children
+-                                    theme::Button::MenuItem
+-                                } else {
+-                                    // This will make the folder use the enabled style if it has children
+-                                    theme::Button::MenuFolder
+-                                },
+-                            ),
+-                        )),
+-                        menu_items(key_binds, children),
+-                    ));
++                    trees.push(folder_tree(label, IconSlot::None, children, key_binds));
++                }
++                MenuItem::FolderIcon(label, icon, children) => {
++                    trees.push(folder_tree(label, icon, children, key_binds));
+                 }
+                 MenuItem::Divider => {
+                     if i != size - 1 {

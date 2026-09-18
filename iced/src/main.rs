@@ -415,9 +415,17 @@ enum Focus {
 enum Anchor {
     /// A right click: the corner goes on the pointer.
     Pointer,
-    /// The row's ⋯, or `m`: the menu's right edge lines up with that column,
-    /// so it hangs off the button wherever along the row you clicked.
+    /// The row's ⋯: the menu's right edge lines up with that column, so it
+    /// hangs off the button wherever along the row you clicked.
     Dots,
+    /// `m`: the same column, and `MENU_BY_KEY_Y` down.
+    ///
+    /// **A key has no pointer, and that is the whole difference.** The ⋯ takes
+    /// how far down from wherever the mouse was when it was pressed, which is
+    /// the row. By key there is nothing to ask: the list scrolls, so a row's
+    /// place in the window is not something this side knows without laying the
+    /// table out, and laying it out is what happens *after* `view`.
+    Key,
 }
 
 /// Where a track's bytes are.
@@ -502,6 +510,21 @@ enum Message {
     /// `MenuClosed` let the first row's close undo the second row's open, and
     /// the highlight came straight back.
     MenuClosed(Id),
+    /// Open libcosmic's menu on a row, from the ⋯ or from `m`.
+    ///
+    /// Separate from `RowMenu`, which fills the *kept* menu: they are two
+    /// menus and only one of them is drawn.
+    AskMenu(Id, Anchor),
+    /// Run the `n`th of `RowMenu::entries` for the row whose menu is open.
+    ///
+    /// **An index rather than the entry's own message**, because libcosmic's
+    /// menu is built from a `menu::Action`, which is `Copy` — and `Go to Water
+    /// Music` carries a `String`. Resolving it against `RowMenu::entries` is
+    /// not a second definition of the menu, it is the same one `<Enter>`
+    /// always used: the old menu ran `entries()[at]` too.
+    MenuRun(usize),
+    /// …and tick the `n`th of `menu_lists`, from the submenu.
+    MenuTick(usize),
     /// Toggle one of them, from that submenu.
     MenuToggle(harken::Id<harken::tables::Playlist>, Id),
     /// The same, for the row menu.
@@ -693,6 +716,37 @@ impl RowMenu {
             }
         }
         out
+    }
+}
+
+/// What one of libcosmic's menu entries does, as something `Copy`.
+///
+/// **Their `menu::Action` is `Copy + Eq` and a `Message` here is neither** —
+/// `Go to Water Music` carries a `String`, and `Select(Source::Album(..))`
+/// cannot be made `Copy` without making `Source` one. So an entry names a
+/// *position* and `update` resolves it against `RowMenu::entries` for whatever
+/// row's menu is open.
+///
+/// That is not a second definition of the menu. It is the one the keyboard
+/// already used: `<Enter>` in the old menu ran `entries()[at]`, for the same
+/// reason — the panel is drawn from that list, so an index into it is as
+/// specific as the entry itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MenuAct {
+    /// The `n`th of `RowMenu::entries`.
+    Run(usize),
+    /// The `n`th of `App::menu_lists`, in the playlist submenu.
+    Tick(usize),
+}
+
+impl cosmic::widget::menu::Action for MenuAct {
+    type Message = Message;
+
+    fn message(&self) -> Message {
+        match self {
+            MenuAct::Run(n) => Message::MenuRun(*n),
+            MenuAct::Tick(n) => Message::MenuTick(*n),
+        }
     }
 }
 
@@ -1464,6 +1518,14 @@ struct App {
     menu_lists: Vec<(harken::Id<harken::tables::Playlist>, String, bool)>,
     /// …and which row they are for, because every row now carries a menu.
     menu_lists_for: Option<Id>,
+    /// A menu the *application* asked for — the ⋯ or `m` — and where.
+    ///
+    /// Their `ContextMenu` opens itself on a right click and offers no way in
+    /// from anywhere else, which left this window with one gesture for a menu
+    /// that has always had three. `open_at` is the way in (the patch under
+    /// `iced/nix/libcosmic/`): set it, the menu opens there on the next event
+    /// and answers with `on_open`, which is where this is cleared.
+    menu_request: Option<(Id, cosmic::iced::Point)>,
     /// Whether one of those menus is up.
     ///
     /// **So the cursor can stop being drawn while it is.** The table's
@@ -2001,6 +2063,7 @@ impl App {
             menu_lists: Vec::new(),
             menu_lists_for: None,
             menu_open: None,
+            menu_request: None,
             nav: Nav::Push,
             routed: None,
             cursor: cosmic::iced::Point::ORIGIN,
@@ -2463,13 +2526,10 @@ impl App {
                         .as_ref()
                         .and_then(|p| p.rows().get(self.at(Pane::Tracks)))
                         .map(|i| i.id);
-                    // Opened the menu below until libcosmic's took over, and
-                    // theirs cannot be opened from here — a `ContextMenu`
-                    // decides for itself when it is up. Kept rather than
-                    // deleted, with the rest of that menu, so the swap is one
-                    // edit to undo.
-                    let _ = id;
-                    Task::none()
+                    match id {
+                        Some(id) => self.update(Message::AskMenu(id, Anchor::Key)),
+                        None => Task::none(),
+                    }
                 }
                 // Where the sound is. A letter rather than a motion for the
                 // same reason `a` and `m` are: it asks a question about the
@@ -3214,41 +3274,89 @@ impl App {
                     self.pane = Pane::Tracks;
                     self.cursors[Pane::Tracks as usize] = row;
                 }
-                if let Some(peer) = &self.peer {
-                    if let Some(item) = peer.rows().iter().find(|i| i.id == id) {
-                        let album = peer.detail_of(id).album;
-                        let artist = item.creator.clone();
-                        // Built, then asked what it holds, then placed — in
-                        // that order, because how many entries it has decides
-                        // how tall it is and their longest decides how wide,
-                        // and both are what `menu_origin` needs to know which
-                        // way it has room to open. `entries` is the one
-                        // definition of what is in it; counting them a second
-                        // time here as `2 + album + artist` was a second one.
-                        let mut menu = RowMenu {
-                            media: id,
-                            title: item.title.clone(),
-                            album,
-                            artist,
-                            origin: cosmic::iced::Point::new(0.0, 0.0),
-                            at: 0,
-                            dwell: 0,
-                            offered: false,
-                            width: 0.0,
-                        };
-                        let entries = menu.entries();
-                        menu.width = RowMenu::width_for(&entries);
-                        menu.origin = Self::menu_origin(
-                            self.cursor,
-                            self.window,
-                            entries.len(),
-                            anchor,
-                            menu.width,
-                        );
-                        self.menu = Some(menu);
-                    }
-                }
+                let Some(mut menu) = self.row_menu(id) else {
+                    return Task::none();
+                };
+                // Built, then asked what it holds, then placed — in that
+                // order, because how many entries it has decides how tall it
+                // is and their longest decides how wide, and both are what
+                // `menu_origin` needs to know which way it has room to open.
+                // `entries` is the one definition of what is in it; counting
+                // them a second time here as `2 + album + artist` was a
+                // second one.
+                let entries = menu.entries();
+                menu.origin =
+                    Self::menu_origin(self.cursor, self.window, entries.len(), anchor, menu.width);
+                self.menu = Some(menu);
                 Ok(())
+            }
+            // **The ask, which is not `RowMenu`.** That one fills the kept
+            // menu and is what its seven tests drive; this one asks
+            // libcosmic's, which is the menu on screen. Two messages because
+            // they are two menus, and the day the kept one goes this is the
+            // one that stays.
+            Message::AskMenu(id, anchor) => {
+                // The cursor moves to what the menu is about, before the menu
+                // takes the keyboard off it — the same rule a right click
+                // follows through `HoverAt`.
+                let row = self
+                    .peer
+                    .as_ref()
+                    .and_then(|p| p.rows().iter().position(|i| i.id == id));
+                if let Some(row) = row {
+                    self.pane = Pane::Tracks;
+                    self.cursors[Pane::Tracks as usize] = row;
+                }
+                let Some(menu) = self.row_menu(id) else {
+                    return Task::none();
+                };
+                // **Their menu is asked for at a point, not placed.**
+                // `menu_origin` is this program's own arithmetic against
+                // `pin`, which clips; libcosmic's `Menu` does its own fitting
+                // from wherever it is anchored, so all it wants is the corner.
+                // How far across is still the `Anchor`'s rule, because that
+                // rule is about which gesture opened it rather than about who
+                // draws it.
+                // **Their menu hangs its *right* edge off an anchor right of
+                // the window's middle**, which `init_root_menu` decides from
+                // the anchor's own x — so what it wants is the ⋯ column, not
+                // the menu's left edge. `dots_x` of a zero-width menu is
+                // exactly that column: where the list ends, which is where the
+                // button is. Passing the menu's width subtracted it twice and
+                // the panel came out a menu's width too far left.
+                let right = Self::dots_x(self.window, 0.0);
+                let at = match anchor {
+                    Anchor::Pointer => self.cursor,
+                    Anchor::Dots => cosmic::iced::Point::new(right, self.cursor.y),
+                    Anchor::Key => cosmic::iced::Point::new(right, Self::MENU_BY_KEY_Y),
+                };
+                self.menu_request = Some((id, at));
+                Ok(())
+            }
+            // The menu is the *row's*, so what an entry does is resolved
+            // against that row rather than carried in the message. See
+            // `MenuRun`.
+            Message::MenuRun(n) => {
+                let Some(id) = self.menu_open else {
+                    return Task::none();
+                };
+                let Some(message) = self
+                    .row_menu(id)
+                    .and_then(|menu| menu.entries().into_iter().nth(n))
+                    .map(|entry| entry.message)
+                else {
+                    return Task::none();
+                };
+                return self.update(message);
+            }
+            Message::MenuTick(n) => {
+                let Some(id) = self.menu_open else {
+                    return Task::none();
+                };
+                let Some(list) = self.menu_lists.get(n).map(|(list, _, _)| *list) else {
+                    return Task::none();
+                };
+                return self.update(Message::MenuToggle(list, id));
             }
             Message::OpenPicker => return self.open_picker(),
             Message::ClosePicker => {
@@ -3280,6 +3388,9 @@ impl App {
             }
             Message::MenuOpened(id) => {
                 self.menu_open = Some(id);
+                // It is up; the ask is spent. Left standing it would reopen
+                // the menu the moment the first one closed.
+                self.menu_request = None;
                 let Some(peer) = &mut self.peer else {
                     return Task::none();
                 };
@@ -3658,7 +3769,7 @@ impl App {
     ) -> cosmic::iced::Point {
         let x = match anchor {
             Anchor::Pointer => cursor.x,
-            Anchor::Dots => Self::dots_x(window, width),
+            Anchor::Dots | Anchor::Key => Self::dots_x(window, width),
         };
         Self::fit(
             cosmic::iced::Point::new(x, cursor.y),
@@ -3796,15 +3907,19 @@ impl App {
     /// What their larger text and padding costs over `ENTRY_CHAR`'s estimate.
     const MENU_SLACK: f32 = 56.0;
 
-    fn row_menu_trees(
-        &self,
-        peer: &Peer,
-        item: &Item,
-    ) -> (Vec<cosmic::widget::menu::Tree<Message>>, u16) {
-        let menu = RowMenu {
-            media: item.id,
+    /// The menu for one row, built once and read by three.
+    ///
+    /// `update` resolves `MenuRun` against it, `row_menu_trees` draws it, and
+    /// the kept `view_menu` places it — so what is *in* a row's menu has one
+    /// answer wherever it is asked, which is the whole point of
+    /// `RowMenu::entries`.
+    fn row_menu(&self, id: Id) -> Option<RowMenu> {
+        let peer = self.peer.as_ref()?;
+        let item = peer.rows().iter().find(|i| i.id == id)?;
+        let mut menu = RowMenu {
+            media: id,
             title: item.title.clone(),
-            album: peer.detail_of(item.id).album,
+            album: peer.detail_of(id).album,
             artist: item.creator.clone(),
             origin: cosmic::iced::Point::new(0.0, 0.0),
             at: 0,
@@ -3812,6 +3927,36 @@ impl App {
             offered: false,
             width: 0.0,
         };
+        menu.width = RowMenu::width_for(&menu.entries());
+        Some(menu)
+    }
+
+    /// …and the same menu as libcosmic's, drawn by libcosmic.
+    ///
+    /// **Built from their own entry vocabulary rather than from rows of our
+    /// own.** `menu::items` over `MenuItem` is what every COSMIC application's
+    /// menus are made of, and it already holds every rule the menu section of
+    /// CLAUDE.md spent a year arriving at: a leading icon column that is there
+    /// whether or not there is an icon (`reserve_icon`), a check column drawn
+    /// in the accent (`checked`), a `Folder` with their chevron on it, and a
+    /// `Divider` between groups. Hand-building `menu_button` rows meant every
+    /// one of those was a number picked here against a row height picked
+    /// there — which is how the ticks came out the wrong size and the parent
+    /// entry came out looking disabled.
+    fn row_menu_trees(&self, item: &Item) -> (Vec<cosmic::widget::menu::Tree<Message>>, u16) {
+        use cosmic::widget::menu::{Entry as MenuEntry, Item as MenuItem};
+
+        let Some(menu) = self.row_menu(item.id) else {
+            return (Vec::new(), Self::MENU_MIN_WIDTH as u16);
+        };
+        let entries = menu.entries();
+        // `width_for` counts characters against `ENTRY_CHAR`, which was
+        // measured against this program's own 13pt rows. A cosmic menu entry
+        // is taller, has its own padding and carries an icon column, so the
+        // same count comes out short and the longest entry ellipsizes —
+        // which is the bug this file has a section about, met inside their
+        // widget. Erring wide costs a strip of empty panel.
+        let width = (menu.width + Self::MENU_SLACK) as u16;
 
         // The ticks are for *this* row, and are only in hand once its own menu
         // has opened. A row whose menu has never been opened shows the
@@ -3820,87 +3965,56 @@ impl App {
         // view has `&self`.
         let mine = self.menu_lists_for == Some(item.id);
 
-        let entries = menu.entries();
-        // `width_for` counts characters against `ENTRY_CHAR`, which was
-        // measured against this program's own 13pt menu rows. `menu_button`
-        // draws at the toolkit's default size in a taller row with its own
-        // padding, so the same count comes out short and the longest entry
-        // wraps. Erring wide costs a strip of empty panel; erring narrow costs
-        // a clipped second line, which is the failure being fixed.
-        let width = (RowMenu::width_for(&entries) + Self::MENU_SLACK) as u16;
+        let mut items: Vec<MenuItem<MenuAct, String>> = Vec::with_capacity(entries.len() + 1);
+        for (n, entry) in entries.iter().enumerate() {
+            // The one entry that owns a submenu, asked the way the chevron and
+            // the dwell used to ask it — `matches!` on the message rather than
+            // a flag beside the label to keep in step with it.
+            if matches!(entry.message, Message::OpenPicker) {
+                // Every playlist, each ticked or not, and nothing else — the
+                // question the sheet on the phone asks. Making one is not
+                // here: `create_playlist` and `add_to_playlist` are two
+                // entries and the first one's id is not known until it has
+                // been applied, so that still belongs to the picker, which `a`
+                // still opens.
+                items.push(MenuItem::FolderIcon(
+                    entry.label.clone(),
+                    cosmic::widget::menu::IconSlot::Icon(
+                        cosmic::widget::icon::from_svg_bytes(entry.glyph).symbolic(true),
+                    ),
+                    self.menu_lists
+                        .iter()
+                        .enumerate()
+                        .filter(|_| mine)
+                        .map(|(i, (_, name, on))| {
+                            MenuItem::Entry(
+                                MenuEntry::new(name.clone(), MenuAct::Tick(i)).checked(*on),
+                            )
+                        })
+                        .collect(),
+                ));
+                continue;
+            }
+            items.push(MenuItem::Entry(
+                MenuEntry::new(entry.label.clone(), MenuAct::Run(n))
+                    .icon(cosmic::widget::icon::from_svg_bytes(entry.glyph).symbolic(true)),
+            ));
+            // A rule between what this does *to* the track and where it goes
+            // *from* it. `Play` and `Add to playlist` act on the row; the two
+            // `Go to` entries leave it, and they are the only entries in this
+            // menu that are not about the track at all.
+            if matches!(entry.message, Message::OpenPicker) || n + 1 == entries.len() {
+                continue;
+            }
+            if matches!(entries[n + 1].message, Message::Select(_))
+                && !matches!(entry.message, Message::Select(_))
+            {
+                items.push(MenuItem::Divider);
+            }
+        }
 
         (
-            entries
-                .into_iter()
-                .map(|entry| {
-                    // The one entry that owns a submenu, asked the way the
-                    // chevron and the dwell used to ask it — `matches!` on the
-                    // message rather than a flag beside the label to keep in
-                    // step with it.
-                    let owns_submenu = matches!(entry.message, Message::OpenPicker);
-
-                    let row = Element::from(
-                        cosmic::widget::menu::menu_button(vec![
-                            icon::line(entry.glyph, false)
-                                .width(Length::Fixed(Self::MENU_GLYPH))
-                                .height(Length::Fixed(Self::MENU_GLYPH))
-                                .into(),
-                            cosmic::widget::Space::new()
-                                .width(Length::Fixed(ENTRY_GAP))
-                                .into(),
-                            text(entry.label).into(),
-                        ])
-                        // **`Swallow` rather than nothing**, because a
-                        // `menu_button` with no `on_press` is drawn *disabled*
-                        // — and an entry that opens a submenu is not disabled,
-                        // it simply has nothing to do when pressed. It read as
-                        // greyed-out and broken, which is what it looks like.
-                        .on_press(match owns_submenu {
-                            true => Message::Swallow,
-                            false => entry.message,
-                        }),
-                    );
-
-                    if !owns_submenu {
-                        return cosmic::widget::menu::Tree::from(row);
-                    }
-
-                    // Every playlist, each ticked or not, and nothing else —
-                    // the question the sheet on the phone asks. Making one is
-                    // not here: `create_playlist` and `add_to_playlist` are
-                    // two entries and the first one's id is not known until it
-                    // has been applied, so that still belongs to the picker,
-                    // which `a` still opens.
-                    let children: Vec<cosmic::widget::menu::Tree<Message>> = self
-                        .menu_lists
-                        .iter()
-                        .filter(|_| mine)
-                        .map(|(list, name, on)| {
-                            cosmic::widget::menu::Tree::from(Element::from(
-                                cosmic::widget::menu::menu_button(vec![
-                                    match on {
-                                        true => Element::from(
-                                            icon::tick(false)
-                                                .width(Length::Fixed(Self::MENU_GLYPH))
-                                                .height(Length::Fixed(Self::MENU_GLYPH)),
-                                        ),
-                                        false => cosmic::widget::Space::new()
-                                            .width(Length::Fixed(Self::MENU_GLYPH))
-                                            .into(),
-                                    },
-                                    cosmic::widget::Space::new()
-                                        .width(Length::Fixed(ENTRY_GAP))
-                                        .into(),
-                                    text(name.clone()).into(),
-                                ])
-                                .on_press(Message::MenuToggle(*list, menu.media)),
-                            ))
-                        })
-                        .collect();
-
-                    cosmic::widget::menu::Tree::with_children(row, children)
-                })
-                .collect(),
+            cosmic::widget::menu::items(&std::collections::HashMap::new(), items),
             width,
         )
     }
@@ -4686,13 +4800,16 @@ impl App {
                             true,
                         ))
                         // **Drawn, and no longer a way in.** It used to open
-                        // the menu below; libcosmic's `context_menu` owns that
-                        // now and has no programmatic open, so a right click
-                        // is the only way to ask. The column stays because the
-                        // geometry does — `dots_x` and `columns_in` divide the
-                        // same width — and because an empty column is cheaper
-                        // to keep than a layout to re-derive twice.
-                        .push(container(icon::more(on_cursor)).padding([0, 6]));
+                        // the menu, which is what it is for: a menu belonging
+                        // to a control opens *at* the control, so this one
+                        // hangs off the ⋯ wherever along the row you pressed
+                        // it. `dots_x` and `columns_in` divide the same width,
+                        // so where it opens and where the button is are the
+                        // same arithmetic.
+                        .push(
+                            mouse_area(container(icon::more(on_cursor)).padding([0, 6]))
+                                .on_press(Message::AskMenu(item.id, Anchor::Dots)),
+                        );
                     // **The menu belongs to the row, not to the list and not
                     // to the cursor.** Built from the cursor it was wrong the
                     // moment a menu was already open: their overlay captures
@@ -4702,7 +4819,7 @@ impl App {
                     // so right-clicking a second row opened a menu about the
                     // first. A row that carries its own menu cannot be wrong
                     // about which row it is.
-                    let (trees, width) = self.row_menu_trees(peer, item);
+                    let (trees, width) = self.row_menu_trees(item);
                     let id = item.id;
 
                     col.push(
@@ -4735,6 +4852,16 @@ impl App {
                         // second line is clipped — which is the bug this file
                         // documents one section up, met again in their widget.
                         .item_width(cosmic::widget::menu::ItemWidth::Uniform(width))
+                        // **The other two ways in.** Their widget opens itself
+                        // on a right click and nothing else, so the ⋯ and `m`
+                        // reach it through `open_at` — the patch under
+                        // `iced/nix/libcosmic/`. Exactly one row's is `Some`,
+                        // which is what keeps the menu about the row that was
+                        // asked for rather than the one under the pointer.
+                        .open_at(
+                            self.menu_request
+                                .and_then(|(want, at)| (want == id).then_some(at)),
+                        )
                         .on_open(Message::MenuOpened(id))
                         .on_close(Message::MenuClosed(id)),
                     )
@@ -6955,6 +7082,49 @@ impl App {
     }
 }
 
+/// Hand cosmic's own widgets harken's accent.
+///
+/// **Everything this program draws itself already asks `palette::of`**,
+/// which is what makes the gold the one colour in the window that is
+/// ours. What that rule could never reach is a widget libcosmic draws from
+/// *its* theme — and the row menu is now one: the tick beside a playlist
+/// is `object-select-symbolic` in `accent_text_color()`, which on a stock
+/// COSMIC theme is blue. One blue glyph in a gold app is exactly the thing
+/// `branding/` exists to prevent, and tinting it at the call site would be
+/// a colour written down in a client, which is the other half of the same
+/// rule.
+///
+/// So the accent is set on the *theme*, once, and every cosmic widget that
+/// asks for one gets harken's. The dark and light golds are different
+/// colours — `onAccent` has to be legible on each — so which is built is
+/// the system's own preference, read the way `palette::of` reads it.
+///
+/// The cost, plainly: this pins the theme at boot, so a desktop that
+/// switches between light and dark while the program is running keeps the
+/// one it started in until it is restarted. Nothing here can observe that
+/// switch — iced resolves the preference internally and hands it only to
+/// style closures, which is the same limitation `palette::of` is written
+/// around.
+fn tint() -> Task<cosmic::Action<Message>> {
+    // Asked through `palette::of` rather than by reaching into the
+    // generated table, because that file is written by `branding/nix` and
+    // checked against what nix would write — a second entry point added
+    // here would fail `nix flake check` on a file nobody typed.
+    let preference = cosmic::theme::system_preference();
+    let dark = preference.theme_type.is_dark();
+    let gold = palette::of(&preference).primary.base.color;
+    let builder = match dark {
+        true => cosmic::cosmic_theme::ThemeBuilder::dark(),
+        false => cosmic::cosmic_theme::ThemeBuilder::light(),
+    };
+    let theme = builder
+        .accent(cosmic::cosmic_theme::palette::Srgb::new(
+            gold.r, gold.g, gold.b,
+        ))
+        .build();
+    cosmic::command::set_theme(cosmic::Theme::custom(std::sync::Arc::new(theme)))
+}
+
 impl cosmic::Application for App {
     type Executor = cosmic::executor::Default;
     type Flags = ();
@@ -7000,7 +7170,7 @@ impl cosmic::Application for App {
             app.core.window.use_template = false;
         }
 
-        (app, task.map(cosmic::Action::App))
+        (app, Task::batch([task.map(cosmic::Action::App), tint()]))
     }
 
     /// Do the thing, then make the address bar agree with what is on screen.

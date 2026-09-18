@@ -3312,12 +3312,45 @@ carries it — so the menu cannot be about a row the pointer never reached.
 only what draws them moved. `frosted-menu.png` is the result: their panel,
 harken's four entries, and the gold cursor row blurring through the top of it.
 
-**What it cost, plainly.** Their `ContextMenu` has no programmatic open — it
-decides for itself when it is up — so the ⋯ button and `m` are no longer ways
-in, and a right click is the only one. The ⋯ column stays drawn because the
-geometry does: `dots_x` and `columns_in` divide the same width. The 200ms
-submenu dwell goes with it, so a submenu opens the instant the pointer crosses
-its parent.
+**All three ways in are back, and one of them needed a patch.** Their
+`ContextMenu` opens itself on a right click and offers nothing else, which left
+this window with one gesture for a menu that has always had three — and a menu
+reachable by exactly one gesture is a menu people do not find. `open_at:
+Option<Point>` is the way in: set it and the menu opens there on the next
+event, whatever the pointer is doing and wherever it is; `on_open` fires as it
+does for a right click, which is where `menu_request` is cleared. Exactly one
+row's is `Some`, which is what keeps the menu about the row that was asked for
+rather than the one under the pointer.
+
+**It needed a second patch, and finding that out cost a round.** With
+`open_at` alone the menu went `open` and drew *nothing*, which is the hardest
+of the three states to read — not closed, not broken, just absent.
+`init_root_menu` refuses unless `bar_bounds.contains(overlay_cursor)`: a menu
+bar's root opens because the pointer is over it, and every test in that
+function is about the pointer. A right click is by definition under its own
+anchor, so the 1×1 rect contains it; a button or a key is not. `MenuBarState`
+carries an `anchor: Option<Point>` now — the request's own point, standing in
+for a pointer that is somewhere else or nowhere — and it is cleared the moment
+a right click opens the menu, so from then on the pointer drives it.
+
+**The `Anchor` is unchanged and `menu_origin` is not used.** How far across is
+still AppKit's two rules, because they are about which gesture opened the menu
+rather than about who draws it: a right click puts the corner on the pointer,
+the ⋯ lines the menu's right edge up with its own column, and `m` takes the ⋯'s
+column at `MENU_BY_KEY_Y` because by key there is no pointer to take a height
+from. What *is* gone is the placing: `menu_origin` is this program's arithmetic
+against `pin`, which clips, and libcosmic's `Menu` fits itself from wherever it
+is anchored. So all it wants is the point.
+
+**And the point it wants is the ⋯ column, not the menu's left edge.** Their
+`init_root_menu` hangs a menu's *right* edge off an anchor right of the
+window's middle, so passing `dots_x(window, width)` — which already subtracts
+the width — subtracted it twice and the panel came out a menu's width too far
+left. `dots_x(window, 0.0)` is that column: where the list ends, which is where
+the button is.
+
+The 200ms submenu dwell is still gone, so a submenu opens the instant the
+pointer crosses its parent.
 
 **`Add to playlist` is a real submenu, and the ticks cost a cache.**
 `playlists_of` wants `&mut` at the store and `view` has `&self`, so the answer
@@ -3333,6 +3366,51 @@ George Frideric Handel` onto a second line inside a row whose height is fixed,
 and clips it — which is the bug one section up, met again in their widget. The
 setter takes any number, so `RowMenu::width_for` still decides it and nothing
 truncates. `submenu.png` is the result.
+
+### …and it is drawn from their vocabulary, not from rows of our own
+
+`menu::items` over `MenuItem` is what every COSMIC application's menus are made
+of, and it already holds every rule the section above spent a year arriving at:
+a leading icon column that is there whether or not there is an icon
+(`reserve_icon`), a check column drawn in the accent (`checked`), a `Folder`
+with their chevron on it, and a `Divider` between groups. Hand-building
+`menu_button` rows meant every one of those was a number picked here against a
+row height picked there — which is how the ticks came out the wrong size and
+the parent entry came out looking disabled. Four things it took:
+
+- **An index, because their action is `Copy` and a `Message` is not.**
+  `menu::Action` requires `Copy + Eq`, and `Go to Water Music` carries a
+  `String`. So `MenuAct::Run(n)` names a *position* and `update` resolves it
+  against `RowMenu::entries` for whatever row's menu is open. That is not a
+  second definition of the menu: it is the one the keyboard already used, since
+  `<Enter>` in the old menu ran `entries()[at]` for the same reason.
+  `App::row_menu` is the one constructor the three readers share.
+- **A folder that reserves the icon column**, which theirs does not. `Folder`
+  draws a bare label, which is right in a menu of plain labels and wrong the
+  moment any sibling has an icon: `Add to playlist` started where everybody
+  else's glyph was, and four entries read as two different lists. It is the
+  old menu's own rule — *what a row is must not be decided by what happens to
+  be in it* — so `MenuItem::FolderIcon` takes an `IconSlot` and the folder body
+  is one helper shared with `Folder`.
+- **A divider between acting on the track and leaving it.** `Play` and `Add to
+  playlist` are about the row; the two `Go to` entries are the only ones in the
+  menu that are not. Asked as "the next entry is a `Select` and this one is
+  not", so an entry added later falls on the right side of it without anybody
+  choosing an index.
+- **The accent, set on the theme rather than at the call site.** Their tick is
+  `object-select-symbolic` in `accent_text_color()`, which on a stock COSMIC
+  theme is **blue** — one blue glyph in a gold app, and exactly what
+  `branding/` exists to prevent. Tinting it where it is drawn would be a colour
+  written down in a client, which is the other half of the same rule, so `tint`
+  hands cosmic's own theme harken's accent once at boot and every cosmic widget
+  that asks for one gets it. Measured rather than looked at: the tick beside a
+  ticked playlist is `#E9BB45`, which is `branding/nix/palette.nix`'s dark gold.
+
+  The cost, plainly: `set_theme` pins the theme at boot, so a desktop that
+  switches between light and dark while the program runs keeps the one it
+  started in. Nothing here can observe that switch — iced resolves the
+  preference internally and hands it only to style closures, which is the same
+  limitation `palette::of` is written around.
 
 **The cursor's highlight goes while a menu is up.** Their menu has no way to
 tell this window "put the cursor on the row I opened on" — the pointer is
@@ -3354,6 +3432,14 @@ Measured rather than looked at, which is what this file keeps asking for: the
 row's pixels are `#E9BB45` hovering, `#1E1E1E` with a menu up, and `#E9BB45`
 again after `<Esc>` — so the gate is not a one-way door, which is the half a
 screenshot of the menu alone would not have shown.
+
+**`AskMenu` is not `RowMenu`, because they are two menus.** `RowMenu` fills
+the kept menu and is what its seven tests drive; `AskMenu` asks libcosmic's,
+which is the one on screen. Pointing the ⋯ back at `RowMenu` was the obvious
+one-line way to revive it and put *both* menus up at once — harken's panel,
+title and gold row drawn over theirs, with the status line reading `menu`
+because `focus()` counts `self.menu`. The day the kept menu goes, `AskMenu` is
+the message that stays.
 
 **And the old menu is kept rather than deleted**, at the owner's request: the
 `RowMenu` struct, `view_menu`, `menu_origin`, `submenu_origin`, the dwell and
