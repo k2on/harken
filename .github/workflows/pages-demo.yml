@@ -1,0 +1,53 @@
+# The demo, published to GitHub Pages from a prebuilt site.
+#
+# **Why this exists beside `pages.yml` rather than replacing it.** That one is
+# the right shape: `nix build .#harken-demo`, so what is published is built the
+# way a contributor builds it. It cannot build the libcosmic branch, because
+# there `Cargo.toml` says `libcosmic = { path = "../libcosmic" }` — a working
+# copy carrying patches to libcosmic *and* to its vendored `iced` submodule,
+# which exists on one machine and on no runner. Until that is a fork pinned by
+# git rev the way petros is, nothing on CI can compile that branch at all.
+#
+# So this branch carries the *output*: `index.html`, `favicon.svg` and the
+# `pkg/` wasm-bindgen produced, committed rather than built. That is a worse
+# thing than `pages.yml` in every way except the one that matters here — it
+# can actually run. It is an orphan branch so none of it reaches `main`'s
+# history, and the moment the fork exists this file and this branch should
+# both be deleted.
+#
+# One site per repository, so a run of this replaces whatever `pages.yml` last
+# published, and a push to `main` replaces this. That is Pages, not a policy.
+name: pages-demo
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      # The site is the branch, minus the workflow that publishes it.
+      - name: Gather the site
+        run: |
+          mkdir -p site
+          cp -r index.html favicon.svg pkg site/
+          du -sh site
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deploy
+        uses: actions/deploy-pages@v4
