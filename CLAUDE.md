@@ -3314,11 +3314,14 @@ saw the one that was asked for.
     branch is the *name*; what it then runs is the file at the ref — so the
     branch's copy is called `pages.yml` and shadows `main`'s for a dispatch
     against it, leaving `main`'s push build untouched.
-  - **The `github-pages` environment allows the default branch only**, and it
-    rejects before a runner is assigned — about one second, no steps, and
-    **no logs at all**, which reads like the run never happened. Settings →
-    Environments → github-pages → Deployment branches is the one place that
-    changes, and nothing in this repository can change it.
+  - **The `github-pages` environment allows the default branch only** until
+    somebody says otherwise, and it rejects before a runner is assigned —
+    about one second, no steps, and **no logs at all**, which reads like the
+    run never happened. Settings → Environments → github-pages → Deployment
+    branches is the one place that changes, and nothing in this repository
+    can change it. `demo-site` has been added there, so a dispatch against
+    that branch now publishes: run 87 is the one that did, and the four files
+    at `k2on.github.io/harken/` hash equal to the local build.
   - **That was falsified rather than assumed**, because "failed instantly with
     no logs" is also what a YAML error looks like. Run 85 carried the
     `environment:` block and died that way; run 86 was the same file with that
