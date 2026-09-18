@@ -19,7 +19,8 @@
 //! specified down to the width of what it walks, rather than being "some hash".
 
 use cosmic::iced::widget::svg;
-use cosmic::iced::{Color, Element, Length, Theme};
+use cosmic::iced::{Color, Length};
+use cosmic::{Element, Theme};
 
 use crate::palette;
 
@@ -42,7 +43,7 @@ fn hash(text: &str) -> u32 {
 
 /// The two stops this name draws as, in whichever theme iced picked.
 pub fn of(theme: &Theme, seed: &str) -> [Color; 2] {
-    let set = if theme.extended_palette().is_dark {
+    let set = if theme.theme_type.is_dark() {
         palette::DARK_ART
     } else {
         palette::LIGHT_ART
@@ -81,11 +82,11 @@ pub fn square<'a, Message: 'a>(seed: &str, size: f32, corner: f32) -> Element<'a
     svg(svg::Handle::from_memory(drawing(radius).into_bytes()))
         .width(Length::Fixed(size))
         .height(Length::Fixed(size))
-        .style(move |theme: &Theme, _| svg::Style {
+        .class(cosmic::theme::Svg::custom(move |theme| svg::Style {
             // The first stop of the pair: the light end, which is the one the
             // square should read as.
             color: Some(of(theme, &seed)[0]),
-        })
+        }))
         .into()
 }
 

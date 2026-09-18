@@ -43,13 +43,13 @@ mod vim;
 
 use std::time::Duration;
 
-use harken::{self as mutators, HarkenApp, Item};
 use cosmic::iced::widget::{
     button, column, container, image, mouse_area, pin, row, rule, scrollable, slider, stack, text,
     text_input, Row,
 };
 use cosmic::iced::{Length, Subscription};
 use cosmic::{Core, Element, Task};
+use harken::{self as mutators, HarkenApp, Item};
 use petros::{AutoCtx, Changes, Client};
 use player::{Player, Track};
 // The tab's title and the platform's media controller are the browser's, the
@@ -511,7 +511,10 @@ enum Message {
     /// A cover arrived, or did not.
     Cover(covers::Loaded),
     /// A key nothing on screen wanted. See `subscription`.
-    Key(cosmic::iced::keyboard::Key, cosmic::iced::keyboard::Modifiers),
+    Key(
+        cosmic::iced::keyboard::Key,
+        cosmic::iced::keyboard::Modifiers,
+    ),
     /// The window changed size. Only the menu cares.
     Resized(cosmic::iced::Size),
     /// Which device is making the sound: open the picker, walk it, pick.
@@ -945,15 +948,12 @@ fn heading<'a>(label: &'a str, width: Length) -> Element<'a, Message> {
 /// the whole width, so a work with four suites reads as four blocks rather
 /// than as one list with a repeated column.
 fn section<'a>(label: String) -> Element<'a, Message> {
-    container(
-        text(label)
-            .size(12)
-            .wrapping(text::Wrapping::None)
-            .class(cosmic::theme::Text::Custom(|theme| text::Style {
-                color: Some(palette::of(theme).primary.base.color),
-                ..text::Style::default()
-            })),
-    )
+    container(text(label).size(12).wrapping(text::Wrapping::None).class(
+        cosmic::theme::Text::Custom(|theme| text::Style {
+            color: Some(palette::of(theme).primary.base.color),
+            ..text::Style::default()
+        }),
+    ))
     .width(Length::Fill)
     // Indented to where the track numbers start, so the heading sits over the
     // column it heads rather than out in the transport's gutter.
@@ -1055,14 +1055,16 @@ const TITLE_CHROME: f32 = PANEL_PADDING * 2.0 + ENTRY_PAD_X * 2.0;
 fn panel<'a>(
     body: impl Into<Element<'a, Message>>,
     width: f32,
-) -> cosmic::widget::Container<'a, Message> {
+) -> container::Container<'a, Message, cosmic::Theme> {
     container(body)
         .width(Length::Fixed(width))
         .padding(PANEL_PADDING)
         .style(|theme: &cosmic::Theme| {
             let palette = palette::of(theme);
             container::Style {
-                background: Some(cosmic::iced::Background::Color(palette.background.weak.color)),
+                background: Some(cosmic::iced::Background::Color(
+                    palette.background.weak.color,
+                )),
                 border: cosmic::iced::Border {
                     color: palette.background.strong.color,
                     width: PANEL_BORDER,
@@ -1099,7 +1101,7 @@ fn panel_entry<'a>(
     glyph: Option<Element<'a, Message>>,
     label: Element<'a, Message>,
     trailing: Option<Element<'a, Message>>,
-) -> cosmic::widget::Container<'a, Message> {
+) -> container::Container<'a, Message, cosmic::Theme> {
     let mut line = Row::new()
         .spacing(ENTRY_GAP)
         .align_y(cosmic::iced::Alignment::Center)
@@ -1142,6 +1144,47 @@ fn entry_fill(theme: &cosmic::Theme, on_cursor: bool, focused: bool) -> containe
 }
 
 /// The one colour text on such a row is legible in.
+/// The device picker's colours, and the last row's.
+///
+/// Named for the reason `cell`'s five are: libcosmic's text class is a bare
+/// `fn` pointer. A device that cannot be heard is a *third* outcome rather
+/// than a dimmer second — "no audio device" is a different answer from "not
+/// the one playing", which is the rule the picker is drawn by.
+fn device_here(theme: &cosmic::Theme) -> text::Style {
+    text::Style {
+        color: Some(palette::of(theme).primary.base.color),
+        ..text::Style::default()
+    }
+}
+
+fn device_away(theme: &cosmic::Theme) -> text::Style {
+    text::Style {
+        color: Some(palette::of(theme).background.base.text.scale_alpha(0.75)),
+        ..text::Style::default()
+    }
+}
+
+fn device_unavailable(theme: &cosmic::Theme) -> text::Style {
+    text::Style {
+        color: Some(palette::of(theme).background.base.text.scale_alpha(0.4)),
+        ..text::Style::default()
+    }
+}
+
+fn stop_lit(theme: &cosmic::Theme) -> text::Style {
+    text::Style {
+        color: Some(palette::of(theme).primary.base.text),
+        ..text::Style::default()
+    }
+}
+
+fn stop_dim(theme: &cosmic::Theme) -> text::Style {
+    text::Style {
+        color: Some(palette::of(theme).background.base.text.scale_alpha(0.7)),
+        ..text::Style::default()
+    }
+}
+
 /// A sidebar line, lit and not — and the count beside it, the same two.
 ///
 /// `fn` items rather than a closure over `on_cursor && focused`, the same
@@ -2563,13 +2606,15 @@ impl App {
         // `advanced` is on for exactly this: keeping a keyboard cursor inside
         // its scrollable is a widget operation, and there is no other way to
         // ask a scrollable to move.
-        cosmic::iced::advanced::widget::operate(cosmic::iced::advanced::widget::operation::scrollable::snap_to(
-            cosmic::iced::advanced::widget::Id::new(id),
-            scrollable::RelativeOffset {
-                x: Some(0.0),
-                y: Some(y.clamp(0.0, 1.0)),
-            },
-        ))
+        cosmic::iced::advanced::widget::operate(
+            cosmic::iced::advanced::widget::operation::scrollable::snap_to(
+                cosmic::iced::advanced::widget::Id::new(id),
+                scrollable::RelativeOffset {
+                    x: Some(0.0),
+                    y: Some(y.clamp(0.0, 1.0)),
+                },
+            ),
+        )
     }
 
     /// Jump to the first label matching the last search, `delta` matches on
@@ -2978,7 +3023,6 @@ impl App {
         }
         Task::none()
     }
-
 
     /// Ask for covers when the library has been rebuilt since the last ask.
     fn want_covers_if_moved(&mut self) -> Task<Message> {
@@ -3482,7 +3526,6 @@ impl App {
         Task::none()
     }
 
-
     /// Where the ⋯ column is — the track list's right-hand edge, less the
     /// menu's own width, so a menu's right edge lines up with the dots that
     /// opened it.
@@ -3563,7 +3606,12 @@ impl App {
     /// So: to the right of the parent when there is room and to its left when
     /// there is not, never over it; and down from the entry, slid up only as
     /// far as it takes to stay on the glass.
-    fn submenu_origin(menu: &RowMenu, rows: usize, width: f32, window: cosmic::iced::Size) -> cosmic::iced::Point {
+    fn submenu_origin(
+        menu: &RowMenu,
+        rows: usize,
+        width: f32,
+        window: cosmic::iced::Size,
+    ) -> cosmic::iced::Point {
         // Lapped over the parent by both panels' padding, so the two read as
         // one thing that grew rather than as two that happen to touch — and
         // the entries inside them meet edge to edge, which is the most the
@@ -3599,7 +3647,12 @@ impl App {
 
     /// Put a panel of that size at `at`, or back the other way when it would
     /// not fit. The one rule both the menu and its submenu follow.
-    fn fit(at: cosmic::iced::Point, window: cosmic::iced::Size, w: f32, h: f32) -> cosmic::iced::Point {
+    fn fit(
+        at: cosmic::iced::Point,
+        window: cosmic::iced::Size,
+        w: f32,
+        h: f32,
+    ) -> cosmic::iced::Point {
         let edge = Self::EDGE;
         let x = if at.x + w + edge > window.width {
             (at.x - w).max(edge)
@@ -3653,9 +3706,7 @@ impl App {
                     );
                     col.push(
                         mouse_area(line.class(cosmic::theme::Container::Custom(Box::new(
-                            move |theme: &cosmic::Theme| {
-                                entry_fill(theme, on_cursor, focused)
-                            },
+                            move |theme: &cosmic::Theme| entry_fill(theme, on_cursor, focused),
                         ))))
                         // Moving onto a row and running it are the same two
                         // messages a click is: the pointer lands the cursor where
@@ -3737,36 +3788,38 @@ impl App {
                                 .size(13)
                                 .width(Length::Fill)
                                 .wrapping(text::Wrapping::None)
-                                .class(cosmic::theme::Text::Custom(
-                                    match on_cursor && focused {
-                                        true => sidebar_label_lit,
-                                        false => sidebar_label_dim,
-                                    },
-                                )),
+                                .class(cosmic::theme::Text::Custom(match on_cursor && focused {
+                                    true => sidebar_label_lit,
+                                    false => sidebar_label_dim,
+                                },)),
                             text(choice.count.map(|n| n.to_string()).unwrap_or_default())
                                 .size(10)
-                                .class(cosmic::theme::Text::Custom(
-                                    match on_cursor && focused {
-                                        true => sidebar_count_lit,
-                                        false => sidebar_count_dim,
-                                    },
-                                )),
+                                .class(cosmic::theme::Text::Custom(match on_cursor && focused {
+                                    true => sidebar_count_lit,
+                                    false => sidebar_count_dim,
+                                },)),
                         ]
                         .spacing(6)
                         .align_y(cosmic::iced::Alignment::Center),
                     )
                     .width(Length::Fill)
                     .padding([4, 10])
-                    .style(move |theme: &cosmic::Theme| row_style(theme, on_cursor, focused, false)),
+                    .style(move |theme: &cosmic::Theme| {
+                        row_style(theme, on_cursor, focused, false)
+                    }),
                 )
                 .on_press(Message::Select(choice.source.clone())),
             );
         }
 
-        container(scrollable(side).id(Self::SIDEBAR).style(style::bars))
-            .width(Length::Fixed(Self::SIDEBAR_WIDTH))
-            .height(Length::Fill)
-            .into()
+        container(
+            scrollable(side)
+                .id(Self::SIDEBAR)
+                .class(cosmic::theme::iced::Scrollable::Permanent),
+        )
+        .width(Length::Fixed(Self::SIDEBAR_WIDTH))
+        .height(Length::Fill)
+        .into()
     }
 
     /// What the sidebar picked.
@@ -3999,10 +4052,11 @@ impl App {
     /// on what terms — so text is what the page is.
     fn view_takes(&self, peer: &'_ Peer) -> Element<'_, Message> {
         if peer.recordings.is_empty() {
-            return container(text("No recordings of it yet.").size(13).style(
-                |theme: &cosmic::Theme| text::Style {
+            return container(text("No recordings of it yet.").size(13).class(
+                cosmic::theme::Text::Custom(|theme: &cosmic::Theme| text::Style {
                     color: Some(palette::of(theme).background.base.text.scale_alpha(0.5)),
-                },
+                    ..text::Style::default()
+                }),
             ))
             .padding(Self::PAGE_PADDING)
             .into();
@@ -4034,24 +4088,18 @@ impl App {
                 mouse_area(
                     container(
                         column![
-                            text(who).size(13).style(move |theme: &cosmic::Theme| {
-                                text::Style {
-                                    color: Some(if on_cursor {
-                                        palette::of(theme).primary.base.text
-                                    } else {
-                                        palette::of(theme).background.base.text
-                                    }),
+                            text(who).size(13).class(cosmic::theme::Text::Custom(
+                                match on_cursor {
+                                    true => sidebar_label_lit,
+                                    false => sidebar_label_dim,
                                 }
-                            }),
-                            text(facts).size(11).style(move |theme: &cosmic::Theme| {
-                                let palette = palette::of(theme);
-                                text::Style {
-                                    color: Some(match on_cursor {
-                                        true => palette.primary.base.text.scale_alpha(0.7),
-                                        false => palette.background.base.text.scale_alpha(0.5),
-                                    }),
+                            )),
+                            text(facts).size(11).class(cosmic::theme::Text::Custom(
+                                match on_cursor {
+                                    true => sidebar_count_lit,
+                                    false => sidebar_count_dim,
                                 }
-                            }),
+                            )),
                         ]
                         .spacing(2),
                     )
@@ -4088,13 +4136,12 @@ impl App {
     /// `App::columns`.
     fn view_cards(&self, cards: Vec<Card>, empty: &'static str) -> Element<'_, Message> {
         if cards.is_empty() {
-            return container(
-                text(empty)
-                    .size(13)
-                    .style(|theme: &cosmic::Theme| text::Style {
-                        color: Some(palette::of(theme).background.base.text.scale_alpha(0.5)),
-                    }),
-            )
+            return container(text(empty).size(13).class(cosmic::theme::Text::Custom(
+                |theme: &cosmic::Theme| text::Style {
+                    color: Some(palette::of(theme).background.base.text.scale_alpha(0.5)),
+                    ..text::Style::default()
+                },
+            )))
             .padding(Self::PAGE_PADDING)
             .into();
         }
@@ -4164,17 +4211,15 @@ impl App {
                     text(card.title.clone())
                         .size(13)
                         .width(Length::Fixed(Self::CARD))
-                        .style(move |theme: &cosmic::Theme| text::Style {
-                            color: Some(if on_cursor {
-                                palette::of(theme).primary.base.color
-                            } else {
-                                palette::of(theme).background.base.text
-                            }),
-                        }),
-                    text(under).size(11).width(Length::Fixed(Self::CARD)).style(
-                        |theme: &cosmic::Theme| text::Style {
+                        .class(cosmic::theme::Text::Custom(match on_cursor {
+                            true => cell_accent,
+                            false => cell_plain,
+                        })),
+                    text(under).size(11).width(Length::Fixed(Self::CARD)).class(
+                        cosmic::theme::Text::Custom(|theme: &cosmic::Theme| text::Style {
                             color: Some(palette::of(theme).background.base.text.scale_alpha(0.5)),
-                        }
+                            ..text::Style::default()
+                        })
                     ),
                 ]
                 .spacing(4)
@@ -4247,30 +4292,31 @@ impl App {
             row![
                 self.picture(name, art, side, if round { side / 2.0 } else { 8.0 }),
                 column![
-                    text(kind)
-                        .size(10)
-                        .style(|theme: &cosmic::Theme| text::Style {
+                    text(kind).size(10).class(cosmic::theme::Text::Custom(
+                        |theme: &cosmic::Theme| text::Style {
                             color: Some(palette::of(theme).background.base.text.scale_alpha(0.5)),
-                        }),
+                            ..text::Style::default()
+                        }
+                    )),
                     text(name.to_string())
                         .size(26)
                         .wrapping(text::Wrapping::None),
                     // The performer is the one thing on this page that is also
                     // a *place*, so it is one: same accent, and a click goes
                     // there.
-                    mouse_area(
-                        text(under.to_string())
-                            .size(13)
-                            .style(|theme: &cosmic::Theme| text::Style {
-                                color: Some(palette::of(theme).primary.base.color),
-                            },)
-                    )
+                    mouse_area(text(under.to_string()).size(13).class(
+                        cosmic::theme::Text::Custom(|theme: &cosmic::Theme| text::Style {
+                            color: Some(palette::of(theme).primary.base.color),
+                            ..text::Style::default()
+                        },)
+                    ))
                     .on_press(Message::Select(Source::Artist(under.to_string()))),
-                    text(facts)
-                        .size(11)
-                        .style(|theme: &cosmic::Theme| text::Style {
+                    text(facts).size(11).class(cosmic::theme::Text::Custom(
+                        |theme: &cosmic::Theme| text::Style {
                             color: Some(palette::of(theme).background.base.text.scale_alpha(0.5)),
-                        }),
+                            ..text::Style::default()
+                        }
+                    )),
                 ]
                 .spacing(4),
             ]
@@ -4327,29 +4373,28 @@ impl App {
                     // than drawing something greyed out: a mark that is
                     // always there is a mark that says nothing.
                     let here = playing == Some(item.id);
-                    let mut line =
-                        Row::new()
-                            .spacing(0)
-                            .align_y(cosmic::iced::Alignment::Center)
-                            .push(if here {
-                                Element::from(
-                                    button(icon::playing(!sounding, on_cursor))
-                                        .style(button::text)
-                                        .padding([0, 8])
-                                        .on_press(Message::PlayPause),
-                                )
-                            } else {
-                                // As tall as the button it stands in for, not as
-                                // tall as an empty string. The heart used to set
-                                // every row's height; an empty container sets
-                                // none, so the rows that were not playing came out
-                                // shorter than the one that was.
-                                Element::from(
-                                    container(text(""))
-                                        .width(TRANSPORT)
-                                        .height(Length::Fixed(icon::TRANSPORT)),
-                                )
-                            });
+                    let mut line = Row::new()
+                        .spacing(0)
+                        .align_y(cosmic::iced::Alignment::Center)
+                        .push(if here {
+                            Element::from(
+                                button(icon::playing(!sounding, on_cursor))
+                                    .class(cosmic::theme::iced::Button::Text)
+                                    .padding([0, 8])
+                                    .on_press(Message::PlayPause),
+                            )
+                        } else {
+                            // As tall as the button it stands in for, not as
+                            // tall as an empty string. The heart used to set
+                            // every row's height; an empty container sets
+                            // none, so the rows that were not playing came out
+                            // shorter than the one that was.
+                            Element::from(
+                                container(text(""))
+                                    .width(TRANSPORT)
+                                    .height(Length::Fixed(icon::TRANSPORT)),
+                            )
+                        });
                     if album_page {
                         line = line.push(cell(
                             // 0 is "nobody said", and an empty cell says that
@@ -4411,7 +4456,7 @@ impl App {
                         // does not know a right click opens one.
                         .push(
                             button(icon::more(on_cursor))
-                                .style(button::text)
+                                .class(cosmic::theme::iced::Button::Text)
                                 .padding([0, 6])
                                 .on_press(Message::RowMenu(item.id, Anchor::Dots)),
                         );
@@ -4463,7 +4508,7 @@ impl App {
                     text(peer.source.title().to_string()).size(22),
                     text(format!("{} tracks", peer.rows().len()))
                         .size(12)
-                        .style(style::dim),
+                        .class(cosmic::theme::Text::Custom(style::dim)),
                 ]
                 .spacing(12)
                 .align_y(cosmic::iced::Alignment::Center),
@@ -4477,7 +4522,7 @@ impl App {
             let actions = row![
                 if signed_out {
                     button("sign in again")
-                        .style(style::action)
+                        .class(cosmic::theme::iced::Button::Custom(Box::new(style::action)))
                         .on_press_maybe((!self.signing_in).then_some(Message::SignIn))
                 } else {
                     button(if peer.link.is_some() {
@@ -4485,11 +4530,11 @@ impl App {
                     } else {
                         "go online"
                     })
-                    .style(style::action)
+                    .class(cosmic::theme::iced::Button::Custom(Box::new(style::action)))
                     .on_press(Message::ToggleLink)
                 },
                 button("sign out")
-                    .style(button::text)
+                    .class(cosmic::theme::iced::Button::Text)
                     .on_press(Message::SignOut),
             ]
             .spacing(12);
@@ -4510,7 +4555,7 @@ impl App {
             .push(
                 scrollable(rows)
                     .id(Self::TRACKS)
-                    .style(style::bars)
+                    .class(cosmic::theme::iced::Scrollable::Permanent)
                     .height(Length::Fill),
             )
             .push(self.view_status(peer))
@@ -4584,7 +4629,7 @@ impl App {
         };
 
         let body = scrollable(rows.push(making))
-            .style(style::bars)
+            .class(cosmic::theme::iced::Scrollable::Permanent)
             .height(Length::Shrink);
 
         // **A submenu draws no header**, which is what `origin` decides: it is
@@ -4609,7 +4654,7 @@ impl App {
                 container(
                     text("j k move  \u{00b7}  <Enter> toggles  \u{00b7}  <Esc> back")
                         .size(11)
-                        .style(style::dim)
+                        .class(cosmic::theme::Text::Custom(style::dim))
                 )
                 .padding([0, 10]),
                 rule::horizontal(1),
@@ -4657,7 +4702,9 @@ impl App {
             col.push(
                 row![
                     text(*keys).size(13).width(Length::Fixed(110.0)),
-                    text(*what).size(13).style(style::dim),
+                    text(*what)
+                        .size(13)
+                        .class(cosmic::theme::Text::Custom(style::dim)),
                 ]
                 .spacing(12),
             )
@@ -4723,7 +4770,10 @@ impl App {
             Focus::Devices => "devices",
         };
         row![
-            text(line).size(12).style(style::dim).width(Length::Fill),
+            text(line)
+                .size(12)
+                .class(cosmic::theme::Text::Custom(style::dim))
+                .width(Length::Fill),
             // A search shows a caret, so a half-typed query does not look
             // like a finished one that matched nothing.
             text(match self.keys.mode() {
@@ -4731,8 +4781,10 @@ impl App {
                 vim::Mode::Normal => self.keys.pending(),
             })
             .size(12)
-            .style(text::primary),
-            text(mode).size(12).style(style::dim),
+            .class(cosmic::theme::Text::Accent),
+            text(mode)
+                .size(12)
+                .class(cosmic::theme::Text::Custom(style::dim)),
         ]
         .spacing(12)
         .into()
@@ -4789,20 +4841,17 @@ impl App {
             button(
                 row![
                     icon::devices(here),
-                    text(label).size(12).style(move |theme: &cosmic::Theme| {
-                        text::Style {
-                            color: Some(if here {
-                                palette::of(theme).primary.base.color
-                            } else {
-                                palette::of(theme).background.base.text.scale_alpha(0.75)
-                            }),
-                        }
-                    }),
+                    text(label)
+                        .size(12)
+                        .class(cosmic::theme::Text::Custom(match here {
+                            true => device_here,
+                            false => device_away,
+                        })),
                 ]
                 .spacing(5)
                 .align_y(cosmic::iced::Alignment::Center),
             )
-            .style(button::text)
+            .class(cosmic::theme::iced::Button::Text)
             .on_press(Message::OpenDevices)
             .into(),
         )
@@ -4817,8 +4866,10 @@ impl App {
                  the browser one streams)"
             })
             .size(12)
-            .style(style::dim);
-            let mut line = row![idle].spacing(12).align_y(cosmic::iced::Alignment::Center);
+            .class(cosmic::theme::Text::Custom(style::dim));
+            let mut line = row![idle]
+                .spacing(12)
+                .align_y(cosmic::iced::Alignment::Center);
             if let Some(output) = self.view_output() {
                 line = line.push(container(text("")).width(Length::Fill));
                 line = line.push(output);
@@ -4838,17 +4889,17 @@ impl App {
         let workable = Player::AUDIBLE || self.listening.elsewhere();
         let transport = row![
             button(icon::previous())
-                .style(button::text)
+                .class(cosmic::theme::iced::Button::Text)
                 .on_press(Message::Skip(-1)),
             button(if bar.playing {
                 icon::pause()
             } else {
                 icon::play()
             })
-            .style(button::text)
+            .class(cosmic::theme::iced::Button::Text)
             .on_press_maybe(workable.then_some(Message::PlayPause)),
             button(icon::next())
-                .style(button::text)
+                .class(cosmic::theme::iced::Button::Text)
                 .on_press(Message::Skip(1)),
         ]
         .spacing(4)
@@ -4858,18 +4909,28 @@ impl App {
             transport,
             column![
                 text(bar.title).size(14),
-                text(bar.creator).size(12).style(style::dim),
+                text(bar.creator)
+                    .size(12)
+                    .class(cosmic::theme::Text::Custom(style::dim)),
             ]
             .spacing(2)
             .width(Length::Fixed(260.0)),
-            text(clock(bar.position)).size(11).style(style::dim),
+            text(clock(bar.position))
+                .size(11)
+                .class(cosmic::theme::Text::Custom(style::dim)),
             // Seeking is the element's job in a browser, and there is
             // nothing to seek without one — so the slider only moves where
             // a track can actually be moved to.
             slider(0.0..=duration as f32, bar.position as f32, Message::Seek)
-                .style(style::seek)
+                .class(cosmic::theme::iced::Slider::Custom {
+                    active: std::rc::Rc::new(|t| { style::seek(t, slider::Status::Active) }),
+                    hovered: std::rc::Rc::new(|t| { style::seek(t, slider::Status::Hovered) }),
+                    dragging: std::rc::Rc::new(|t| { style::seek(t, slider::Status::Dragged) }),
+                })
                 .width(Length::Fill),
-            text(clock(duration)).size(11).style(style::dim),
+            text(clock(duration))
+                .size(11)
+                .class(cosmic::theme::Text::Custom(style::dim)),
         ]
         .spacing(12)
         .align_y(cosmic::iced::Alignment::Center);
@@ -4924,16 +4985,13 @@ impl App {
             let entry = container(
                 row![
                     mark,
-                    text(label)
-                        .size(13)
-                        .style(move |theme: &cosmic::Theme| text::Style {
-                            color: Some(match (on_cursor, audible) {
-                                (false, false) => {
-                                    palette::of(theme).background.base.text.scale_alpha(0.4)
-                                }
-                                (lit, _) => entry_text(theme, lit),
-                            }),
-                        }),
+                    text(label).size(13).class(cosmic::theme::Text::Custom(
+                        match (on_cursor, audible) {
+                            (false, false) => device_unavailable,
+                            (true, _) => entry_text_lit,
+                            (false, true) => entry_text_dim,
+                        }
+                    )),
                 ]
                 .spacing(6)
                 .align_y(cosmic::iced::Alignment::Center),
@@ -4959,30 +5017,33 @@ impl App {
 
         let last = devices.len();
         let on_cursor = at == last;
-        rows =
-            rows.push(
-                mouse_area(
-                    container(text("Stop everywhere").size(13).style(
-                        move |theme: &cosmic::Theme| text::Style {
-                            color: Some(if on_cursor {
-                                palette::of(theme).primary.base.text
-                            } else {
-                                palette::of(theme).background.base.text.scale_alpha(0.7)
-                            }),
-                        },
-                    ))
-                    .width(Length::Fill)
-                    .padding([5, 10])
-                    .style(move |theme: &cosmic::Theme| entry_fill(theme, on_cursor, true)),
+        rows = rows.push(
+            mouse_area(
+                container(
+                    text("Stop everywhere")
+                        .size(13)
+                        .class(cosmic::theme::Text::Custom(match on_cursor {
+                            true => stop_lit,
+                            false => stop_dim,
+                        })),
                 )
-                .on_enter(Message::DeviceAt(last))
-                .on_press(Message::DeviceAt(last))
-                .on_release(Message::PickDevice(None)),
-            );
+                .width(Length::Fill)
+                .padding([5, 10])
+                .style(move |theme: &cosmic::Theme| entry_fill(theme, on_cursor, true)),
+            )
+            .on_enter(Message::DeviceAt(last))
+            .on_press(Message::DeviceAt(last))
+            .on_release(Message::PickDevice(None)),
+        );
 
         panel(
             column![
-                container(text("Playing on").size(11).style(style::dim)).padding([4, 10]),
+                container(
+                    text("Playing on")
+                        .size(11)
+                        .class(cosmic::theme::Text::Custom(style::dim))
+                )
+                .padding([4, 10]),
                 rows,
             ]
             .spacing(0),
@@ -5002,16 +5063,17 @@ impl App {
                 text("harken").size(26),
                 text(format!("a peer of {}", self.server)).size(13),
                 button(label)
-                    .style(style::action)
+                    .class(cosmic::theme::iced::Button::Custom(Box::new(style::action)))
                     .on_press_maybe((!self.signing_in).then_some(Message::SignIn)),
-                text(self.note.clone()).size(13).style(style::dim),
+                text(self.note.clone())
+                    .size(13)
+                    .class(cosmic::theme::Text::Custom(style::dim)),
             ]
             .spacing(16),
         )
         .padding(24)
         .into()
     }
-
 }
 
 /// The typeface, the same one the phone draws.
@@ -6434,8 +6496,13 @@ mod context {
         for menu in [App::MENU_MIN_WIDTH, App::MENU_MAX_WIDTH] {
             for width in 120..=4000 {
                 let window = cosmic::iced::Size::new(width as f32, 720.0);
-                let at =
-                    App::menu_origin(cosmic::iced::Point::new(0.0, 100.0), window, 4, Anchor::Dots, menu);
+                let at = App::menu_origin(
+                    cosmic::iced::Point::new(0.0, 100.0),
+                    window,
+                    4,
+                    Anchor::Dots,
+                    menu,
+                );
                 assert!(
                     at.x >= App::EDGE,
                     "at {width}px a {menu}px menu starts at {} and its left half is clipped",
@@ -6445,7 +6512,6 @@ mod context {
         }
     }
 }
-
 
 /// The program libcosmic runs.
 ///

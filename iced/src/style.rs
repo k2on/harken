@@ -154,6 +154,7 @@ pub fn bars(theme: &Theme, status: scrollable::Status) -> scrollable::Style {
             background: Background::Color(Color::TRANSPARENT),
             border: Border::default(),
             shadow: Default::default(),
+            icon: Color::TRANSPARENT,
         },
     }
 }

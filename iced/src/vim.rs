@@ -382,7 +382,10 @@ mod tests {
         let key = match s {
             "<Enter>" => Key::Named(Named::Enter),
             "<Esc>" => Key::Named(Named::Escape),
-            "<Space>" => Key::Named(Named::Space),
+            // A space is a character on this fork rather than a named key —
+            // see the arm that handles it. Spelt out here so the test presses
+            // what the window would actually receive.
+            "<Space>" => Key::Character(" ".into()),
             "<Tab>" => Key::Named(Named::Tab),
             c => Key::Character(c.into()),
         };
