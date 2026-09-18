@@ -3763,6 +3763,9 @@ impl App {
     /// last row it was in.
     const MENU_GLYPH: f32 = 18.0;
 
+    /// What their larger text and padding costs over `ENTRY_CHAR`'s estimate.
+    const MENU_SLACK: f32 = 56.0;
+
     fn row_menu_trees(&self) -> Option<(Vec<cosmic::widget::menu::Tree<Message>>, u16)> {
         let peer = self.peer.as_ref()?;
         let item = peer.rows().get(self.at(Pane::Tracks))?;
@@ -3780,7 +3783,13 @@ impl App {
         };
 
         let entries = menu.entries();
-        let width = RowMenu::width_for(&entries) as u16;
+        // `width_for` counts characters against `ENTRY_CHAR`, which was
+        // measured against this program's own 13pt menu rows. `menu_button`
+        // draws at the toolkit's default size in a taller row with its own
+        // padding, so the same count comes out short and the longest entry
+        // wraps. Erring wide costs a strip of empty panel; erring narrow costs
+        // a clipped second line, which is the failure being fixed.
+        let width = (RowMenu::width_for(&entries) + Self::MENU_SLACK) as u16;
 
         Some((
             entries
@@ -3803,7 +3812,15 @@ impl App {
                                 .into(),
                             text(entry.label).into(),
                         ])
-                        .on_press_maybe((!owns_submenu).then_some(entry.message)),
+                        // **`Swallow` rather than nothing**, because a
+                        // `menu_button` with no `on_press` is drawn *disabled*
+                        // — and an entry that opens a submenu is not disabled,
+                        // it simply has nothing to do when pressed. It read as
+                        // greyed-out and broken, which is what it looks like.
+                        .on_press(match owns_submenu {
+                            true => Message::Swallow,
+                            false => entry.message,
+                        }),
                     );
 
                     if !owns_submenu {
@@ -4506,6 +4523,29 @@ impl App {
     }
 
     fn view_list(&self, peer: &'_ Peer) -> Element<'_, Message> {
+        // **The menu belongs to the track list, not to the window.** Wrapping
+        // the page meant a right click on the sidebar, the play bar or the
+        // status line opened a menu about a track — a menu is *about* the
+        // thing under the pointer, and everywhere else there is no track to be
+        // about. One wrapper here rather than one per row: their widget opens
+        // itself on a right click anywhere in its content, and which row that
+        // was is the cursor, which hovering already moves.
+        let listed = self.view_list_inner(peer);
+        match self.row_menu_trees() {
+            Some((trees, width)) => cosmic::widget::context_menu(listed, Some(trees))
+                // **Not their default 240.** At that width `Go to Goldberg
+                // Variations, BWV 988` wraps onto a second line inside a row
+                // whose height is fixed, and the second line is clipped —
+                // which is the bug this file documents one section up, met
+                // again in their widget.
+                .item_width(cosmic::widget::menu::ItemWidth::Uniform(width))
+                .on_open(Message::MenuOpened)
+                .into(),
+            None => listed,
+        }
+    }
+
+    fn view_list_inner(&self, peer: &'_ Peer) -> Element<'_, Message> {
         let playing = self.player.track().map(|t| t.id);
         let sounding = self.player.is_playing();
         // Only drawn while this pane has the keyboard. A dimmed cursor here
@@ -6748,24 +6788,7 @@ impl App {
 
         // Everything above the page is a layer of one stack, and the pointer
         // is tracked on the root so that `pin` below shares its origin.
-        // The row menu is libcosmic's `context_menu` now, so it is a wrapper
-        // around the page rather than a layer over it: their widget owns the
-        // opening, the placement and the dismissal, and on Wayland it can be a
-        // real popup surface, which `pin` inside a `stack!` can never be.
-        let base: Element<'_, Message> = match self.row_menu_trees() {
-            Some((trees, width)) => cosmic::widget::context_menu(base, Some(trees))
-                // **Not their default 240.** At that width `Go to George
-                // Frideric Handel` wraps onto a second line inside a row whose
-                // height is fixed, and the second line is clipped — which is
-                // the bug this file already documents one section up, met
-                // again in their widget. `ItemWidth::Uniform` takes any
-                // number, so `RowMenu::width_for` still decides it.
-                .item_width(cosmic::widget::menu::ItemWidth::Uniform(width))
-                .on_open(Message::MenuOpened)
-                .into(),
-            None => base.into(),
-        };
-
+        let base: Element<'_, Message> = base.into();
         let mut layers = stack![mouse_area(base).on_move(Message::Hover)];
 
         if let Some(menu) = &self.menu {
