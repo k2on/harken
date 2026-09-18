@@ -1,7 +1,14 @@
 # The demo, published to GitHub Pages from a prebuilt site.
 #
-# **Why this exists beside `pages.yml` rather than replacing it.** That one is
-# the right shape: `nix build .#harken-demo`, so what is published is built the
+# **It is called `pages.yml` because it has to be.** A `workflow_dispatch`
+# workflow is only dispatchable if a file of that name exists on the default
+# branch — dispatching `pages-demo.yml` from here is a bare 404 — and what
+# GitHub then runs is the version at the ref it was given. So this shadows
+# `main`'s `pages.yml` for a dispatch against this branch and leaves it
+# untouched for every push to `main`.
+#
+# **Why it does not simply do what that one does.** `main`'s is the right
+# shape: `nix build .#harken-demo`, so what is published is built the
 # way a contributor builds it. It cannot build the libcosmic branch, because
 # there `Cargo.toml` says `libcosmic = { path = "../libcosmic" }` — a working
 # copy carrying patches to libcosmic *and* to its vendored `iced` submodule,
@@ -17,7 +24,7 @@
 #
 # One site per repository, so a run of this replaces whatever `pages.yml` last
 # published, and a push to `main` replaces this. That is Pages, not a policy.
-name: pages-demo
+name: pages
 
 on:
   workflow_dispatch:
