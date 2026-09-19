@@ -83,6 +83,7 @@
         search = "search";
         shuffle = "shuffle";
         signOut = "log-out";
+        speaker = "speaker";
         stop = "circle-stop";
         tick = "check";
         ticked = "circle-check";

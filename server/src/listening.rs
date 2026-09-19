@@ -1,51 +1,81 @@
-//! One listening session per account, and the socket that relays it.
+//! One listening session per account, as a `petros::live` room.
 //!
-//! `/sync` is the log and this is not: see [`harken::listening`] for why none
-//! of what follows is ever written down. What is here is the other half of
-//! that decision — a `HashMap` in the server's memory, lost on restart, which
-//! is the correct lifetime for "what is playing right now".
+//! `/sync` carries the log and this rides beside it: see [`harken::listening`]
+//! for why none of what follows is ever written down, and `petros::live` for
+//! how a channel that is not the log works. What is here is the other half of
+//! that decision — the rules, as a state machine over values.
 //!
-//! [`Desk`] is the whole of it and owns no socket: every method takes what
-//! happened and delivers what falls out, so the rules — who becomes the
-//! output, what a command does when nothing can be heard, what a device
-//! leaving means — are tested against channels rather than against a network.
-//! That is the engine's own shape, for the engine's own reason.
+//! [`Desk`] owns no socket, which is the engine's own shape for the engine's
+//! own reason: every method takes what happened and delivers what falls out,
+//! so who ends up with the sound, what a button does when the speaker is
+//! unplugged, and what a closing laptop means are all tested against values
+//! rather than against a network.
 //!
-//! Three rules decide everything:
+//! Four rules decide everything, and the second is the one that changed:
 //!
 //! - **Exactly one device is the output**, and only it makes a sound. Every
 //!   other device of that account draws what it is told.
+//! - **The output survives its socket.** A laptop lid closing, a phone going
+//!   to sleep and a tab being reloaded are not decisions to move the music.
+//!   The sound still belongs to that device; it is simply not answering, and
+//!   the session says so rather than handing itself to whoever asks next.
 //! - **A command goes to the output, not to whoever asked.** That is the
 //!   feature: pressing pause on a phone pauses the laptop.
-//! - **A device that can be heard and asks for something, when nothing else
-//!   is the output, becomes the output.** Otherwise the first tap of the day
-//!   would do nothing and there would be a device to pick before any music
-//!   could start, which is a setup step for the common case.
+//! - **…unless the output cannot be reached, and the asker can make a
+//!   sound.** Then the asker takes it — because somebody pressed play and
+//!   there is nothing else in the house that can answer. This is the only way
+//!   a device takes the sound without being picked, and it needs a press: a
+//!   device that merely arrives takes nothing.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::BTreeMap;
 
-use harken::listening::{Command, Device, DeviceId, Hear, Session, Track};
+use harken::listening::{Command, Device, DeviceId, Hear, Kind, Say, Session, Track};
+use petros::live::{Live, Peer, Post, Room};
 use tokio::sync::mpsc::UnboundedSender;
 
-/// Where one device's frames go.
-pub type Wire = UnboundedSender<Hear>;
-
-/// Everything one account is listening to.
-struct Room {
-    session: Session,
-    wires: HashMap<DeviceId, Wire>,
-    /// Which of those are *standing*: here because the house is, rather than
-    /// because somebody is looking at a screen. See [`Desk::stand`].
-    standing: HashSet<DeviceId>,
+/// What a bridge standing in rooms needs to know: which rooms have somebody
+/// listening in them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Watch {
+    /// Somebody is listening as this account. Offer it whatever stands in
+    /// every room.
+    Open(Room),
+    /// Nobody is, any more. Take those back out, so the room can empty, be
+    /// written down and be let go — a bridge standing in every room would
+    /// mean no room was ever empty.
+    Shut(Room),
 }
 
-/// Every account's session. One of these per server, behind a mutex.
+/// Every account's session.
+///
+/// One of these per server, handed to the hub as its realtime machine. The
+/// rooms are keyed the way `petros::live` keys them, which is by account.
 #[derive(Default)]
 pub struct Desk {
-    rooms: HashMap<String, Room>,
-    /// Told the account whenever a room opens, so whatever stands in every
-    /// room can stand in the new one.
-    watchers: Vec<UnboundedSender<String>>,
+    rooms: BTreeMap<Room, Session>,
+    /// Which rooms have been announced as open, so that a second device
+    /// arriving is not a second announcement.
+    listening: std::collections::BTreeSet<Room>,
+    /// Told whenever that changes. A channel rather than a call, deliberately:
+    /// whatever answers this will call back into the hub to stand a device,
+    /// and a hub that called it inline would be a hub calling itself with its
+    /// own lock held.
+    watchers: Vec<UnboundedSender<Watch>>,
+}
+
+/// What survives an empty room, and therefore a restart.
+///
+/// Not the device list: who is connected is a fact about now and every entry
+/// in it would come back false. The one device kept is the one the sound
+/// belongs to, because "your kitchen speaker, which is not answering" is
+/// worth drawing and an id with no name is not.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Kept {
+    output: Option<DeviceId>,
+    out_device: Option<Device>,
+    queue: Vec<Track>,
+    at: u32,
+    position_ms: i64,
 }
 
 impl Desk {
@@ -53,722 +83,365 @@ impl Desk {
         Desk::default()
     }
 
-    /// A device arrives.
-    ///
-    /// A device id that is already here is a *reconnect* — the same login on
-    /// the same device, after a suspended phone or a reloaded tab — so it
-    /// replaces its wire rather than appearing twice. Which also means the
-    /// output survives a reconnect, and a laptop that blinked does not hand
-    /// the music to somebody else.
-    pub fn join(&mut self, user: &str, device: Device, wire: Wire) {
-        let fresh = !self.rooms.contains_key(user);
-        let room = self.rooms.entry(user.to_string()).or_insert_with(|| Room {
-            session: Session::default(),
-            wires: HashMap::new(),
-            standing: HashSet::new(),
-        });
-        room.standing.remove(&device.id);
-        room.add(device, wire);
-        if fresh {
-            // After the room exists, so that whatever answers this can stand
-            // in it straight away. A closed watcher is one that has gone.
-            self.watchers.retain(|w| w.send(user.to_string()).is_ok());
-        }
-    }
-
-    /// A device that is here because the *house* is: a speaker, offered to
-    /// every account that is listening.
-    ///
-    /// Two things make it different from a client, and both follow from that.
-    /// It does not open a room — a speaker is in the session when somebody is
-    /// listening, not the other way round — and it does not keep one alive, so
-    /// the last person leaving still takes the queue with them. Without the
-    /// second, a bridge standing in every room would mean no room was ever
-    /// empty and a phone opened tomorrow would resume an afternoon nobody
-    /// remembers.
-    pub fn stand(&mut self, user: &str, device: Device, wire: Wire) {
-        let Some(room) = self.rooms.get_mut(user) else {
-            return;
-        };
-        room.standing.insert(device.id.clone());
-        room.add(device, wire);
-    }
-
-    /// Be told the account whenever a room opens. The accounts already
-    /// listening come back at once, so a watcher registered late is not a
-    /// watcher that missed them.
-    pub fn watch(&mut self, tx: UnboundedSender<String>) {
-        for user in self.rooms.keys() {
-            if tx.send(user.clone()).is_err() {
+    /// Be told when a room opens and when it closes. The rooms that already
+    /// have somebody in them come back at once, so a bridge registered late
+    /// is not a bridge that missed everyone.
+    pub fn watch(&mut self, tx: UnboundedSender<Watch>) {
+        for room in &self.listening {
+            if tx.send(Watch::Open(room.clone())).is_err() {
                 return;
             }
         }
         self.watchers.push(tx);
     }
 
-    /// A device goes. If it was the output, nothing is playing anywhere —
-    /// which is the truth, and better than a bar that goes on counting for a
-    /// laptop that has been shut.
-    pub fn leave(&mut self, user: &str, device: &str) {
-        let Some(room) = self.rooms.get_mut(user) else {
-            return;
-        };
-        room.wires.remove(device);
-        room.standing.remove(device);
-        room.session.devices.retain(|d| d.id != device);
-        if room.session.outputs(device) {
-            room.session.output = None;
-            room.session.playing = false;
-        }
-        // Counted on the *clients*: a speaker standing in the room is not
-        // somebody listening, and a room kept alive by one would keep its
-        // queue for ever. Keeping the queue would mean a phone opened tomorrow
-        // resumes an afternoon nobody remembers — and the log is where things
-        // are kept.
-        if room.wires.keys().all(|id| room.standing.contains(id)) {
-            self.rooms.remove(user);
-            return;
-        }
-        room.broadcast();
+    /// What one account's session is, for a test or a health page.
+    pub fn session(&self, room: &str) -> Option<&Session> {
+        self.rooms.get(room)
     }
 
-    /// The output says what it is doing. From anyone else it is ignored:
-    /// a device that is not making the sound cannot be right about it.
-    pub fn report(
-        &mut self,
-        user: &str,
-        from: &str,
-        queue: Vec<Track>,
-        at: usize,
-        playing: bool,
-        position_ms: i64,
-    ) {
-        let Some(room) = self.rooms.get_mut(user) else {
+    pub fn rooms(&self) -> usize {
+        self.rooms.len()
+    }
+
+    fn tell_watchers(&mut self, news: Watch) {
+        self.watchers.retain(|w| w.send(news.clone()).is_ok());
+    }
+
+    /// Whether anybody is *listening* here, as opposed to standing here. A
+    /// speaker is in the session when somebody is listening, not the other way
+    /// round.
+    fn anyone_listening(session: &Session) -> bool {
+        session
+            .devices
+            .iter()
+            .any(|d| d.here && d.kind != Kind::Speaker)
+    }
+
+    /// Say whether the room is open, if that has changed since last time.
+    fn reconsider(&mut self, room: &Room) {
+        let open = self.rooms.get(room).is_some_and(Self::anyone_listening);
+        if open && self.listening.insert(room.clone()) {
+            self.tell_watchers(Watch::Open(room.clone()));
+        } else if !open && self.listening.remove(room) {
+            self.tell_watchers(Watch::Shut(room.clone()));
+        }
+    }
+}
+
+impl Live for Desk {
+    type Say = Say;
+    type Hear = Hear;
+
+    /// A socket opened. Nothing is claimed and nothing is announced: the
+    /// device has not said what it is yet, and — the rule this file exists
+    /// for — *arriving* is not how a device gets the sound.
+    ///
+    /// It is told the session at once, though, so a tab that has just opened
+    /// draws what the house is doing rather than an empty bar it will fill in
+    /// a moment.
+    fn join(&mut self, peer: &Peer, post: &mut Post<'_, Hear>) {
+        let session = self.rooms.entry(peer.room.clone()).or_default();
+        // A reconnect: the same device, which may well still be the output.
+        if let Some(device) = session.devices.iter_mut().find(|d| d.id == peer.who) {
+            device.here = true;
+        }
+        let session = session.clone();
+        post.tell(&peer.who, Hear::State { session });
+    }
+
+    fn say(&mut self, peer: &Peer, say: Say, post: &mut Post<'_, Hear>) {
+        match say {
+            Say::Here {
+                name,
+                audible,
+                kind,
+            } => self.here(peer, name, audible, kind, post),
+            Say::Report {
+                queue,
+                at,
+                playing,
+                position_ms,
+            } => self.report(peer, queue, at, playing, position_ms, post),
+            Say::Do { command } => self.command(peer, command, post),
+            Say::Transfer { to } => self.transfer(peer, to, post),
+        }
+    }
+
+    /// A socket closed. The device is marked away and the sound stays where
+    /// it was — which is the whole of the fix for music jumping back to
+    /// whichever device happened to be looking.
+    fn part(&mut self, peer: &Peer, post: &mut Post<'_, Hear>) {
+        let Some(session) = self.rooms.get_mut(&peer.room) else {
             return;
         };
-        room.claim(from);
-        if !room.session.outputs(from) {
+        if session.moving_to(&peer.who) {
+            // It was given the sound and never took it. Somebody has to be
+            // told that stopped being true.
+            session.moving = None;
+        }
+        if session.outputs(&peer.who) {
+            // It still owns the sound. What it cannot be is *playing*: there
+            // is nothing on the other end of that socket to be making one.
+            session.playing = false;
+            if let Some(device) = session.devices.iter_mut().find(|d| d.id == peer.who) {
+                device.here = false;
+            }
+        } else {
+            // Anything else that has gone is simply gone. Keeping it would
+            // fill the picker with every tab anyone ever opened.
+            session.devices.retain(|d| d.id != peer.who);
+        }
+        let session = session.clone();
+        post.tell_room(Hear::State { session });
+        post.keep();
+        self.reconsider(&peer.room);
+    }
+
+    fn snapshot(&mut self, room: &Room) -> Option<Vec<u8>> {
+        let session = self.rooms.get(room)?;
+        // A room with nothing playing and nowhere for it to play is a room
+        // worth no disk at all — and saying so deletes the row rather than
+        // leaving a stale one.
+        if session.output.is_none() && session.queue.is_empty() {
+            return None;
+        }
+        petros::encode(&Kept {
+            output: session.output.clone(),
+            out_device: session.output_device().cloned(),
+            queue: session.queue.clone(),
+            at: session.at,
+            position_ms: session.position_ms,
+        })
+        .ok()
+    }
+
+    /// Yesterday's session, from the disk. Paused, and with every device
+    /// away: what was true is where it was playing, never that it is playing.
+    fn wake(&mut self, room: &Room, snapshot: &[u8]) {
+        let Ok(kept) = petros::decode::<Kept>(snapshot) else {
+            return;
+        };
+        let devices = kept
+            .out_device
+            .into_iter()
+            .map(|d| Device { here: false, ..d })
+            .collect();
+        self.rooms.insert(
+            room.clone(),
+            Session {
+                output: kept.output,
+                moving: None,
+                devices,
+                queue: kept.queue,
+                at: kept.at,
+                playing: false,
+                position_ms: kept.position_ms,
+            },
+        );
+    }
+
+    fn close(&mut self, room: &Room) {
+        self.rooms.remove(room);
+        self.listening.remove(room);
+    }
+}
+
+impl Desk {
+    /// A device says what it is. This is where it enters the picker, and
+    /// where a reconnecting output is recognised as the device that still
+    /// owns the sound.
+    fn here(
+        &mut self,
+        peer: &Peer,
+        name: String,
+        audible: bool,
+        kind: Kind,
+        post: &mut Post<'_, Hear>,
+    ) {
+        let Some(session) = self.rooms.get_mut(&peer.room) else {
+            return;
+        };
+        let device = Device {
+            id: peer.who.clone(),
+            name,
+            audible,
+            here: true,
+            kind,
+        };
+        session.devices.retain(|d| d.id != device.id);
+        session.devices.push(device);
+        session.devices.sort_by(|a, b| a.name.cmp(&b.name));
+        let session = session.clone();
+        post.tell_room(Hear::State { session });
+        post.keep();
+        self.reconsider(&peer.room);
+    }
+
+    /// The output says what it is doing. From anyone else it is ignored: a
+    /// device that is not making the sound cannot be right about it.
+    fn report(
+        &mut self,
+        peer: &Peer,
+        queue: Vec<Track>,
+        at: u32,
+        playing: bool,
+        position_ms: i64,
+        post: &mut Post<'_, Hear>,
+    ) {
+        let Some(session) = self.rooms.get_mut(&peer.room) else {
+            return;
+        };
+        if !session.outputs(&peer.who) {
             return;
         }
-        let was = room.session.clone();
-        room.session.queue = queue;
-        room.session.at = at;
-        room.session.playing = playing;
-        room.session.position_ms = position_ms;
+        let was = session.clone();
+        // It has taken the hand-off. A report is the only evidence of that
+        // there can be, because taking it is exactly "started playing".
+        if session.moving_to(&peer.who) {
+            session.moving = None;
+        }
+        let structural = session.queue != queue || session.at != at || session.playing != playing;
+        session.queue = queue;
+        session.at = at;
+        session.playing = playing;
+        session.position_ms = position_ms;
         // A report a second means a broadcast a second, and the position it
         // carries is the only thing that changed — which is exactly what the
         // other devices' scrubbers are waiting for, so it is still worth
         // sending. What is not worth sending is a report that changed nothing
         // at all, which is what a paused output sends.
-        if was != room.session {
-            room.broadcast();
+        if was != *session {
+            let session = session.clone();
+            post.tell_room(Hear::State { session });
+        }
+        // A position that moved is not worth a disk write; a different track
+        // is. This is the difference `Post::keep` exists to let an app draw.
+        if structural {
+            post.keep();
         }
     }
 
-    /// Somebody asks for something. It goes to the output.
-    pub fn command(&mut self, user: &str, from: &str, command: Command) {
-        let Some(room) = self.rooms.get_mut(user) else {
+    /// Somebody asks for something.
+    fn command(&mut self, peer: &Peer, command: Command, post: &mut Post<'_, Hear>) {
+        let Some(session) = self.rooms.get_mut(&peer.room) else {
             return;
         };
-        let before = room.session.output.clone();
-        room.claim(from);
-        let Some(output) = room.session.output.clone() else {
-            // Nothing can be heard: no output, and the asker is a remote
-            // control. Say so by broadcasting rather than by silence — the
-            // bar that asked is the bar that has to show it did not happen.
-            room.broadcast();
-            return;
-        };
-        if room.session.output != before {
-            room.broadcast();
+
+        // The ordinary case, and the feature: the sound is somewhere that is
+        // answering, so that is where the button goes.
+        if let Some(output) = session.output.clone() {
+            if post.here(&output) {
+                post.tell(&output, Hear::Do { command });
+                return;
+            }
         }
-        room.tell(&output, Hear::Do { command });
+
+        // Nothing is answering where the sound belongs. Only a press that
+        // means "make a sound" moves it — a pause or a seek aimed at a device
+        // that has gone is a press with nothing to do, and answering it by
+        // seizing the sound would be a device assuming control it was never
+        // given.
+        let wants_sound = matches!(
+            command,
+            Command::Play | Command::Next | Command::Previous | Command::Start { .. }
+        );
+        let can = session
+            .device(&peer.who)
+            .is_some_and(|d| d.audible && d.here);
+        if !wants_sound || !can {
+            // Told rather than ignored: the bar that asked is the bar that has
+            // to show the press went nowhere.
+            let session = session.clone();
+            post.tell_room(Hear::State { session });
+            return;
+        }
+
+        session.output = Some(peer.who.clone());
+        session.moving = None;
+        match command {
+            // It brought its own queue; nothing here knows better.
+            Command::Start { .. } => post.tell(&peer.who, Hear::Do { command }),
+            other => {
+                // Hand it the session first, because it may never have had
+                // one — a phone that has been watching a speaker all evening
+                // holds no queue of its own. Then the press it actually made,
+                // so `Next` still means next.
+                post.tell(
+                    &peer.who,
+                    Hear::Do {
+                        command: Command::Start {
+                            queue: session.queue.clone(),
+                            at: session.at,
+                            position_ms: session.position_ms,
+                            playing: true,
+                        },
+                    },
+                );
+                if !matches!(other, Command::Play) {
+                    post.tell(&peer.who, Hear::Do { command: other });
+                }
+            }
+        }
+        let session = session.clone();
+        post.tell_room(Hear::State { session });
+        post.keep();
     }
 
     /// Move the sound. `None` stops it everywhere.
     ///
     /// The new output is handed the session as one [`Command::Start`] — the
     /// queue, the place in it, the point in the track and whether it was
-    /// playing — because a hand-off is that sentence and nothing else. The old
-    /// one is told nothing: it learns from the broadcast that it is no longer
-    /// the output, and a client that is not the output is silent. One rule, in
-    /// one place, rather than a stop command that a dropped socket could lose.
-    pub fn transfer(&mut self, user: &str, to: Option<DeviceId>) {
-        let Some(room) = self.rooms.get_mut(user) else {
+    /// playing — because a hand-off is that sentence and nothing else. That
+    /// is also what makes picking a speaker halfway through a track resume
+    /// rather than restart.
+    ///
+    /// The old one is told nothing: it learns from the broadcast that it is no
+    /// longer the output, and a device that is not the output is silent. One
+    /// rule, in one place, rather than a stop command that a dropped socket
+    /// could lose.
+    fn transfer(&mut self, peer: &Peer, to: Option<DeviceId>, post: &mut Post<'_, Hear>) {
+        let Some(session) = self.rooms.get_mut(&peer.room) else {
             return;
         };
         match to {
             None => {
-                room.session.output = None;
-                room.session.playing = false;
+                session.output = None;
+                session.moving = None;
+                session.playing = false;
             }
             Some(id) => {
-                // Only a device that can be heard, and only one that is here.
-                if !room.session.devices.iter().any(|d| d.id == id && d.audible) {
-                    room.broadcast();
+                // Only a device that can be heard, and only one that is here:
+                // handing the sound to something that is not answering is the
+                // one way to lose it entirely.
+                let ready = session
+                    .device(&id)
+                    .is_some_and(|d| d.audible && d.here && post.here(&id));
+                if !ready {
+                    let session = session.clone();
+                    post.tell_room(Hear::State { session });
                     return;
                 }
-                if room.session.outputs(&id) {
+                if session.outputs(&id) && session.moving.is_none() {
                     return;
                 }
-                room.session.output = Some(id.clone());
+                session.output = Some(id.clone());
+                // Until it says otherwise it is *connecting*, not playing. A
+                // speaker in the house takes a second or two to fetch
+                // anything, and a picker that goes straight to "playing"
+                // spends that second lying.
+                session.moving = Some(id.clone());
                 let take = Command::Start {
-                    queue: room.session.queue.clone(),
-                    at: room.session.at,
-                    position_ms: room.session.position_ms,
-                    playing: room.session.playing,
+                    queue: session.queue.clone(),
+                    at: session.at,
+                    position_ms: session.position_ms,
+                    playing: session.playing,
                 };
-                room.tell(&id, Hear::Do { command: take });
+                post.tell(&id, Hear::Do { command: take });
             }
         }
-        room.broadcast();
-    }
-
-    /// What one account's session is, for a test or a health page.
-    pub fn session(&self, user: &str) -> Option<&Session> {
-        self.rooms.get(user).map(|r| &r.session)
-    }
-
-    /// How many accounts are listening.
-    pub fn rooms(&self) -> usize {
-        self.rooms.len()
-    }
-}
-
-impl Room {
-    /// Put a device in, replacing one of the same id — a reconnect, or a
-    /// speaker being offered to a room it is already in.
-    fn add(&mut self, device: Device, wire: Wire) {
-        self.wires.insert(device.id.clone(), wire);
-        self.session.devices.retain(|d| d.id != device.id);
-        self.session.devices.push(device);
-        self.session.devices.sort_by(|a, b| a.name.cmp(&b.name));
-        self.broadcast();
-    }
-}
-
-impl Room {
-    /// Let `device` take the sound if nothing else has it and it can be
-    /// heard. A no-op otherwise — including when `device` is already the
-    /// output, which is the common case.
-    fn claim(&mut self, device: &str) {
-        if self.session.output.is_some() {
-            return;
-        }
-        if self
-            .session
-            .devices
-            .iter()
-            .any(|d| d.id == device && d.audible)
-        {
-            self.session.output = Some(device.to_string());
-        }
-    }
-
-    fn tell(&mut self, device: &str, msg: Hear) {
-        if let Some(wire) = self.wires.get(device) {
-            let _ = wire.send(msg);
-        }
-    }
-
-    /// The session, entire, to everybody. A closed wire is a device that has
-    /// gone and not yet been reaped; `leave` does the reaping.
-    fn broadcast(&mut self) {
-        let msg = Hear::State {
-            session: self.session.clone(),
-        };
-        for wire in self.wires.values() {
-            let _ = wire.send(msg.clone());
-        }
-    }
-}
-
-/// The socket at `/listen`, and the one axum-shaped thing in this file.
-///
-/// The token is in the first frame rather than in a header or the query, for
-/// the reason `petros-axum` puts it there: a browser's `WebSocket` cannot set
-/// a header, and a token in a URL is a token in an access log. Until that
-/// frame arrives this connection is nobody and is told nothing.
-///
-/// One task per socket rather than two. `petros-axum` splits its socket
-/// because the engine's frames can queue up behind a catch-up of the whole
-/// log; nothing here is ever more than a few hundred bytes, so a `select!`
-/// over the socket and the mailbox is the smaller thing that does the same
-/// job — and the mailbox is unbounded, so the desk never blocks on a device
-/// that is slow to read.
-pub mod route {
-    use std::sync::{Arc, Mutex};
-
-    use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-    use axum::extract::State;
-    use axum::response::Response;
-    use harken::listening::{decode, encode, Device, Hear, Say};
-    use petros_auth::server::Auth;
-    use tokio::sync::mpsc::unbounded_channel;
-
-    use super::Desk;
-
-    /// What the route reads: who a token proves, and every account's session.
-    #[derive(Clone)]
-    pub struct Listening {
-        pub auth: Arc<Auth>,
-        pub desk: Arc<Mutex<Desk>>,
-    }
-
-    pub async fn listen(State(state): State<Listening>, upgrade: WebSocketUpgrade) -> Response {
-        upgrade.on_upgrade(move |socket| serve(socket, state))
-    }
-
-    async fn serve(mut socket: WebSocket, state: Listening) {
-        let (tx, mut rx) = unbounded_channel::<Hear>();
-        // Who this socket turned out to be: the account, and which of its
-        // devices. `None` until the `Hello`, and the reason everything below
-        // has two cases.
-        let mut who: Option<(String, String)> = None;
-
-        loop {
-            tokio::select! {
-                // Something for this device. A closed socket ends the loop
-                // rather than the send failing quietly.
-                Some(msg) = rx.recv() => {
-                    if socket.send(Message::Text(encode(&msg).into())).await.is_err() {
-                        break;
-                    }
-                    if matches!(msg, Hear::Denied { .. }) {
-                        break;
-                    }
-                }
-                frame = socket.recv() => {
-                    let Some(Ok(Message::Text(text))) = frame else {
-                        // A close, an error, or a frame this socket does not
-                        // carry: binary is the log's socket and a ping answers
-                        // itself.
-                        match frame {
-                            Some(Ok(_)) => continue,
-                            _ => break,
-                        }
-                    };
-                    let Some(say) = decode::<Say>(&text) else { continue };
-                    match (say, who.clone()) {
-                        (Say::Hello { token, device, name, audible }, None) => {
-                            let Some(login) = state.auth.whoami(&token) else {
-                                let _ = tx.send(Hear::Denied {
-                                    reason: "that login is not live".into(),
-                                });
-                                continue;
-                            };
-                            let user = login.user.id.clone();
-                            if let Ok(mut desk) = state.desk.lock() {
-                                desk.join(
-                                    &user,
-                                    Device { id: device.clone(), name, audible },
-                                    tx.clone(),
-                                );
-                            }
-                            who = Some((user, device));
-                        }
-                        // Anything before the `Hello` is from nobody, and a
-                        // second `Hello` is a socket changing who it is
-                        // halfway through. Neither is a thing to answer.
-                        (_, None) | (Say::Hello { .. }, Some(_)) => break,
-                        (say, Some((user, device))) => {
-                            let Ok(mut desk) = state.desk.lock() else { break };
-                            match say {
-                                Say::Hello { .. } => unreachable!("matched above"),
-                                Say::Report { queue, at, playing, position_ms } => {
-                                    desk.report(&user, &device, queue, at, playing, position_ms)
-                                }
-                                Say::Do { command } => desk.command(&user, &device, command),
-                                Say::Transfer { to } => desk.transfer(&user, to),
-                            }
-                        }
-                    }
-                }
-                else => break,
-            }
-        }
-
-        // However this ended — a close, a reload, a phone going to sleep — the
-        // device is gone, and if it was the output then so is the sound.
-        if let Some((user, device)) = who {
-            if let Ok(mut desk) = state.desk.lock() {
-                desk.leave(&user, &device);
-            }
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use harken::Id;
-    use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
-
-    fn device(id: &str, audible: bool) -> Device {
-        Device {
-            id: id.into(),
-            name: id.into(),
-            audible,
-        }
-    }
-
-    fn track(title: &str) -> Track {
-        Track {
-            id: Id::default(),
-            title: title.into(),
-            creator: "Bach".into(),
-            album: String::new(),
-            duration_ms: 60_000,
-            file: "music/a.mp3".into(),
-        }
-    }
-
-    /// Everything a device heard since it was last asked.
-    fn drain(rx: &mut UnboundedReceiver<Hear>) -> Vec<Hear> {
-        let mut out = Vec::new();
-        while let Ok(msg) = rx.try_recv() {
-            out.push(msg);
-        }
-        out
-    }
-
-    /// The last session a device was told about.
-    fn latest(rx: &mut UnboundedReceiver<Hear>) -> Session {
-        drain(rx)
-            .into_iter()
-            .filter_map(|m| match m {
-                Hear::State { session } => Some(session),
-                _ => None,
-            })
-            .next_back()
-            .expect("a state")
-    }
-
-    fn join(desk: &mut Desk, user: &str, id: &str, audible: bool) -> UnboundedReceiver<Hear> {
-        let (tx, rx) = unbounded_channel();
-        desk.join(user, device(id, audible), tx);
-        rx
-    }
-
-    /// Two devices of one account see one session; a third account sees none
-    /// of it.
-    #[test]
-    fn a_session_belongs_to_an_account_and_not_to_a_device() {
-        let mut desk = Desk::new();
-        let mut phone = join(&mut desk, "alice", "phone", true);
-        let mut laptop = join(&mut desk, "alice", "laptop", true);
-        let mut bob = join(&mut desk, "bob", "phone", true);
-
-        // The laptop arriving is news to the phone, which was already here.
-        let seen = latest(&mut phone);
-        assert_eq!(seen.devices.len(), 2);
-        assert_eq!(latest(&mut laptop).devices.len(), 2);
-        assert_eq!(latest(&mut bob).devices.len(), 1, "a different account");
-
-        desk.report("alice", "phone", vec![track("Air")], 0, true, 1_500);
-        let seen = latest(&mut laptop);
-        assert_eq!(seen.now().map(|t| t.title.as_str()), Some("Air"));
-        assert_eq!(seen.output.as_deref(), Some("phone"));
-        assert!(drain(&mut bob).is_empty(), "not bob's session");
-    }
-
-    /// The whole feature in four lines: the laptop presses pause, the phone is
-    /// the one told to do it.
-    #[test]
-    fn a_command_goes_to_the_output_and_not_to_whoever_asked() {
-        let mut desk = Desk::new();
-        let mut phone = join(&mut desk, "alice", "phone", true);
-        let mut laptop = join(&mut desk, "alice", "laptop", false);
-        desk.report("alice", "phone", vec![track("Air")], 0, true, 0);
-        drain(&mut phone);
-        drain(&mut laptop);
-
-        desk.command("alice", "laptop", Command::Pause);
-        assert_eq!(
-            drain(&mut phone),
-            [Hear::Do {
-                command: Command::Pause
-            }]
-        );
-        assert!(
-            !drain(&mut laptop)
-                .iter()
-                .any(|m| matches!(m, Hear::Do { .. })),
-            "the asker is not the doer"
-        );
-    }
-
-    /// Nothing to be heard: a remote control asking for music when no output
-    /// exists gets an answer rather than silence, and does not become one.
-    #[test]
-    fn a_device_that_cannot_be_heard_never_becomes_the_output() {
-        let mut desk = Desk::new();
-        let mut laptop = join(&mut desk, "alice", "laptop", false);
-        drain(&mut laptop);
-
-        desk.command("alice", "laptop", Command::Play);
-        assert_eq!(desk.session("alice").unwrap().output, None);
-        // Told, not ignored: the bar has to be able to show that the press
-        // went nowhere.
-        assert!(matches!(
-            drain(&mut laptop).as_slice(),
-            [Hear::State { .. }]
-        ));
-
-        // And a report from it is not believed either.
-        desk.report("alice", "laptop", vec![track("Air")], 0, true, 0);
-        assert!(desk.session("alice").unwrap().queue.is_empty());
-    }
-
-    /// The first device to ask for something, when nothing is playing
-    /// anywhere, is the one that plays it. Without this every session would
-    /// start by picking a device.
-    #[test]
-    fn asking_first_is_how_a_device_becomes_the_output() {
-        let mut desk = Desk::new();
-        let mut phone = join(&mut desk, "alice", "phone", true);
-        drain(&mut phone);
-
-        desk.command("alice", "phone", Command::Play);
-        assert_eq!(
-            desk.session("alice").unwrap().output.as_deref(),
-            Some("phone")
-        );
-        assert!(drain(&mut phone).iter().any(|m| matches!(
-            m,
-            Hear::Do {
-                command: Command::Play
-            }
-        )));
-    }
-
-    /// Moving the sound hands over the queue, the place in it and the point in
-    /// the track — one command, so the new output can simply do it.
-    #[test]
-    fn a_transfer_hands_over_the_whole_session() {
-        let mut desk = Desk::new();
-        let mut phone = join(&mut desk, "alice", "phone", true);
-        let mut speaker = join(&mut desk, "alice", "speaker", true);
-        desk.report(
-            "alice",
-            "phone",
-            vec![track("Air"), track("Gigue")],
-            1,
-            true,
-            12_345,
-        );
-        drain(&mut phone);
-        drain(&mut speaker);
-
-        desk.transfer("alice", Some("speaker".into()));
-        let told: Vec<Command> = drain(&mut speaker)
-            .into_iter()
-            .filter_map(|m| match m {
-                Hear::Do { command } => Some(command),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(
-            told,
-            [Command::Start {
-                queue: vec![track("Air"), track("Gigue")],
-                at: 1,
-                position_ms: 12_345,
-                playing: true,
-            }]
-        );
-        // The old output is told nothing at all; it reads the state and goes
-        // quiet, which is the one rule rather than a second command.
-        assert!(
-            !drain(&mut phone)
-                .iter()
-                .any(|m| matches!(m, Hear::Do { .. })),
-            "the old output is not commanded, it is informed"
-        );
-        assert_eq!(
-            desk.session("alice").unwrap().output.as_deref(),
-            Some("speaker")
-        );
-    }
-
-    /// A device that cannot be heard cannot be picked either, and asking is
-    /// not an error — the picker simply does not move.
-    #[test]
-    fn the_sound_cannot_be_moved_to_something_that_cannot_make_it() {
-        let mut desk = Desk::new();
-        let mut phone = join(&mut desk, "alice", "phone", true);
-        let _laptop = join(&mut desk, "alice", "laptop", false);
-        desk.report("alice", "phone", vec![track("Air")], 0, true, 0);
-        drain(&mut phone);
-
-        desk.transfer("alice", Some("laptop".into()));
-        assert_eq!(
-            desk.session("alice").unwrap().output.as_deref(),
-            Some("phone")
-        );
-        desk.transfer("alice", Some("nobody-here".into()));
-        assert_eq!(
-            desk.session("alice").unwrap().output.as_deref(),
-            Some("phone")
-        );
-    }
-
-    /// Stopping everywhere is a transfer to nobody.
-    #[test]
-    fn transferring_to_nobody_stops_the_music() {
-        let mut desk = Desk::new();
-        let mut phone = join(&mut desk, "alice", "phone", true);
-        let _laptop = join(&mut desk, "alice", "laptop", false);
-        desk.report("alice", "phone", vec![track("Air")], 0, true, 0);
-
-        desk.transfer("alice", None);
-        let seen = latest(&mut phone);
-        assert_eq!(seen.output, None);
-        assert!(!seen.playing);
-        // The queue survives, so picking a device again resumes rather than
-        // starting from an empty bar.
-        assert_eq!(seen.queue.len(), 1);
-    }
-
-    /// The output going away is the session stopping, not the session
-    /// continuing somewhere nobody can hear.
-    #[test]
-    fn the_output_leaving_stops_the_session() {
-        let mut desk = Desk::new();
-        let mut phone = join(&mut desk, "alice", "phone", true);
-        let mut laptop = join(&mut desk, "alice", "laptop", false);
-        desk.report("alice", "phone", vec![track("Air")], 0, true, 4_000);
-        drain(&mut laptop);
-        drain(&mut phone);
-
-        desk.leave("alice", "phone");
-        let seen = latest(&mut laptop);
-        assert_eq!(seen.output, None);
-        assert!(!seen.playing);
-        assert_eq!(seen.devices.len(), 1);
-        assert!(drain(&mut phone).is_empty(), "it has gone");
-
-        // The last device out takes the room with it.
-        desk.leave("alice", "laptop");
-        assert!(desk.session("alice").is_none());
-        assert_eq!(desk.rooms(), 0);
-    }
-
-    /// A speaker is offered to whoever is listening, and is not somebody
-    /// listening.
-    ///
-    /// Both halves matter. Without the first a speaker would belong to one
-    /// account, which is not what a speaker in a kitchen is; without the
-    /// second a bridge standing in every room would mean no room was ever
-    /// empty, and the queue a person left behind would still be there
-    /// tomorrow.
-    #[test]
-    fn a_standing_device_is_offered_to_a_room_and_does_not_keep_it_open() {
-        let mut desk = Desk::new();
-        let (watch, mut opened) = unbounded_channel::<String>();
-        desk.watch(watch);
-
-        let mut phone = join(&mut desk, "alice", "phone", true);
-        assert_eq!(
-            opened.try_recv().ok(),
-            Some("alice".to_string()),
-            "a room opened"
-        );
-
-        let (speaker, _kitchen) = {
-            let (tx, rx) = unbounded_channel();
-            desk.stand("alice", device("kitchen", true), tx);
-            (rx, ())
-        };
-        let seen = latest(&mut phone);
-        assert_eq!(seen.devices.len(), 2, "the phone can see the speaker");
-        let _ = speaker;
-
-        // The person leaves. The speaker is still standing there and the room
-        // goes anyway, because a speaker is not somebody listening.
-        desk.leave("alice", "phone");
-        assert!(desk.session("alice").is_none());
-        assert_eq!(desk.rooms(), 0);
-    }
-
-    /// …and a standing device cannot open one, because a speaker is in the
-    /// session when somebody is listening rather than the other way round.
-    #[test]
-    fn a_standing_device_does_not_open_a_room() {
-        let mut desk = Desk::new();
-        let (tx, _rx) = unbounded_channel();
-        desk.stand("alice", device("kitchen", true), tx);
-        assert!(desk.session("alice").is_none());
-        assert_eq!(desk.rooms(), 0);
-    }
-
-    /// A watcher registered after the fact is told about the rooms that are
-    /// already open, so a bridge that started late is not a bridge that
-    /// missed everyone.
-    #[test]
-    fn a_watcher_hears_about_the_rooms_that_are_already_open() {
-        let mut desk = Desk::new();
-        let _alice = join(&mut desk, "alice", "phone", true);
-        let _bob = join(&mut desk, "bob", "phone", true);
-
-        let (tx, mut rx) = unbounded_channel::<String>();
-        desk.watch(tx);
-        let mut told = Vec::new();
-        while let Ok(user) = rx.try_recv() {
-            told.push(user);
-        }
-        told.sort();
-        assert_eq!(told, ["alice", "bob"]);
-
-        // …and about the next one.
-        let _carol = join(&mut desk, "carol", "phone", true);
-        assert_eq!(rx.try_recv().ok(), Some("carol".to_string()));
-    }
-
-    /// A speaker can be the output like anything else, and the account that
-    /// left still stops it — the sound belongs to the session, not to the
-    /// hardware.
-    #[test]
-    fn a_standing_device_can_be_the_output() {
-        let mut desk = Desk::new();
-        let mut phone = join(&mut desk, "alice", "phone", true);
-        let (tx, mut speaker) = unbounded_channel();
-        desk.stand("alice", device("kitchen", true), tx);
-        desk.report("alice", "phone", vec![track("Air")], 0, true, 1_000);
-        drain(&mut phone);
-        drain(&mut speaker);
-
-        desk.transfer("alice", Some("kitchen".into()));
-        assert_eq!(
-            desk.session("alice").unwrap().output.as_deref(),
-            Some("kitchen")
-        );
-        assert!(drain(&mut speaker).iter().any(|m| matches!(
-            m,
-            Hear::Do {
-                command: Command::Start { .. }
-            }
-        )));
-
-        // The person goes. The speaker is still there and the session is not:
-        // a room with nobody in it is not a room.
-        desk.leave("alice", "phone");
-        assert!(desk.session("alice").is_none());
-    }
-
-    /// A reloaded tab is the same device, so it does not appear twice and does
-    /// not lose the sound.
-    #[test]
-    fn a_reconnect_replaces_a_device_rather_than_adding_one() {
-        let mut desk = Desk::new();
-        let mut phone = join(&mut desk, "alice", "phone", true);
-        desk.report("alice", "phone", vec![track("Air")], 0, true, 0);
-        drop(phone);
-        phone = join(&mut desk, "alice", "phone", true);
-
-        let seen = latest(&mut phone);
-        assert_eq!(seen.devices.len(), 1);
-        assert_eq!(seen.output.as_deref(), Some("phone"));
-        assert_eq!(seen.now().map(|t| t.title.as_str()), Some("Air"));
+        let session = session.clone();
+        post.tell_room(Hear::State { session });
+        post.keep();
     }
 }

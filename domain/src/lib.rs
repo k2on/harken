@@ -121,3 +121,109 @@ petros::foreign_peer!(Peer {
     // then carries only what moved.
     views: crate::functions::Views,
 });
+
+/// The listening session, at the boundary.
+///
+/// Five methods rather than a socket. The phone used to own a `WebSocket` of
+/// its own, mirror this protocol into TypeScript by hand, and keep the two
+/// spellings in step by memory — which is exactly the "two definitions of one
+/// thing" the rest of this app exists to avoid. The frames ride the log's
+/// socket now, through this peer, so the protocol crosses as generated types
+/// and there is one description of it: [`crate::listening`].
+///
+/// They are here rather than in `petros::foreign_peer!` because the *types*
+/// are this app's. The engine carries opaque bytes on that channel
+/// deliberately — a `Say` and a `Hear` in the macro would be two more
+/// associated types on every `App`, including the wasm build, which has no
+/// business knowing what a speaker is.
+///
+/// What crosses is [`listening::foreign`]'s flat records rather than the
+/// protocol's own enums, for the reason that module gives.
+#[cfg(feature = "foreign")]
+#[uniffi::export]
+impl Peer {
+    /// Enter the picker: what to call this phone, and that it can be heard.
+    ///
+    /// Said again on every reconnect, because a room is the server's memory
+    /// of a socket and a new socket is a room that has never heard of this
+    /// device. [`Peer::listen_epoch`] is how a caller knows that happened.
+    pub fn listen_here(&self, name: String) -> Result<(), PeerError> {
+        self.say(listening::Say::Here {
+            name,
+            audible: true,
+            kind: listening::foreign::PHONE,
+        })
+    }
+
+    /// I am the output, and this is what I am doing.
+    pub fn listen_report(
+        &self,
+        queue: Vec<listening::Track>,
+        at: u32,
+        playing: bool,
+        position_ms: i64,
+    ) -> Result<(), PeerError> {
+        self.say(listening::Say::Report {
+            queue,
+            at,
+            playing,
+            position_ms,
+        })
+    }
+
+    /// Do this — here, or wherever the sound actually is. The server decides
+    /// which, and this phone finds out by being told.
+    pub fn listen_do(&self, doing: listening::foreign::Doing) -> Result<(), PeerError> {
+        self.say(listening::Say::Do {
+            command: doing.into(),
+        })
+    }
+
+    /// Move the sound, or stop it everywhere with nothing.
+    pub fn listen_transfer(&self, to: Option<String>) -> Result<(), PeerError> {
+        self.say(listening::Say::Transfer { to })
+    }
+
+    /// What the session has said since the last ask.
+    pub fn listen_take(&self) -> listening::foreign::Listened {
+        let heard = self
+            .with(|c| Ok(c.heard::<listening::Hear>()))
+            .unwrap_or_default();
+        let mut listened = listening::foreign::Listened {
+            session: None,
+            todo: Vec::new(),
+        };
+        for hear in heard {
+            match hear {
+                // Last one wins: a state is the whole truth, so an earlier one
+                // in the same batch is only an earlier truth.
+                listening::Hear::State { session } => listened.session = Some(session),
+                listening::Hear::Do { command } => listened.todo.push(command.into()),
+            }
+        }
+        listened
+    }
+
+    /// How many connections this peer has had.
+    ///
+    /// A room is the server's memory of a socket, so a new socket is a room
+    /// that has never heard of this device — which is when it has to say what
+    /// it is again. The client counts them for exactly this, and nothing else
+    /// on this side can see a reconnect happen.
+    pub fn listen_epoch(&self) -> u64 {
+        self.with(|c| Ok(c.epoch())).unwrap_or(0)
+    }
+}
+
+#[cfg(feature = "foreign")]
+impl Peer {
+    /// One frame out. Dropped rather than queued while there is no socket:
+    /// this channel carries what is true *now*, and a pause delivered ten
+    /// minutes late is worse than one that was lost.
+    fn say(&self, say: listening::Say) -> Result<(), PeerError> {
+        self.with(|c| {
+            c.say(&say)?;
+            Ok(())
+        })
+    }
+}

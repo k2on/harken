@@ -233,6 +233,7 @@ const MiniBar = memo(function MiniBar({
   const s = styles(theme);
   if (!track) return null;
   const pct = player.duration > 0 ? Math.min(100, (player.position / player.duration) * 100) : 0;
+  const at = where(player);
   return (
     <View style={s.bar}>
       <View style={s.line}>
@@ -247,8 +248,8 @@ const MiniBar = memo(function MiniBar({
           {/* Where it is playing takes the second line when it is not here,
               because that is the more surprising fact: a phone that is silent
               with a full bar is a phone somebody thinks is broken. */}
-          {player.elsewhere ? (
-            <Playing on={player.output?.name ?? 'another device'} theme={theme} small />
+          {at ? (
+            <Playing on={at.name} connecting={at.connecting} theme={theme} small />
           ) : (
             <Text style={s.meta} numberOfLines={1}>
               {player.buffering ? 'buffering…' : track.url ? track.creator : 'nothing to stream'}
@@ -288,16 +289,48 @@ const MiniBar = memo(function MiniBar({
  * other than the phone in your hand, and then it is the most important thing
  * on the screen.
  */
-function Playing({ on, theme, small }: { on: string; theme: Theme; small?: boolean }) {
+function Playing({
+  on,
+  theme,
+  small,
+  connecting,
+}: {
+  on: string;
+  theme: Theme;
+  small?: boolean;
+  connecting?: boolean;
+}) {
   const s = styles(theme);
   return (
     <View style={s.playingOn}>
       <Icon name="devices" size={small ? 12 : 15} tint={theme.accent} />
       <Text style={[s.playingText, small && s.playingSmall]} numberOfLines={1}>
-        {on}
+        {connecting ? `connecting to ${on}…` : on}
       </Text>
     </View>
   );
+}
+
+/**
+ * Which device the bar names, and whether the sound is on its way there.
+ *
+ * A hand-off in flight outranks the output, and has to: pressing a speaker in
+ * the house starts a second or two of it clearing its queue and fetching the
+ * first track, and for that second or two the sound is still *here*. Drawing
+ * the old device through it says the press did nothing, and drawing the new
+ * one as though it were playing is a bar counting along silence. So the one
+ * line says what is actually happening, in the place the thumb already is.
+ *
+ * `null` is "here, and nothing on its way" — which is when the second line
+ * goes back to being the artist's.
+ */
+function where(player: Player): { name: string; connecting: boolean } | null {
+  const named = (id: string | null) => player.devices.find((d) => d.id === id)?.name;
+  if (player.moving) {
+    return { name: named(player.moving) ?? 'another device', connecting: true };
+  }
+  if (!player.elsewhere) return null;
+  return { name: player.output?.name ?? 'another device', connecting: false };
 }
 
 /** The full-screen face. */
@@ -329,6 +362,7 @@ function Expanded({
   if (!track) return null;
   // Big, but not so big that the transport is off the bottom of a small phone.
   const art = Math.min(width - space.xl * 4, height * 0.38);
+  const at = where(player);
   return (
     <View style={s.expanded}>
       <LinearGradient
@@ -410,8 +444,8 @@ function Expanded({
             accessibilityRole="button"
             accessibilityLabel="which device is playing"
           >
-            {player.elsewhere ? (
-              <Playing on={player.output?.name ?? 'another device'} theme={theme} />
+            {at ? (
+              <Playing on={at.name} connecting={at.connecting} theme={theme} />
             ) : (
               <>
                 <Icon name="devices" size={15} tint={theme.dim} />

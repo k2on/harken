@@ -13,18 +13,40 @@
  * output — but it is *in* the session and controlling it, and hiding it would
  * answer "where is my laptop" with silence. "No audio device" is a different
  * answer from "not here", and the list should be able to say which.
+ *
+ * **And a device whose socket has gone is drawn too, for the same reason and
+ * a stronger one.** The sound stays with the device it was given to when that
+ * device's lid closes — a lid closing is not a decision to move the music —
+ * so the one row somebody most needs to see is the laptop that is not
+ * answering. Saying nothing there would make the sound look lost.
+ *
+ * **A hand-off gets a row of its own state.** A speaker in the house clears
+ * its queue, fetches the first track and starts, which is a second or two;
+ * until it reports, the session says it is *moving* to that device rather
+ * than playing on it, and the row says "connecting…". Without it the press
+ * reads as one that missed, and the obvious thing to do about that is press
+ * again — which is how somebody ends up with two hand-offs in flight.
  */
 
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeIn, FadeOut, SlideInDown } from 'react-native-reanimated';
 
-import type { Device } from '@/listening';
+import { Kind, type Device } from '@/listening';
 import { FONT, radius, space, type Theme } from '@/theme';
 import { Icon } from './icon';
+
+/** What a row is drawn as. One glyph per kind, and nothing infers it: the
+ *  device said what it was when it joined. */
+function glyph(device: Device, mine: boolean): 'phone' | 'laptop' | 'speaker' {
+  if (device.kind === Kind.Speaker) return 'speaker';
+  if (device.kind === Kind.Phone) return 'phone';
+  return mine ? 'phone' : 'laptop';
+}
 
 export function Devices({
   devices,
   output,
+  moving,
   me,
   theme,
   bottom,
@@ -34,6 +56,8 @@ export function Devices({
   devices: Device[];
   /** The id of the one making the sound, or null. */
   output: string | null;
+  /** The id of one a hand-off is on its way to, or null. */
+  moving: string | null;
   /** This device's id, so the list can say which row is you. */
   me: string;
   theme: Theme;
@@ -60,38 +84,57 @@ export function Devices({
             </Text>
           ) : (
             devices.map((device) => {
-              const here = device.id === output;
+              const sounding = device.id === output;
+              const coming = device.id === moving;
               const mine = device.id === me;
+              // Two reasons a row cannot be picked, and they are not the same
+              // sentence: one has no speaker and the other is not there.
+              const takeable = device.audible && device.here;
+              const why = !device.audible
+                ? 'no audio device — a remote control'
+                : !device.here
+                  ? 'not answering'
+                  : null;
               return (
                 <Pressable
                   key={device.id}
-                  disabled={!device.audible}
+                  disabled={!takeable}
                   onPress={() => {
                     onPick(device.id);
                     onClose();
                   }}
                   style={({ pressed }) => [s.row, pressed && s.rowPressed]}
                   accessibilityRole="button"
-                  accessibilityState={{ selected: here, disabled: !device.audible }}
+                  accessibilityState={{ selected: sounding, disabled: !takeable }}
                 >
                   <Icon
-                    name={mine ? 'phone' : 'laptop'}
+                    name={glyph(device, mine)}
                     size={21}
-                    tint={here ? theme.accent : device.audible ? theme.dim : theme.faint}
+                    tint={sounding || coming ? theme.accent : takeable ? theme.dim : theme.faint}
                   />
                   <View style={s.rowText}>
                     <Text
-                      style={[s.rowName, here && s.rowNameOn, !device.audible && s.rowOff]}
+                      style={[
+                        s.rowName,
+                        (sounding || coming) && s.rowNameOn,
+                        !takeable && s.rowOff,
+                      ]}
                       numberOfLines={1}
                     >
                       {device.name}
                       {mine ? ' (this one)' : ''}
                     </Text>
-                    {device.audible ? null : (
-                      <Text style={s.rowWhy}>no audio device — a remote control</Text>
-                    )}
+                    {/* A hand-off in flight outranks everything else this row
+                        could say: it is the thing that just happened. */}
+                    {coming ? (
+                      <Text style={s.rowWhy}>connecting…</Text>
+                    ) : why ? (
+                      <Text style={s.rowWhy}>{why}</Text>
+                    ) : null}
                   </View>
-                  {here ? <Icon name="playing" size={18} tint={theme.accent} /> : null}
+                  {sounding && !coming ? (
+                    <Icon name="playing" size={18} tint={theme.accent} />
+                  ) : null}
                 </Pressable>
               );
             })

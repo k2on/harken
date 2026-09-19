@@ -27,8 +27,9 @@ domain/                  the domain — the ONLY apply
                          media / song, and person / work / movement /
                          recording / credit — see "A work is not a recording"
   src/schema.rs          the model: the tables, and the view a client reads
-  src/listening.rs       the *other* wire: one account's audio session, and the
-                         four sentences its devices say. Not the log, ever
+  src/listening.rs       the *other* channel on the same socket: one account's
+                         audio session, and the four sentences its devices
+                         say. A `petros::live` room. Not the log, ever
   src/functions.rs       every mutation and every query, one definition each;
                          a mutation takes `ctx: &Ctx` for who authored it
   tests/conformance.rs   the native and wasm builds of `apply`, compared
@@ -44,7 +45,7 @@ server/                  axum, with one Petros handler mounted on it, and the
   src/library.rs         the media directory, as a peer: walk it, watch it,
                          author what it finds
   src/listening.rs       one audio session per account: who is making the
-                         sound, and the socket at /listen that relays it
+                         sound, and the `Live` the sync socket relays it over
   src/assistant.rs       …and the house: every Home Assistant media_player as
                          a device in it, over one thread and six service calls
   tests/library.rs       …a directory of real files becoming songs, once
@@ -59,7 +60,7 @@ iced/                    the desktop and browser client
                          component implements to get it
   src/route.rs           what the address bar says, and the back button
   src/listening.rs       this device's end of the account's audio session:
-                         the socket, and the one rule about making a sound
+                         an outbox, a pump, and the one rule about sound
   src/player.rs          what is playing — an <audio> element in a browser,
                          and nothing at all on the desktop
   src/covers.rs          a cover, fetched once and shrunk before the renderer
@@ -71,7 +72,7 @@ iced/                    the desktop and browser client
                          splash the wasm module is fetched behind
   nix/default.nix        the desktop package and `iced`
   nix/web.nix            the wasm build, `web` and `web-build`
-mobile/                  the phone client; src/ is UI and a socket, nothing else
+mobile/                  the phone client; src/ is UI over the peer's one socket
   src/auth.ts            …and signing in, through a browser sheet and `harken://`
   src/app/auth.tsx       …and the route that scheme names, because it is one
   src/app/index.tsx      which server, and the login it remembers for it
@@ -89,8 +90,8 @@ mobile/                  the phone client; src/ is UI and a socket, nothing else
   src/player.tsx         what is playing — `expo-audio`, the queue, the
                          transport on the lock screen, and this account's end
                          of the listening session, because they are one thing
-  src/listening.ts       …the socket that carries it, and the wire spelt the
-                         way the wire spells it
+  src/listening.ts       …the same state machine in TypeScript, over the
+                         peer's own socket. No second one, and no second wire
   src/media.ts           …and the one place a `file` becomes a URL
   src/theme.ts           the palette: light, dark, and the gold. The only place
                          in this directory a color is written down
@@ -1670,8 +1671,27 @@ decision and everything else follows from it. The log is permanent and totally
 ordered: every peer replays every entry, forever. An afternoon of listening is
 thousands of pauses, seeks and skips, and not one of them is worth replaying
 tomorrow — "what is playing right now" is precisely the state that *should* be
-lost when the server restarts. So it lives in the server's memory, over a
-socket of its own at `/listen`, and `functions.rs` is still the only `apply`.
+lost when the server restarts. So it lives in the server's memory and
+`functions.rs` is still the only `apply`.
+
+**It rides the sync socket, and it used to have one of its own.** `/listen`
+is gone. A second `WebSocket` is a second thing to authenticate, a second
+thing to reconnect, a second thing to keep alive through a proxy and a second
+answer to "am I online" — and the two disagreed at the worst moment, which on
+a laptop waking up is every morning. `petros::live` carries it now: a room per
+account on the connection the engine already has, `Client::say` out and
+`Client::heard` back, with the same sign-in and the same keepalive under it.
+The engine's half is in `../petros/docs/decisions.md` under "The realtime
+channel is not the log".
+
+**What that answered, and it was a real question.** Max's was "maybe Petros
+needs an in-memory cache, or we save to db, or real time", and the answer is
+all three, layered, with the layering in the *engine* rather than here: the
+log is permanent and replayed; a live room is one current value, in memory,
+never ordered and never replayed; and a frame is now. What survives a restart
+is what the app asks to keep — one row in `petros_live`, a snapshot and not a
+log, last write wins — which is how an afternoon's queue outlives a deploy
+without a single pause or seek reaching the log.
 
 The protocol is `domain/src/listening.rs`, and it is in the domain crate
 because that crate is the only vocabulary the server and the clients already
@@ -1680,22 +1700,32 @@ share — not because it is domain. Nothing in it writes a row. It is behind
 impls come in through that feature rather than the dependency line, for the
 reason the `petros-schema/author` comment gives.
 
-**JSON, not CBOR.** The engine's frames are CBOR because they are the log;
-these are not, and a third client reads them — the phone, in TypeScript, over
-a `WebSocket` the platform already has. `encode` and `decode` are in the
-protocol rather than at each end, so a server writing `serde_json::to_string`
-and a client writing something else cannot become two answers to one question.
+**CBOR, and it used to be JSON.** JSON was right when a third client parsed
+the wire itself: the phone had a `WebSocket` and a hand-written copy of these
+types in TypeScript. It does not any more — the frames go through the same
+UniFFI peer the mutations do, so every end of this protocol is Rust and the
+types in that file are the one description of it. The engine's frames are
+CBOR and now so are these, on the same wire, which is one fewer encoder.
 
 Three rules are the whole of `server/src/listening.rs`:
 
 - **Exactly one device is the output**, and only it makes a sound. Every other
   device of that account draws what it is told.
+- **The output survives its socket.** This is the bug the feature was reported
+  for: a laptop's lid closing is not a decision to move the music, and
+  treating it as one is why the sound used to jump back to whichever device
+  asked next. `Session.output` stays where it was; `Device.here` says whether
+  that device is answering; `playing` goes false because nothing is making a
+  sound.
 - **A command goes to the output, not to whoever asked.** That is the feature:
   pressing pause on a phone pauses the laptop.
-- **A device that can be heard and asks for something, when nothing else is
-  the output, becomes the output.** Without this the first tap of the day
-  would do nothing and there would be a device to pick before any music could
-  start, which is a setup step for the common case.
+- **…unless the output cannot be reached and the asker can make a sound.** The
+  one escape, and it is narrow on purpose: only a press that *means* a sound —
+  play, a skip, a track — takes it, so a phone waking up and pausing out of
+  habit does not steal a session from a laptop that is merely asleep. Arriving
+  claims nothing at all, which is the other half: the first version let any
+  audible device that asked become the output, and that is what made the sound
+  jump.
 
 Some details that are each a decision:
 
@@ -1723,19 +1753,38 @@ Some details that are each a decision:
   clients have clocks and they do not agree, so a device that wants a moving
   scrubber counts from when *it* received the state — and the output resends
   about once a second, which is what keeps the counting honest.
-- **The last device out takes the room with it.** Keeping the queue would mean
-  a phone opened tomorrow resumes an afternoon nobody remembers, and the log is
-  where things are kept.
+- **The last device out takes the room with it — and the room is written down
+  first.** Emptying it outright was the old rule, on the reasoning that a
+  phone opened tomorrow should not resume an afternoon nobody remembers. That
+  is right about *tomorrow* and wrong about the ten seconds after the last tab
+  closes, which is what actually happens: `Desk::snapshot` hands the engine
+  one row to keep and `Desk::wake` reads it back on the next join, with
+  `playing` false, no hand-off in flight and every device `here: false` —
+  because what is true about a queue survives and what is true about a socket
+  cannot. A room with no output and no queue is worth nothing, so nothing is
+  written for one.
 
 ### What the client does with it, and the one rule
 
-`iced/src/listening.rs` is this device's end. Everything the rest of the
-program needs from it is two questions — *am I the output* and *is the sound
-somewhere else* — and they are deliberately not each other's negation: a
-session with **no** output is neither, and there the right answer is to play
-here and let the report claim it. Without that third case the first tap of the
-day would need a device picked first, which is a setup step for the common
-case.
+`iced/src/listening.rs` is this device's end, and it **owns no socket**: it is
+a state machine — the session as the server last described it, an outbox the
+tick drains through `Client::say`, and what `Client::heard` brought back. The
+same state machine `mobile/src/listening.ts` holds, deliberately, because two
+clients with two of them is two answers to "am I the output" and that question
+has exactly one right answer per device.
+
+Everything the rest of the program needs from it is two questions — *am I the
+output* and *is the sound somewhere else* — and they are deliberately not each
+other's negation: a session with **no** output is neither, and there the right
+answer is to play here and let the report claim it. Without that third case the
+first tap of the day would need a device picked first, which is a setup step
+for the common case.
+
+**A new connection is a room that has never heard of this device**, so the
+pump compares `Client::epoch` against what it last introduced itself on and
+says `Here` again when they differ — and forgets what it last reported, since
+nobody over there remembers hearing it. That is the whole reconnect story, and
+it is three lines because the engine already does the reconnecting.
 
 `App::ask` is the one place a transport button is routed, and the whole of it
 is:
@@ -1803,12 +1852,20 @@ it would be worse, because a laptop that is in the session and controlling it
 should see itself listed, and "no audio device" is a different answer from "not
 here".
 
-**A browser, and only a browser** — the same `cfg` as the media session, for
-the same reason it was put there the first time. The desktop has no audio
-device so it can never be the output; being a *remote control* is the half it
-could still do, and that wants a native WebSocket client, which is a dependency
-this workspace does not have and a `cargoVendorHash` to move for it. `nix run
-.#web` is the desktop client for anyone who wants one.
+A device whose socket has gone is drawn too, and that is the row that matters
+most: the sound stays with the device it was given to, so the one thing
+somebody needs to see is the laptop that is not answering. It is labelled
+`(not answering)`, and a hand-off in flight is labelled `…` — a speaker in the
+house takes a second or two to clear its queue and fetch, and a row that says
+nothing for those two seconds reads as a press that missed.
+
+**And the desktop is in the session now**, where this was a browser-only
+feature before. Not because a desktop had nothing to say: `/listen` would have
+needed a native WebSocket client, which was a dependency this workspace did
+not have and a `cargoVendorHash` to move for it. The log's socket has been
+native all along, so losing the second one made a desktop peer a remote
+control for free. `Player::AUDIBLE` is still false there, so it can never be
+the output — and it can pause the phone.
 
 ### The phone is a shell with six screens, and the player is one of them
 
@@ -1872,20 +1929,49 @@ gesture people try once.
 
 ### And the phone, which is the device the feature is about
 
-`mobile/src/listening.ts` is the same end in TypeScript — the protocol mirrored
-from `domain/src/listening.rs`, and a module-level singleton socket beside
-`@petros/client`'s `session()`, for the reason that one exists: it has to
-outlive every screen. `src/app/library.tsx` *points* it (it is the screen that
-knows which server and which login) and never owns it.
+`mobile/src/listening.ts` is the same state machine in TypeScript, and it has
+**no socket and no copy of the wire**. It had both: a `WebSocket` at `/listen`
+with its own `hello`, its own token and its own retry loop, and a
+hand-mirrored set of the protocol's types. Both are gone. It rides the peer's
+own connection now, through six `#[uniffi::export]` methods on the native
+peer, and the types are generated from `domain/src/listening.rs`. It is still
+a module-level singleton beside `@petros/client`'s `session()`, for the reason
+that one exists: it has to outlive every screen. `(app)/_layout.tsx` *points*
+it and never owns it — and it no longer hands it a token, because the engine
+already proved who this is on the one connection they share.
 
-**The wire is spelt the way the wire spells it**: `position_ms`, not
-`positionMs`. Renaming on the way in would be a second description of the
-protocol living in the client that reads it, and the first time a field moved
-the two would disagree somewhere nobody was looking. The awkwardness is the
-point — a field that looks foreign is a field somebody else defined. `player.tsx`
-holds the only two conversions, `wireOf` and `trackOf`, and `Track` gained a
-`file` beside its `url`: the URL is this phone's answer and the path is what
-another device is handed, because it resolves one of its own.
+**The wire is no longer spelt the way the wire spells it, and losing that rule
+is the point.** `position_ms` in TypeScript existed because this file carried
+a hand-written copy of the protocol: the awkwardness was the tell that
+somebody else had defined the field, and the rule was there so the two
+descriptions could not silently drift. There is one description now, so a
+field that moves is a `tsc` error rather than a mismatch nobody was looking
+at — which is strictly stronger than a spelling convention. What it costs is
+UniFFI's own spelling, `positionMs`, and an `i64` arriving as a `bigint`.
+`player.tsx` still holds the only two conversions, `wireOf` and `trackOf`, for
+that second reason alone: a duration is arithmetic on one side and sixty-four
+bits on the other. `Track` keeps its `file` beside its `url` — the URL is this
+phone's answer and the path is what another device is handed, because it
+resolves one of its own.
+
+**The commands cross flat, and the protocol's own enums do not cross at all.**
+`Command`, `Say` and `Hear` are Rust enums with fields, which is the right
+shape there and the worst shape at a boundary: UniFFI renders each variant as
+its own class, so a TypeScript call site looks nothing like the Rust it is
+calling. `listening::foreign` is a record and a fieldless `Verb` instead —
+which is what `PatchOp` already is on that side — with the conversion written
+once, beside the definition it converts. The three keep no `uniffi` derive at
+all, because a derive registers a type whether or not any signature names it,
+and two ways to say one thing in generated code is worse than none.
+
+**It is pumped by the peer's session, not by a screen.** `@petros/client`'s
+session already runs a 50ms loop that outlives every mount, so `peer.ts` hands
+it `listening.pump` as its `tick`. That is a `tick` and deliberately not a
+query: what comes back on this channel is what is true *now* and moves no row,
+so re-reading the library on it would be paying for the whole read model once
+a second for ever. `listening` notifies its own subscribers instead — which is
+also why `Link` no longer announces every frame it receives. See the engine's
+README.
 
 **It is inside `PlayerProvider` rather than in a provider of its own**, because
 these are one thing: the session is what is playing, and so is this. Which buys
@@ -1919,7 +2005,19 @@ Three phone-specific things:
 - **A device that cannot be heard is drawn and not selectable**, the same as on
   the desktop and for the same reason: hiding the laptop would answer "where
   is my laptop" with silence, and "no audio device" is a different answer from
-  "not here". The sheet says which.
+  "not here". The sheet says which — and says `not answering` for the third
+  case, a device whose socket has gone while the sound still belongs to it.
+- **A hand-off says so while it is in flight.** `Session.moving` is a device
+  the sound has been given to that has not reported yet, which on a speaker in
+  the house is the second or two it spends clearing its queue and fetching the
+  first track. The row reads `connecting…` and so does the bar, which is where
+  the thumb already is — because a press that appears to do nothing is a press
+  somebody makes twice, and two hand-offs in flight is a worse place to be
+  than one that is slow.
+- **`Kind` is drawn, and a speaker is not a laptop.** A device says what it is
+  when it joins and nothing infers it, so the sheet has a glyph per kind —
+  which is what put Lucide's `speaker` in `branding/icons/`, the thirty-third
+  vendored drawing, generated into both clients the way the rest are.
 
 ## A speaker is a device in the session, not a client of it
 
@@ -1932,6 +2030,13 @@ already describes a device — it joins a room, becomes the output, is told
 things and reports what it is doing — and nothing in it says the far end has
 to be somebody's screen. What `server/src/assistant.rs` adds is the thing that
 *is* a device on a speaker's behalf.
+
+It is a `Live` peer like any other now, with no socket of its own: the bridge
+holds one `ConnId` per (room, entity) and speaks through the hub. Which rooms
+exist is something it has to be *told* rather than poll for, so `Desk` keeps a
+list of watchers and emits `Watch::Open` / `Watch::Shut` as the first client
+arrives and the last one leaves — registered before the desk is handed to the
+hub, because a room opened in the gap is a room the house never hears about.
 
 **Home Assistant rather than Sonos directly.** Not convenience: you do not get
 Sonos, you get every `media_player` in the house — a Chromecast, a television,
@@ -1956,9 +2061,22 @@ Six things that are each a decision:
   the *client* wires.
 - **Two people can both take the kitchen, and the second one gets it.** A
   speaker is one piece of hardware and a room is one account's, so the first
-  is *told* — `Act::Release`, which is a `transfer(user, None)` — rather than
-  left drawing a transport for somebody else's music. That is what a real
-  speaker does.
+  is *told* — `Act::Release`, which is a `Say::Transfer { to: None }` said as
+  that speaker into the room that is losing it — rather than left drawing a
+  transport for somebody else's music. That is what a real speaker does.
+- **A hand-off gets a few polls of grace before it is believed.** A speaker
+  told to play does not play at once: it clears its playlist, fetches the
+  first track and starts, which on a Sonos is seconds. Reading its state in
+  that window says it is playing nothing of ours, which is exactly the rule
+  below for letting one go — so a speaker would be released almost every time
+  it was picked, and the picker would flicker back to wherever the sound was.
+  `SETTLE` is five polls of patience, spent once per hand-off, and it is also
+  what `Session.moving` is drawn from at the other end.
+- **What the room says is read back, not only written.** The bridge takes
+  `Hear::State` as well as sending, so a room that has moved its sound
+  somewhere else drops the hold and pauses the speaker. Without that half, a
+  phone taking the sound back left a speaker playing under it: the session
+  said the phone and the house said the kitchen, and both were reporting.
 - **A speaker playing something that is not ours is let go.** If it reports a
   URL that is not in the queue it was given — a radio stream, a doorbell
   chime — the session stops claiming it, because a bar with a scrubber
@@ -2051,6 +2169,13 @@ tracks are in harken's queue and not the speaker's. Asking for one should be a
 fresh hand-off rather than a `media_previous_track`, and nothing does that
 yet. And none of this has been run against a real Home Assistant from here —
 the rules are tested, the six service calls are not.
+
+**Picking a speaker resumes where the track was**, which it did not before:
+`Desk::transfer` sends `Command::Start` carrying the session's own
+`position_ms`, and `Act::Start` seeks after the enqueue rather than starting
+the track again. The seek is issued against a speaker that may not have read
+any of the stream yet, which Home Assistant queues rather than refuses; the
+worst case is a second of the beginning.
 
 ## An album and an artist are rows, and each carries its own cover
 
@@ -2972,6 +3097,24 @@ tap that costs the same as the four hundredth is the property.
 
 ## Not verified
 
+**The phone's half of the listening session has not been compiled.** Nothing
+in this container can run `nix run .#bindings` or `tsc`: `mobile/node_modules`
+does not exist and `harken-native` is *generated* from the domain crate by a
+nix build. So `mobile/src/listening.ts`, `player.tsx`, `peer.ts`,
+`ui/devices.tsx` and `ui/player.tsx` are written against the boundary the Rust
+declares and checked by reading. The Rust side of that boundary does build
+(`cargo build -p harken --features foreign`), and what the generator makes of
+it is the part nobody here has seen. The shapes most likely to be wrong are
+the ones this container cannot settle: `i64` is assumed to arrive as a
+`bigint` (`item.durationMs > 0n` in `ui/trackrow.tsx` is the precedent) and
+`Option<T>` as `T | undefined`. `nix run .#bindings` is what would say.
+
+**And the two generated glyph files were written by hand again**, the way they
+were the day Lucide was vendored: `branding/icons/speaker.svg` is new, so
+`iced/src/glyphs.rs` and `mobile/src/ui/glyphs.ts` were edited to match what
+`branding/nix/glyphs.nix` would emit. The `files` check is what proves it, and
+it prints the diff if the hand-written copy is a byte out.
+
 iOS has never been built from this repository — no machine here can run the
 toolchain — and there is no longer a workflow that tries. `ubrn.config.yaml`
 still describes the iOS targets and `HarkenNative.podspec` is still generated,
@@ -3428,3 +3571,28 @@ first. The engine's own decisions are in `../petros/docs/decisions.md`.
     the debug screen's monospace is the one deliberate exception, because a
     column of numbers and URLs is what monospace is for. **Not verified on a
     device** — nothing here can build an APK.
+
+- **The second socket is gone, and what it cost was not the socket.** There
+  was a `WebSocket` at `/listen` beside the log's at `/sync`: its own hello,
+  its own token, its own reconnect, its own JSON, and its own answer to "am I
+  online". Every one of those is a thing that can be *half* true. A phone
+  waking up would bring one back before the other, so the library was
+  syncing while the picker said there were no devices, or the picker had a
+  laptop in it and the library had not moved since yesterday — and which half
+  was wrong was not a question any screen could ask, because each half only
+  knew about itself.
+
+  It is a [`petros::live`] room on `/sync` now. What that buys is not a line
+  count: one socket cannot be half connected, so `linked()` is *the* answer
+  and a room that has never heard of this device is a fact the engine already
+  knows (the connection count, which is what `epoch` reads). The keepalive is
+  the transport's, written once, under both. And the wire is the domain's own
+  CBOR through the engine's `say`/`heard` rather than a JSON dialect spelt out
+  at each end.
+
+  The general shape is worth keeping: **a second channel between the same two
+  processes is a second answer to every question the first one answers**, and
+  the answers disagree exactly when something has gone wrong, which is when
+  you are reading them. Realtime is a *lifetime* — the log is permanent, a
+  room is current, a frame is now — and a lifetime is a thing to put in the
+  engine beside the other one rather than a reason for another connection.

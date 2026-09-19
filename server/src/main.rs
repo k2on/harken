@@ -35,7 +35,6 @@ use axum::routing::get;
 use axum::Router;
 use harken::HarkenApp;
 use harken_server::assistant::ha;
-use harken_server::listening::route::{listen, Listening};
 use harken_server::{library, listening};
 use petros_auth::oidc::Provider;
 use petros_auth::server::{Auth, Mode};
@@ -80,7 +79,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let auth = Arc::new(auth);
 
-    let hub = Hub::<HarkenApp>::open(petros::open_path(&path)?, auth.authenticator())?;
+    // The house, if there is one — read before the hub, because the bridge
+    // has to be listening for rooms before any of them can open.
+    let house = assistant()?;
+
+    // What each account is listening to, and where. It is the hub's realtime
+    // machine now rather than a socket of its own: `petros::live` carries it
+    // on the same wire as the log, in a room per account, held in memory. The
+    // log is permanent and an afternoon of pauses and skips is not worth
+    // replaying tomorrow. See `harken::listening`.
+    let mut desk = listening::Desk::new();
+    // Registered *before* the desk is handed over, because after that it
+    // belongs to the engine. The rooms already open come back at once, so a
+    // bridge is never told about a room it missed.
+    let rooms = house.as_ref().map(|_| {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        desk.watch(tx);
+        rx
+    });
+
+    let hub = Hub::<HarkenApp>::open_live(petros::open_path(&path)?, auth.authenticator(), desk)?;
 
     // The media directory, if there is one. Two halves that have to agree on
     // one string: the scanner writes each track's path *relative to this
@@ -95,42 +113,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // song's path reads `music/…` and its URL `/media/music/…`.
     let media = env("HARKEN_MEDIA").map(std::path::PathBuf::from);
 
-    // What each account is listening to, and where. A `HashMap` in memory
-    // rather than anything durable, and that is the decision rather than a
-    // shortcut: the log is permanent and an afternoon of pauses and skips is
-    // not worth replaying tomorrow. See `harken::listening`.
-    let desk = Arc::new(std::sync::Mutex::new(listening::Desk::new()));
     let mut app = Router::new()
         .route("/sync", get(petros_axum::sync::<HarkenApp>))
         .route("/healthz", get(healthz))
         .with_state(hub.clone())
-        // Its own state, so it is merged rather than added: this one reads who
-        // a token proves and the sessions, and knows nothing about the log.
-        .merge(
-            Router::new()
-                .route("/listen", get(listen))
-                .with_state(Listening {
-                    auth: auth.clone(),
-                    desk: desk.clone(),
-                }),
-        )
         .merge(petros_auth::server::router(auth.clone()));
     if let Some(dir) = &media {
         app = app.nest_service("/media", ServeDir::new(dir));
     }
 
-    // The house, if there is one. Every `media_player` Home Assistant knows
-    // about becomes a device in every listening session — a Sonos, a
-    // Chromecast, a television — because a speaker is a device and nothing in
-    // the protocol says the far end has to be somebody's screen.
+    // Every `media_player` Home Assistant knows about becomes a device in
+    // every listening session — a Sonos, a Chromecast, a television — because
+    // a speaker is a device and nothing in the protocol says the far end has
+    // to be somebody's screen. It stands in each room as a peer of the
+    // realtime channel, which is how it is a device rather than a client.
     //
     // Kept alive for the life of the process: dropping it stops the bridge.
-    let _assistant = match assistant()? {
-        Some(config) => {
+    let _assistant = match (house, rooms) {
+        (Some(config), Some(rooms)) => {
             println!("  {} player(s) from {}", config.players.len(), config.url);
-            Some(ha::start(config, desk.clone()))
+            Some(ha::start(config, hub.clone(), rooms))
         }
-        None => None,
+        _ => None,
     };
 
     // Kept alive for the life of the process: dropping it stops the watch.
@@ -156,7 +160,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     println!("harken-server on ws://{addr}/sync — {}", path.display());
-    println!("  one listening session per account on ws://{addr}/listen");
+    println!("  one listening session per account, on that same socket");
     match auth.mode() {
         Mode::Oidc(provider) => println!("  signing in through {}", provider.issuer()),
         // Loudly, every time: a server that takes people's word for who they

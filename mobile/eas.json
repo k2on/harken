@@ -6,7 +6,7 @@
       },
       "env": {
         "CARGO_TERM_COLOR": "never",
-        "PETROS_REV": "c09832fd14716efce205bdb289af7d3a19da28e8",
+        "PETROS_REV": "08ded65bd527ee9522cfcd71d432a4d2b334af65",
         "RUST_TARGETS": "aarch64-linux-android x86_64-linux-android",
         "RUST_VERSION": "1.90.0"
       }

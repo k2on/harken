@@ -59,8 +59,11 @@ import {
 
 import {
   listening,
-  type Command,
+  ms,
+  verb,
+  Verb,
   type Device,
+  type Doing,
   type Session,
   type Track as WireTrack,
 } from '@/listening';
@@ -88,15 +91,20 @@ export type Track = {
   file: string;
 };
 
-/** Both directions across the boundary, in one place. The wire's spelling is
- *  the wire's (`duration_ms`), and this is the only file that has to know it. */
+/** Both directions across the boundary, in one place.
+ *
+ *  The session's `Track` is generated from `domain/src/listening.rs`, so its
+ *  spelling is UniFFI's and an `i64` arrives as a `bigint` — which is the
+ *  only reason these two functions still exist now that the field names
+ *  agree. A duration is arithmetic on this side and sixty-four bits on that
+ *  one, and this is the only file that has to know it. */
 function wireOf(track: Track): WireTrack {
   return {
     id: track.id,
     title: track.title,
     creator: track.creator,
     album: track.album,
-    duration_ms: track.ms,
+    durationMs: BigInt(Math.round(track.ms)),
     file: track.file,
   };
 }
@@ -107,7 +115,7 @@ function trackOf(wire: WireTrack, server: string): Track {
     title: wire.title,
     creator: wire.creator,
     album: wire.album,
-    ms: wire.duration_ms,
+    ms: ms(wire.durationMs),
     file: wire.file,
     url: mediaUrl(wire.file, server),
   };
@@ -150,6 +158,15 @@ export type Player = {
    * picked first, which is a setup step for the common case.
    */
   elsewhere: boolean;
+  /**
+   * Which device a hand-off is on its way to, or null.
+   *
+   * A third state beside "playing here" and "playing there", and the sheet
+   * needs it: a speaker in the house takes a second or two to clear its
+   * queue, fetch the first track and start, and a row that says nothing for
+   * those two seconds reads as a press that missed.
+   */
+  moving: string | null;
   /** This device's id, so a picker can mark which row is you. */
   me: string;
   /** Move the sound, or stop it everywhere with `null`. */
@@ -266,37 +283,43 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   useEffect(() => listening.subscribe(() => setSession(listening.session)), []);
 
   const me = listening.me;
-  const elsewhere = !!session && session.output !== null && session.output !== me;
+  // An `Option<DeviceId>` arrives as `string | undefined`, so the test is that
+  // there *is* one rather than that it is not null.
+  const elsewhere = !!session && !!session.output && session.output !== me;
   const outputsHere = !!session && session.output === me && me !== '';
+  // Where a hand-off is going, if one is in flight — which the sheet draws as
+  // connecting rather than as the one playing, because a speaker in the house
+  // takes a second or two to fetch anything.
+  const moving = session?.moving ?? null;
 
   /** Do it here. Reached from `ask`, and from the server — which only ever
    *  tells the device that *is* the output. */
   const obey = useCallback(
-    (command: Command) => {
-      switch (command.do) {
-        case 'play':
+    (doing: Doing) => {
+      switch (doing.verb) {
+        case Verb.Play:
           audio.play();
           break;
-        case 'pause':
+        case Verb.Pause:
           audio.pause();
           break;
-        case 'next':
+        case Verb.Next:
           skipHere(1);
           break;
-        case 'previous':
+        case Verb.Previous:
           skipHere(-1);
           break;
-        case 'seek':
-          void audio.seekTo(Math.max(0, command.position_ms / 1000)).catch(() => {});
+        case Verb.Seek:
+          void audio.seekTo(Math.max(0, ms(doing.positionMs) / 1000)).catch(() => {});
           break;
-        case 'start': {
+        case Verb.Start: {
           // The only place a `file` becomes a URL on this side: a hand-off
           // carries the log's path so that each device resolves it against
           // its own server.
-          const list = command.queue.map((wire) => trackOf(wire, listening.server));
+          const list = doing.queue.map((wire) => trackOf(wire, listening.server));
           setQueue(list);
-          const next = list[command.at];
-          if (next) start(next, command.position_ms, command.playing);
+          const next = list[doing.at];
+          if (next) start(next, ms(doing.positionMs), doing.playing);
           break;
         }
       }
@@ -315,9 +338,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
    * output, or nothing is and the report below claims it.
    */
   const ask = useCallback(
-    (command: Command) => {
-      if (listening.elsewhere) listening.ask(command);
-      else obey(command);
+    (doing: Doing) => {
+      if (listening.elsewhere) listening.ask(doing);
+      else obey(doing);
     },
     [obey],
   );
@@ -326,13 +349,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     (next: Track, list: Track[]) => {
       if (listening.elsewhere) {
         listening.ask({
-          do: 'start',
+          verb: Verb.Start,
           queue: list.map(wireOf),
           at: Math.max(
             0,
             list.findIndex((t) => t.id === next.id),
           ),
-          position_ms: 0,
+          positionMs: 0n,
           playing: true,
         });
         return;
@@ -347,12 +370,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   );
 
   const skip = useCallback(
-    (delta: number) => ask(delta > 0 ? { do: 'next' } : { do: 'previous' }),
+    (delta: number) => ask(verb(delta > 0 ? Verb.Next : Verb.Previous)),
     [ask],
   );
 
   const seek = useCallback(
-    (seconds: number) => ask({ do: 'seek', position_ms: Math.round(Math.max(0, seconds) * 1000) }),
+    (seconds: number) =>
+      ask({ ...verb(Verb.Seek), positionMs: BigInt(Math.round(Math.max(0, seconds) * 1000)) }),
     [ask],
   );
 
@@ -362,7 +386,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   // which it is gets decided against whichever is actually making the sound.
   const toggle = useCallback(() => {
     const playing = elsewhere ? !!session?.playing : status.playing;
-    ask(playing ? { do: 'pause' } : { do: 'play' });
+    ask(verb(playing ? Verb.Pause : Verb.Play));
   }, [ask, elsewhere, session?.playing, status.playing]);
 
   const pickDevice = useCallback((to: string | null) => listening.transfer(to), []);
@@ -391,7 +415,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         // because `play` is a verb and not a toggle, so asking a device that
         // is already playing to play is nothing.
         audio.pause();
-        listening.ask({ do: 'play' });
+        listening.ask(verb(Verb.Play));
       }
       return;
     }
@@ -470,9 +494,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         queue: (session?.queue ?? []).map((t) => trackOf(t, listening.server)),
         at: session?.at ?? -1,
         playing: !!session?.playing,
-        buffering: false,
+        // A hand-off that has not landed yet is exactly buffering, and it is
+        // the one case where this phone knows that about another device.
+        buffering: moving !== null,
         position: listening.positionMs / 1000,
-        duration: (wire?.duration_ms ?? 0) / 1000,
+        duration: ms(wire?.durationMs ?? 0) / 1000,
         error: null,
         play,
         toggle,
@@ -482,6 +508,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         output,
         outputsHere,
         elsewhere,
+        moving,
         me,
         pickDevice,
       };
@@ -509,6 +536,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       output,
       outputsHere,
       elsewhere,
+      moving,
       me,
       pickDevice,
     };
@@ -528,6 +556,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     session,
     elsewhere,
     outputsHere,
+    moving,
     me,
     pickDevice,
     // The extrapolated clock moves without the session doing, so the ticker

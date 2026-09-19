@@ -1891,8 +1891,7 @@ impl App {
                 let mut peer = Peer::open(login);
                 app.note = peer.connect(&app.server);
                 app.peer = Some(peer);
-                app.listening
-                    .open(&app.server, &login.token, &login.session);
+                app.listening.open(&login.session);
                 return (app, Task::none());
             }
             // Nobody yet. A page that just came back from signing in has the
@@ -1986,8 +1985,7 @@ impl App {
         // A device is a login, so a new login is a new device — which is
         // what makes signing out and back in honestly a different row in
         // somebody else's picker, and a reloaded tab the same one.
-        self.listening
-            .open(&self.server, &login.token, &login.session);
+        self.listening.open(&login.session);
         self.login = Some(login);
     }
 
@@ -2806,7 +2804,7 @@ impl App {
     /// Where in the queue the player is. Zero when nothing is playing, which
     /// is also what a report of an empty session should say.
     fn playing_at(&self) -> usize {
-        let Some(id) = self.player.track().map(|t| t.id) else {
+        let Some(id) = self.player.track().map(|t| t.id.to_string()) else {
             return 0;
         };
         self.queue.iter().position(|t| t.id == id).unwrap_or(0)
@@ -2829,7 +2827,14 @@ impl App {
         };
         self.player.play(
             Track {
-                id: track.id,
+                // A queue row's id is a string, because that queue crosses
+                // three languages and a tagged id is a Rust type. Here it is
+                // back in the replica that has the row, so it is an `Id`
+                // again — and a queue handed over by a device whose library
+                // does not overlap this one leaves the zero id, which matches
+                // no row and highlights nothing. That is the right answer:
+                // the track still plays, from the `file` it brought.
+                id: track.id.parse().unwrap_or_default(),
                 title: track.title.clone(),
                 creator: track.creator.clone(),
                 album: track.album.clone(),
@@ -2883,7 +2888,7 @@ impl App {
                 playing,
             } => {
                 self.queue = queue;
-                self.start_at(at, position_ms, playing);
+                self.start_at(at as usize, position_ms, playing);
             }
         }
         Task::none()
@@ -3216,7 +3221,7 @@ impl App {
                     .rows()
                     .iter()
                     .map(|i| listening::Track {
-                        id: i.id,
+                        id: i.id.to_string(),
                         title: i.title.clone(),
                         creator: i.creator.clone(),
                         album: peer.detail_of(i.id).album,
@@ -3226,7 +3231,8 @@ impl App {
                         file: i.file.clone(),
                     })
                     .collect();
-                let at = self.queue.iter().position(|t| t.id == id).unwrap_or(0);
+                let wanted = id.to_string();
+                let at = self.queue.iter().position(|t| t.id == wanted).unwrap_or(0) as u32;
                 let queue = self.queue.clone();
                 return self.ask(listening::Command::Start {
                     queue,
@@ -3274,7 +3280,11 @@ impl App {
                 // The listening session: first what this device has been told
                 // to do — the server only ever tells the output — and then
                 // what it is doing.
-                for command in self.listening.poll() {
+                let told = match &mut self.peer {
+                    Some(peer) => self.listening.pump(&mut peer.client),
+                    None => Vec::new(),
+                };
+                for command in told {
                     let _ = self.obey(command);
                 }
                 // Silent unless it is the output. One rule, enforced here
@@ -3288,7 +3298,7 @@ impl App {
                 // opening a second tab does not quietly claim the sound from
                 // the one that is using it.
                 if self.player.track().is_some() {
-                    let at = self.playing_at();
+                    let at = self.playing_at() as u32;
                     let playing = self.player.is_playing();
                     let position_ms = (self.player.position() * 1000.0) as i64;
                     let queue = std::mem::take(&mut self.queue);
@@ -4757,13 +4767,6 @@ impl App {
                 }
             );
         }
-        // A session socket turned away is its own kind of offline, and it
-        // does not look like the log's: the library keeps syncing and only
-        // the devices go. Saying which is what stops "the picker is empty"
-        // being a question.
-        if let Some(reason) = self.listening.denied() {
-            line = format!("{line}  ·  no listening session: {reason}");
-        }
         if !self.note.is_empty() {
             line = format!("{line}  ·  {}", self.note);
         }
@@ -4837,10 +4840,24 @@ impl App {
         }
         let session = self.listening.session()?;
         let here = self.listening.outputs_here();
-        let label = match session.output_device() {
-            Some(_) if here => "this device".to_string(),
-            Some(device) => middle(&device.name, 16),
-            None => "no device".to_string(),
+        // Three things a device can be, not two. A hand-off is in flight
+        // until the new output reports, and a speaker in the house takes a
+        // second or two to fetch anything — so saying "the kitchen" straight
+        // away is a bar that spends that second lying about where the sound
+        // is. And the output is allowed to be somewhere that is not
+        // answering now: that is the whole of the fix for music jumping to
+        // whichever device happened to be looking.
+        let label = match (session.moving.as_deref(), session.output_device()) {
+            (Some(id), _) => {
+                let name = session.device(id).map_or(id, |d| d.name.as_str());
+                format!("{}…", middle(name, 14))
+            }
+            (None, Some(_)) if here => "this device".to_string(),
+            (None, Some(device)) if !device.here => {
+                format!("{} (away)", middle(&device.name, 12))
+            }
+            (None, Some(device)) => middle(&device.name, 16),
+            (None, None) => "no device".to_string(),
         };
         Some(
             button(
@@ -4960,9 +4977,20 @@ impl App {
             let on_cursor = at == i;
             let is_output = device.id == output;
             let mine = device.id == self.listening.me();
-            let audible = device.audible;
+            // Two reasons a row is not a target, and they are different
+            // answers rather than one. "No audio device" is what a desktop
+            // build is; "not answering" is where the sound still belongs
+            // while that device's socket is gone. Hiding either would be
+            // worse than dimming it: a laptop that is in the session and
+            // controlling it should see itself listed, and the device the
+            // music belongs to is exactly the one worth drawing.
+            let takeable = device.audible && device.here;
             let label = if mine {
                 format!("{} (this one)", middle(&device.name, 14))
+            } else if self.listening.moving() == Some(device.id.as_str()) {
+                format!("{}…", middle(&device.name, 20))
+            } else if !device.here {
+                format!("{} (not answering)", middle(&device.name, 14))
             } else {
                 middle(&device.name, 24)
             };
@@ -4984,7 +5012,7 @@ impl App {
                     text(label)
                         .size(13)
                         .style(move |theme: &iced::Theme| text::Style {
-                            color: Some(match (on_cursor, audible) {
+                            color: Some(match (on_cursor, takeable) {
                                 (false, false) => {
                                     palette::of(theme).background.base.text.scale_alpha(0.4)
                                 }
@@ -5002,7 +5030,7 @@ impl App {
             // server would refuse the transfer anyway, and a control that
             // looks pressable and is not is worse than one that is plainly
             // not.
-            let entry: Element<'_, Message> = if audible {
+            let entry: Element<'_, Message> = if takeable {
                 mouse_area(entry)
                     .on_enter(Message::DeviceAt(i))
                     .on_press(Message::DeviceAt(i))
