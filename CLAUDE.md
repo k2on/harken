@@ -1887,6 +1887,20 @@ is not 0 across two frames is a pump that has stopped. It was written the
 afternoon a browser said "connected" over an empty picker and nothing on
 screen could say which of those it was.
 
+What it said, the first time it was read: `said here 1`, `heard state 7`,
+`session yes`, `devices none` — the room was answering, in words this build
+could read, and its answer had no devices in it, not even this one. That is
+the server having *forgotten* a device it was told about, and it pointed
+straight at the engine: a library longer than one batch has the client send a
+second `Hello` on the same socket for the rest, and the engine read every
+`Hello` as a departure and an arrival. `Desk::part` dropped the browser,
+saw nobody listening, sent the speakers away, and `join` gave it back an
+empty room; its connection count had not moved, so it never said `Here`
+again. Fixed in the engine — a repeated `Hello` from the same peer on the
+same connection is the log paging and the room hears nothing —
+`server/tests/bridge.rs` holds it from this side, and the numbers that found
+it are the reason the screen is worth its two hundred lines.
+
 **And the desktop is in the session now**, where this was a browser-only
 feature before. Not because a desktop had nothing to say: `/listen` would have
 needed a native WebSocket client, which was a dependency this workspace did

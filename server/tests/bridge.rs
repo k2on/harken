@@ -124,3 +124,68 @@ fn a_phone_sees_itself_and_the_speaker_stood_beside_it() {
     // A speaker standing in the room does not count as somebody listening.
     assert!(rooms.try_recv().is_err(), "no second announcement");
 }
+
+/// The bug the debug screen found. A library longer than one batch has the
+/// client send a *second* `Hello` on the same socket to ask for the rest —
+/// and a `Hello` used to be a departure and an arrival, so the desk dropped
+/// the browser from its own picker, saw nobody listening, sent the speakers
+/// away, and answered every `State` after that with no devices at all. The
+/// browser's connection count had not moved, so it never said `Here` again.
+///
+/// Asserted through the hub because that is where the two channels meet: the
+/// second `Hello` is the log's, and what it must not do is to the room's.
+#[test]
+fn asking_for_the_next_batch_does_not_leave_the_room() {
+    let mut desk = Desk::new();
+    let (tx, mut rooms) = tokio::sync::mpsc::unbounded_channel::<Watch>();
+    desk.watch(tx);
+    let hub = Hub::<HarkenApp>::open_live(petros::open_memory().unwrap(), Tokens, desk).unwrap();
+    let browser = hub.local();
+    let hello = || ClientMsg::Hello {
+        since: 0,
+        token: Some("max:browser-login".into()),
+    };
+    hub.exchange(browser, hello());
+    hub.exchange(
+        browser,
+        ClientMsg::Say {
+            say: here("Browser", Kind::Computer),
+        },
+    );
+    assert_eq!(rooms.try_recv(), Ok(Watch::Open("max".into())));
+    let (stx, _speaker_hears) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+    let conn = hub
+        .stand(
+            Identity {
+                user: ActorId::from("max"),
+                session: "media_player.bedroom".into(),
+            },
+            stx,
+        )
+        .unwrap();
+    hub.say(conn, here("Bedroom", Kind::Speaker));
+
+    // The next batch, please.
+    let told = hub.exchange(browser, hello());
+    if let Some(session) = state(told) {
+        assert_eq!(
+            session.devices.len(),
+            2,
+            "a resumed connection is still in the room: {session:?}"
+        );
+    }
+    assert!(
+        rooms.try_recv().is_err(),
+        "nobody left, so the bridge is told nothing"
+    );
+    let told = hub.exchange(
+        browser,
+        ClientMsg::Say {
+            say: here("Browser", Kind::Computer),
+        },
+    );
+    let session = state(told).unwrap();
+    let mut ids: Vec<&str> = session.devices.iter().map(|d| d.id.as_str()).collect();
+    ids.sort_unstable();
+    assert_eq!(ids, ["browser-login", "media_player.bedroom"]);
+}
