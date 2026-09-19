@@ -3582,8 +3582,9 @@ impl App {
     /// from what it was about.
     fn devices_origin(window: iced::Size, rows: usize) -> iced::Point {
         let x = (window.width - Self::PAGE_PADDING - DEVICES_WIDTH).max(Self::EDGE);
-        let y = (window.height - Self::PAGE_PADDING - Self::BAR_HEIGHT - Self::devices_height(rows))
-            .max(Self::EDGE);
+        let y =
+            (window.height - Self::PAGE_PADDING - Self::BAR_HEIGHT - Self::devices_height(rows))
+                .max(Self::EDGE);
         iced::Point::new(x, y)
     }
 
@@ -5854,7 +5855,8 @@ mod cards {
 #[cfg(all(test, feature = "demo"))]
 mod context {
     use super::{
-        glyphs, tail, vim, Anchor, App, Entry, Focus, Message, Pane, Picker, RowMenu, PANEL_PADDING,
+        glyphs, tail, vim, Anchor, App, Entry, Focus, Message, Pane, Picker, RowMenu,
+        DEVICES_WIDTH, PANEL_PADDING,
     };
 
     /// The demo's own boot, which is a seeded peer and nothing else — on a
