@@ -117,11 +117,6 @@ export type Player = {
   track: Track | null;
   queue: Track[];
   playing: boolean;
-  buffering: boolean;
-  /** Seconds. */
-  position: number;
-  /** Seconds — the stream's, if it knows, and the library's otherwise. */
-  duration: number;
   /** Whatever the platform said went wrong, or null. */
   error: string | null;
   /** Start one, and make `queue` what skipping moves through. */
@@ -156,12 +151,40 @@ export type Player = {
   pickDevice: (to: string | null) => void;
 };
 
+/**
+ * Where the track has got to, which moves four times a second.
+ *
+ * Kept apart from `Player` deliberately, and it is the difference between a
+ * list that scrolls and one that stutters. `expo-audio` reports a status every
+ * 250ms, so a single context carrying the position made *every* consumer
+ * re-render four times a second — the shell, the `Stack` under it, and every
+ * screen holding `usePlayer()` for nothing more than "which row is playing".
+ * The rows themselves are memoised, but a screen re-rendering rebuilds the
+ * callbacks it hands the list, and a new `onPress` per frame defeats every one
+ * of those memos. So what ticks is its own context and the three components
+ * that draw a clock subscribe to it; nothing else pays.
+ */
+export type Clock = {
+  /** Seconds. */
+  position: number;
+  /** Seconds — the stream's, if it knows, and the library's otherwise. */
+  duration: number;
+  buffering: boolean;
+};
+
 const Context = createContext<Player | null>(null);
+const ClockContext = createContext<Clock>({ position: 0, duration: 0, buffering: false });
 
 export function usePlayer(): Player {
   const player = useContext(Context);
   if (!player) throw new Error('usePlayer outside PlayerProvider');
   return player;
+}
+
+/** Subscribe to the moving part. Only a scrubber, a progress line and a pair
+ *  of clocks have any business calling this. */
+export function useClock(): Clock {
+  return useContext(ClockContext);
 }
 
 export function PlayerProvider({ children }: { children: ReactNode }) {
@@ -458,21 +481,17 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const devices = session?.devices ?? [];
     const output = devices.find((d) => d.id === session?.output) ?? null;
     // What the bar draws is the *session*, so a phone watching a laptop shows
-    // the laptop's track, its clock and its state — and nothing that draws
-    // this has to learn that a laptop exists. When the sound is here, or
-    // nowhere yet, it is the platform, because that answer is a frame fresher
-    // than any broadcast could be.
+    // the laptop's track and its state — and nothing that draws this has to
+    // learn that a laptop exists. When the sound is here, or nowhere yet, it
+    // is the platform, because that answer is a frame fresher than any
+    // broadcast could be.
     if (elsewhere) {
       const wire = session?.queue[session.at] ?? null;
-      const shown = wire ? trackOf(wire, listening.server) : null;
       return {
-        track: shown,
+        track: wire ? trackOf(wire, listening.server) : null,
         queue: (session?.queue ?? []).map((t) => trackOf(t, listening.server)),
         at: session?.at ?? -1,
         playing: !!session?.playing,
-        buffering: false,
-        position: listening.positionMs / 1000,
-        duration: (wire?.duration_ms ?? 0) / 1000,
         error: null,
         play,
         toggle,
@@ -491,15 +510,6 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       queue,
       at,
       playing: status.playing,
-      buffering: status.isBuffering,
-      position: status.currentTime,
-      // The element reports its own duration once it has read enough of the
-      // stream; until then — and forever, for a live one — the catalogue's
-      // figure is the only one there is.
-      duration:
-        Number.isFinite(status.duration) && status.duration > 0
-          ? status.duration
-          : (track?.ms ?? 0) / 1000,
       error: status.error,
       play,
       toggle,
@@ -512,14 +522,14 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       me,
       pickDevice,
     };
+    // `status.currentTime` is deliberately absent, and that absence is the
+    // whole point of the split: this object is rebuilt when what is *playing*
+    // changes, not when it moves.
   }, [
     track,
     queue,
     at,
     status.playing,
-    status.isBuffering,
-    status.currentTime,
-    status.duration,
     status.error,
     play,
     toggle,
@@ -530,10 +540,45 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     outputsHere,
     me,
     pickDevice,
+  ]);
+
+  const clock = useMemo<Clock>(() => {
+    if (elsewhere) {
+      const wire = session?.queue[session.at] ?? null;
+      return {
+        // Extrapolated from the last report rather than counted here, because
+        // the output is the one that knows — see `listening.positionMs`.
+        position: listening.positionMs / 1000,
+        duration: (wire?.duration_ms ?? 0) / 1000,
+        buffering: false,
+      };
+    }
+    return {
+      position: status.currentTime,
+      // The element reports its own duration once it has read enough of the
+      // stream; until then — and forever, for a live one — the catalogue's
+      // figure is the only one there is.
+      duration:
+        Number.isFinite(status.duration) && status.duration > 0
+          ? status.duration
+          : (track?.ms ?? 0) / 1000,
+      buffering: status.isBuffering,
+    };
+  }, [
+    elsewhere,
+    session,
+    status.currentTime,
+    status.duration,
+    status.isBuffering,
+    track?.ms,
     // The extrapolated clock moves without the session doing, so the ticker
     // above has to be a dependency or the memo would hold yesterday's second.
     tickCount,
   ]);
 
-  return <Context.Provider value={value}>{children}</Context.Provider>;
+  return (
+    <Context.Provider value={value}>
+      <ClockContext.Provider value={clock}>{children}</ClockContext.Provider>
+    </Context.Provider>
+  );
 }

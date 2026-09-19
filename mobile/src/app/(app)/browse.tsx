@@ -11,15 +11,15 @@
  * until you have picked which performance of it you mean.
  */
 
-import { useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
 import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import type { Source } from '@/peer';
-import { FONT, space, radius, useTheme, type Theme } from '@/theme';
-import { Artwork } from '@/ui/artwork';
-import { Icon } from '@/ui/icon';
+import { FONT, space, radius, useTheme, type Theme, sheet } from '@/theme';
+import { Icon, type IconName } from '@/ui/icon';
+import { artId, SharedArt, useSharedArt } from '@/ui/shared';
 import { useShell } from './_layout';
 
 /** One row, whichever of the two lists it came from. */
@@ -29,6 +29,8 @@ type Entry = {
   under: string;
   /** What the derived square is drawn from. */
   seed: string;
+  /** Which record it is, so its cover can fly to the page it opens. */
+  id: string;
   onPress: () => void;
 };
 
@@ -37,6 +39,7 @@ export default function Browse() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const { peer, inset } = useShell();
+  const { lift, drop } = useSharedArt();
 
   // Narrowed to the two this screen draws, rather than the whole union: both
   // carry a name, and typing it as `Source` would make every use of that name
@@ -65,11 +68,14 @@ export default function Browse() {
             .filter(Boolean)
             .join(' · '),
           seed: w.title,
-          onPress: () =>
+          id: artId('work', w.id),
+          onPress: () => {
+            lift(artId('work', w.id));
             router.push({
               pathname: '/browse',
               params: { kind: 'work', id: w.id, name: w.title },
-            }),
+            });
+          },
         }))
       : peer.recordings.map((r) => ({
           key: r.id,
@@ -85,11 +91,18 @@ export default function Browse() {
             .filter(Boolean)
             .join(' · '),
           seed: r.performers || r.id,
-          onPress: () =>
+          id: artId('recording', r.id),
+          onPress: () => {
+            // A recording's page is a track list with no cover of its own, so
+            // this id has one end and never flies. Given anyway, because an
+            // `Entry` with a sometimes-absent id is a field every call site
+            // has to think about.
+            lift(artId('recording', r.id));
             router.push({
               pathname: '/list',
               params: { kind: 'recording', id: r.id, name: r.performers },
-            }),
+            });
+          },
         }));
 
   const title = source.kind === 'work' ? (work?.title ?? source.name) : source.name;
@@ -104,10 +117,22 @@ export default function Browse() {
           .join(' · ');
   const s = styles(theme);
 
+  // A composer is a person and a work is a thing, which decides both the shape
+  // of the square and what is drawn on it — and both ends of the flight have
+  // to agree, so it is one answer read twice rather than two literals.
+  const person = source.kind === 'works';
+  const mine = person ? artId('composer', source.name) : artId('work', source.id);
+  const glyph: IconName = person ? 'artist' : 'note';
+
+  const leave = useCallback(() => {
+    drop(mine, title, glyph);
+    router.back();
+  }, [drop, glyph, mine, title]);
+
   return (
     <View style={s.page}>
       <View style={[s.head, { paddingTop: insets.top + space.sm }]}>
-        <Pressable onPress={() => router.back()} hitSlop={12} accessibilityLabel="back">
+        <Pressable onPress={leave} hitSlop={12} accessibilityLabel="back">
           <Icon name="back" size={24} tint={theme.text} />
         </Pressable>
         <Text style={s.headLabel} numberOfLines={1}>
@@ -119,16 +144,20 @@ export default function Browse() {
       <FlatList
         data={rows}
         keyExtractor={(row) => row.key}
-        contentContainerStyle={{ paddingBottom: inset + space.lg }}
+        contentContainerStyle={{ paddingBottom: inset }}
         ListHeaderComponent={
           <View style={s.top}>
-            <Artwork
+            <SharedArt
+              id={mine}
+              end="page"
               seed={title}
               size={168}
               theme={theme}
               // A person is a circle and a work is a square, the one thing
               // every music app agrees about.
-              corner={source.kind === 'works' ? radius.pill : radius.md}
+              corner={radius.md}
+              round={person}
+              glyph={glyph}
             />
             <Text style={s.title} numberOfLines={2}>
               {title}
@@ -147,7 +176,14 @@ export default function Browse() {
             style={({ pressed }) => [s.row, pressed && s.pressed]}
             accessibilityRole="button"
           >
-            <Artwork seed={item.seed} size={48} theme={theme} />
+            <SharedArt
+              id={item.id}
+              end="row"
+              seed={item.seed}
+              size={48}
+              theme={theme}
+              glyph={source.kind === 'works' ? 'note' : 'artist'}
+            />
             <View style={s.text}>
               <Text style={s.name} numberOfLines={2}>
                 {item.name}
@@ -174,7 +210,7 @@ function lifespan(born: number, died: number): string {
   return `${born || ''}–${died || ''}`;
 }
 
-const styles = (t: Theme) =>
+const styles = sheet((t: Theme) =>
   StyleSheet.create({
     page: { flex: 1, backgroundColor: t.bg },
     head: {
@@ -208,4 +244,5 @@ const styles = (t: Theme) =>
     text: { flex: 1, gap: 2 },
     name: { fontFamily: FONT, fontSize: 15, fontWeight: '600', color: t.text },
     rowUnder: { fontFamily: FONT, fontSize: 12, color: t.dim },
-  });
+  }),
+);

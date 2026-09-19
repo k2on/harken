@@ -11,10 +11,11 @@
  * album" rather than "to the tab I was on before".
  */
 
+import { useRef } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { router, usePathname } from 'expo-router';
 
-import { FONT, space, type Theme } from '@/theme';
+import { FONT, space, type Theme, sheet } from '@/theme';
 import { Icon, type IconName } from './icon';
 
 const TABS: { href: string; label: string; icon: IconName }[] = [
@@ -23,26 +24,45 @@ const TABS: { href: string; label: string; icon: IconName }[] = [
   { href: '/library', label: 'Your Library', icon: 'library' },
 ];
 
-/** How tall it is, so the player can sit on top of it and a list can end
- *  above it. A constant rather than a measurement because everything that has
- *  to agree about it is laid out before it is drawn. */
+/** How tall the bar's *content* is. The safe area is added to it rather than
+ *  taken out of it — see the note on `bar` below — so a list that wants to end
+ *  above the whole thing asks for `TAB_BAR + insets.bottom`. */
 export const TAB_BAR = 52;
 
 export function TabBar({ theme, bottom }: { theme: Theme; bottom: number }) {
   const path = usePathname();
   const s = styles(theme);
+  // Which tab is lit when the screen is a *push* — an album reached from Your
+  // Library is not `/library`, and a bar with nothing lit on it reads as a bar
+  // that has lost track of where you are. So the last tab actually visited is
+  // remembered, which is the honest answer to "where am I" and what every
+  // phone app does. A ref rather than state: it is read during the same render
+  // that writes it and nothing should re-render because of it.
+  const lit = useRef(TABS[0].href);
+  if (TABS.some((tab) => tab.href === path)) lit.current = path;
+
   return (
-    <View style={[s.bar, { paddingBottom: bottom }]}>
+    // The inset is *added* to the height rather than padded out of it. Written
+    // as `height: TAB_BAR` with `paddingBottom: bottom`, a phone with a 34px
+    // home indicator leaves the icons and their labels 10px to live in — which
+    // is the bar arriving cut off along the bottom, on exactly the devices
+    // nobody tests on first.
+    <View style={[s.bar, { height: TAB_BAR + bottom, paddingBottom: bottom }]}>
       {TABS.map((tab) => {
-        // `startsWith`, so a screen pushed from a tab keeps that tab lit —
-        // which is the honest answer to "where am I", and what every phone
-        // app does.
-        const here = path === tab.href;
+        const here = lit.current === tab.href;
         return (
           <Pressable
             key={tab.href}
             style={s.tab}
-            onPress={() => router.replace(tab.href)}
+            // No animation: a tab is a sideways move between three peers, and
+            // the `slide_from_right` a push earns would say one had come out
+            // of the other. `_layout.tsx` gives these three screens
+            // `animation: 'none'`, because the *incoming* screen's options are
+            // what a replace is drawn with.
+            onPress={() => {
+              if (path === tab.href) return;
+              router.replace(tab.href);
+            }}
             accessibilityRole="tab"
             accessibilityState={{ selected: here }}
             accessibilityLabel={tab.label}
@@ -58,18 +78,18 @@ export function TabBar({ theme, bottom }: { theme: Theme; bottom: number }) {
   );
 }
 
-const styles = (t: Theme) =>
+const styles = sheet((t: Theme) =>
   StyleSheet.create({
     bar: {
       flexDirection: 'row',
       alignItems: 'flex-start',
       backgroundColor: t.bg,
       paddingTop: space.sm,
-      height: TAB_BAR,
-      // Nothing above it: the player bar has its own hairline, and two rules a
+      // Nothing above it: the player bar has its own ground, and two rules a
       // few pixels apart is a seam.
     },
     tab: { flex: 1, alignItems: 'center', gap: 3 },
     label: { fontFamily: FONT, fontSize: 10.5, color: t.faint },
     labelOn: { color: t.text, fontWeight: '600' },
-  });
+  }),
+);

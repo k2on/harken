@@ -32,7 +32,7 @@ import { router } from 'expo-router';
 
 import { asId } from '@/mutators.gen';
 import type { Peer } from '@/peer';
-import { FONT, radius, space, type Theme } from '@/theme';
+import { FONT, radius, space, type Theme, sheet } from '@/theme';
 import type { Item, Playlist } from 'harken-native';
 import { Icon } from './icon';
 
@@ -172,7 +172,7 @@ export function Playlists({
   );
 }
 
-const styles = (t: Theme) =>
+const styles = sheet((t: Theme) =>
   StyleSheet.create({
     // Written out rather than spread from `absoluteFill`: these typings
     // expose it as a registered style and not as an object, so it cannot be
@@ -244,4 +244,5 @@ const styles = (t: Theme) =>
       paddingVertical: space.sm,
     },
     makeText: { color: t.onAccent, fontWeight: '700', fontFamily: FONT, fontSize: 14 },
-  });
+  }),
+);
