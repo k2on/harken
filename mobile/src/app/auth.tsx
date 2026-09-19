@@ -20,7 +20,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { finish, offer, recallServer } from '@/auth';
-import { FONT, radius, space, useTheme, type Theme } from '@/theme';
+import { FONT, radius, space, useTheme, type Theme, sheet } from '@/theme';
 
 export default function Auth() {
   const theme = useTheme();
@@ -81,7 +81,7 @@ export default function Auth() {
   );
 }
 
-const styles = (t: Theme) =>
+const styles = sheet((t: Theme) =>
   StyleSheet.create({
     page: {
       flex: 1,
@@ -102,4 +102,5 @@ const styles = (t: Theme) =>
     },
     muted: { opacity: 0.55 },
     buttonText: { color: t.onAccent, fontFamily: FONT, fontSize: 15.5, fontWeight: '700' },
-  });
+  }),
+);

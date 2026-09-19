@@ -43,7 +43,7 @@ import {
 } from 'react-native';
 
 import { recallServer, remembered, rememberServer, setOffline, signIn } from '@/auth';
-import { FONT, radius, space, useTheme, type Theme } from '@/theme';
+import { FONT, radius, space, useTheme, type Theme, sheet } from '@/theme';
 import { Icon } from '@/ui/icon';
 
 const PORT = 8787;
@@ -216,7 +216,7 @@ function Ask() {
   );
 }
 
-const styles = (t: Theme) =>
+const styles = sheet((t: Theme) =>
   StyleSheet.create({
     page: { flex: 1, backgroundColor: t.bg },
     // Not `absoluteFill` with a height on top of it: that is two answers to
@@ -274,4 +274,5 @@ const styles = (t: Theme) =>
     },
     ghostText: { color: t.text, fontFamily: FONT, fontSize: 15.5, fontWeight: '600' },
     problem: { marginTop: space.md, fontFamily: FONT, fontSize: 13, lineHeight: 18, color: t.danger },
-  });
+  }),
+);

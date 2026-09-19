@@ -35,7 +35,7 @@ import { socketUrl, type Login } from '@petros/client';
 
 import { mediaUrl } from '@/media';
 import { databasePath, type Peer } from '@/peer';
-import { FONT, radius, space, type Theme } from '@/theme';
+import { FONT, radius, space, type Theme, sheet } from '@/theme';
 import { Icon } from '@/ui/icon';
 
 /** A time the token stops working, as something a person can act on. */
@@ -262,7 +262,7 @@ function Button({ label, theme, onPress }: { label: string; theme: Theme; onPres
 
 const mono = Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' });
 
-const styles = (t: Theme) =>
+const styles = sheet((t: Theme) =>
   StyleSheet.create({
     // Written out rather than spread from `absoluteFill`: the edges are the
     // whole behaviour here, and one place that says where they are beats two
@@ -331,4 +331,5 @@ const styles = (t: Theme) =>
     muted: { opacity: 0.55 },
     buttonText: { fontFamily: FONT, fontSize: 13, fontWeight: '700', color: t.text },
     hint: { fontFamily: FONT, fontSize: 11, lineHeight: 15, color: t.faint, marginTop: space.sm },
-  });
+  }),
+);

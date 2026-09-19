@@ -33,10 +33,11 @@ import { listening } from '@/listening';
 import { mediaUrl } from '@/media';
 import { usePeer, type Peer } from '@/peer';
 import { usePlayer, type Track } from '@/player';
-import { FONT, radius, space, useTheme, type Theme } from '@/theme';
+import { FONT, radius, space, useTheme, type Theme, sheet } from '@/theme';
 import { Devices } from '@/ui/devices';
-import { PlayerSheet, BAR } from '@/ui/player';
+import { PlayerScrim, PlayerSheet, BAR, BAR_FADE, BAR_GAP } from '@/ui/player';
 import { Playlists } from '@/ui/playlists';
+import { SharedArtProvider } from '@/ui/shared';
 import { TabBar, TAB_BAR } from '@/ui/tabbar';
 
 /** What every screen under this shell can ask for. */
@@ -153,7 +154,14 @@ function Signed({ server, login: first }: { server: string; login: Login }) {
 
   // What the player and the tab bar take up. A list ends above it rather than
   // under it, which is the one number every screen needs from here.
-  const inset = TAB_BAR + insets.bottom + (player.track ? BAR : 0);
+  //
+  // Three things, and each is really taken: the tab bar with its safe area,
+  // the card and the air under it, and the fade above the card. The fade
+  // counts because content is *washed* inside it — a last row ending halfway
+  // up it is a last row you can see and cannot quite read, which is worse
+  // than one hidden outright. So a list ends where the fade begins and every
+  // screen adds nothing of its own to this.
+  const inset = TAB_BAR + insets.bottom + (player.track ? BAR + BAR_GAP : 0) + BAR_FADE;
 
   const shell = useMemo<Shell>(
     () => ({
@@ -175,75 +183,94 @@ function Signed({ server, login: first }: { server: string; login: Login }) {
 
   return (
     <Context.Provider value={shell}>
-      <View style={s.page}>
-        <Stack
-          screenOptions={{
-            headerShown: false,
-            contentStyle: { backgroundColor: theme.bg },
-            animation: 'slide_from_right',
-          }}
-        />
-
-        {/* The tab bar first, so the expanded player covers it — a
-            full-screen player with a tab bar across the bottom of it is two
-            apps. Collapsed, the player's bar sits exactly above it, because
-            that is what `travel` is measured from. */}
-        <View style={s.tabs}>
-          <TabBar theme={theme} bottom={insets.bottom} />
-        </View>
-
-        <PlayerSheet
-          player={player}
-          album={album}
-          theme={theme}
-          top={insets.top}
-          bottom={insets.bottom}
-          onAdd={() => {
-            const now = peer.items.find((i) => i.id === player.track?.id);
-            setAdding({ item: now ?? null });
-          }}
-          onDevices={() => setPicking(true)}
-        />
-
-        {note ? (
-          <Animated.View
-            entering={FadeIn.duration(120)}
-            exiting={FadeOut.duration(200)}
-            style={[s.note, { bottom: inset + space.lg }]}
-            pointerEvents="none"
+      <SharedArtProvider>
+        <View style={s.page}>
+          <Stack
+            screenOptions={{
+              headerShown: false,
+              contentStyle: { backgroundColor: theme.bg },
+              animation: 'slide_from_right',
+            }}
           >
-            <Text style={s.noteText}>{note}</Text>
-          </Animated.View>
-        ) : null}
+            {/* The three tabs move sideways, so they do not animate. A tab is a
+                `replace` between peers and `slide_from_right` would say one of
+                them had come out of the other — which is the push a *record*
+                earns and nothing else should borrow. The incoming screen's
+                options are what a replace is drawn with, so it is said here,
+                once per tab, rather than at the call site. */}
+            <Stack.Screen name="home" options={{ animation: 'none' }} />
+            <Stack.Screen name="search" options={{ animation: 'none' }} />
+            <Stack.Screen name="library" options={{ animation: 'none' }} />
+          </Stack>
 
-        {adding ? (
-          <Playlists
-            item={adding.item}
-            peer={peer}
-            theme={theme}
-            bottom={insets.bottom}
-            onClose={() => setAdding(null)}
-          />
-        ) : null}
+          {/* The page fades out into the bottom of the screen rather than being
+              cut off by the bar's edge — which is what lets the bar be a card
+              floating on the list instead of a shelf bolted to the tab bar. It
+              is the *page's*, so it is drawn here and does not move when the
+              sheet is dragged. */}
+          <PlayerScrim theme={theme} bottom={insets.bottom} playing={Boolean(player.track)} />
 
-        {/* Last, so it is over the player it was opened from. */}
-        {picking ? (
-          <Devices
-            devices={player.devices}
-            output={player.output?.id ?? null}
-            me={player.me}
+          {/* The tab bar next, so the expanded player covers it — a full-screen
+              player with a tab bar across the bottom of it is two apps.
+              Collapsed, the player's card sits a gap above it, because that is
+              what `travel` is measured from. */}
+          <View style={s.tabs}>
+            <TabBar theme={theme} bottom={insets.bottom} />
+          </View>
+
+          <PlayerSheet
+            player={player}
+            album={album}
             theme={theme}
+            top={insets.top}
             bottom={insets.bottom}
-            onPick={player.pickDevice}
-            onClose={() => setPicking(false)}
+            onAdd={() => {
+              const now = peer.items.find((i) => i.id === player.track?.id);
+              setAdding({ item: now ?? null });
+            }}
+            onDevices={() => setPicking(true)}
           />
-        ) : null}
-      </View>
+
+          {note ? (
+            <Animated.View
+              entering={FadeIn.duration(120)}
+              exiting={FadeOut.duration(200)}
+              style={[s.note, { bottom: inset + space.lg }]}
+              pointerEvents="none"
+            >
+              <Text style={s.noteText}>{note}</Text>
+            </Animated.View>
+          ) : null}
+
+          {adding ? (
+            <Playlists
+              item={adding.item}
+              peer={peer}
+              theme={theme}
+              bottom={insets.bottom}
+              onClose={() => setAdding(null)}
+            />
+          ) : null}
+
+          {/* Last, so it is over the player it was opened from. */}
+          {picking ? (
+            <Devices
+              devices={player.devices}
+              output={player.output?.id ?? null}
+              me={player.me}
+              theme={theme}
+              bottom={insets.bottom}
+              onPick={player.pickDevice}
+              onClose={() => setPicking(false)}
+            />
+          ) : null}
+        </View>
+      </SharedArtProvider>
     </Context.Provider>
   );
 }
 
-const styles = (t: Theme) =>
+const styles = sheet((t: Theme) =>
   StyleSheet.create({
     page: { flex: 1, backgroundColor: t.bg },
     tabs: { position: 'absolute', left: 0, right: 0, bottom: 0 },
@@ -259,4 +286,5 @@ const styles = (t: Theme) =>
       borderColor: t.border,
     },
     noteText: { fontFamily: FONT, fontSize: 13, color: t.text, textAlign: 'center' },
-  });
+  }),
+);

@@ -19,10 +19,22 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withSequence, withTiming } from 'react-native-reanimated';
 
 import { clockMs } from '@/format';
-import { FONT, radius, space, type Theme } from '@/theme';
+import { FONT, radius, space, type Theme, sheet } from '@/theme';
 import type { Item } from 'harken-native';
 import { Artwork } from './artwork';
 import { Icon } from './icon';
+
+/**
+ * How tall one row is, declared rather than measured.
+ *
+ * The artwork is 46 and the padding is 8 either side, which is what the row
+ * came to anyway — the point is that it is now a *fact* the list can be told
+ * instead of an outcome it has to discover per row. It is also what keeps a
+ * row with no length the same height as one with a length: the empty
+ * container trap the desktop's transport column already pays for, one list
+ * over.
+ */
+export const ROW = 62;
 
 /** Open the playlist sheet for this row, with a nudge.
  *
@@ -113,14 +125,14 @@ export const TrackRow = memo(
     a.onAdd === b.onAdd,
 );
 
-const styles = (t: Theme) =>
+const styles = sheet((t: Theme) =>
   StyleSheet.create({
     row: {
       flexDirection: 'row',
       alignItems: 'center',
       gap: space.md,
       paddingHorizontal: space.lg,
-      paddingVertical: space.sm,
+      height: ROW,
       backgroundColor: 'transparent',
     },
     pressed: { backgroundColor: t.cardHigh },
@@ -140,4 +152,5 @@ const styles = (t: Theme) =>
     titlePlaying: { color: t.accent },
     meta: { fontFamily: FONT, fontSize: 12.5, color: t.dim },
     time: { fontFamily: FONT, fontSize: 12, color: t.faint, fontVariant: ['tabular-nums'] },
-  });
+  }),
+);

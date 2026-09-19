@@ -23,16 +23,19 @@ import { ScrollView, StyleSheet, Text, View, Pressable } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { FONT, space, radius, useTheme, type Theme } from '@/theme';
-import { Artwork } from '@/ui/artwork';
+import { FONT, space, radius, useTheme, type Theme, sheet } from '@/theme';
 import { Debug } from '@/ui/debug';
 import { Icon, type IconName } from '@/ui/icon';
+import { artId, SharedArt, useSharedArt } from '@/ui/shared';
 import { useShell } from './_layout';
 
 export default function Library() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const { peer, login, server, addTo, inset, signOut } = useShell();
+  // Every row on this screen opens a page that draws the same cover bigger,
+  // so touching one measures it first and the square carries across.
+  const { lift } = useSharedArt();
   // The one screen that can say what the peer actually holds, and the one that
   // can re-point it. Reached from here because this is the screen about *this
   // phone's* copy of things.
@@ -56,7 +59,7 @@ export default function Library() {
   return (
     <ScrollView
       style={s.page}
-      contentContainerStyle={{ paddingTop: insets.top + space.md, paddingBottom: inset + space.lg }}
+      contentContainerStyle={{ paddingTop: insets.top + space.md, paddingBottom: inset }}
     >
       <View style={s.head}>
         <Text style={s.title}>Your Library</Text>
@@ -93,15 +96,18 @@ export default function Library() {
           <Row
             key={list.id}
             theme={theme}
-            icon="playlist"
+            art={list.name}
+            glyph="playlist"
+            id={artId('playlist', list.id)}
             name={list.name}
             under="Playlist"
-            onPress={() =>
+            onPress={() => {
+              lift(artId('playlist', list.id));
               router.push({
                 pathname: '/list',
                 params: { kind: 'playlist', id: list.id, name: list.name },
-              })
-            }
+              });
+            }}
           />
         ))}
       </Section>
@@ -112,13 +118,15 @@ export default function Library() {
             key={album.name}
             theme={theme}
             art={album.name}
+            id={artId('album', album.name)}
             name={album.name}
             under={`${album.creator || 'Album'} · ${album.tracks} ${
               album.tracks === 1 ? 'track' : 'tracks'
             }`}
-            onPress={() =>
-              router.push({ pathname: '/list', params: { kind: 'album', name: album.name } })
-            }
+            onPress={() => {
+              lift(artId('album', album.name));
+              router.push({ pathname: '/list', params: { kind: 'album', name: album.name } });
+            }}
           />
         ))}
       </Section>
@@ -128,13 +136,16 @@ export default function Library() {
           <Row
             key={artist.name}
             theme={theme}
-            icon="artist"
+            art={artist.name}
+            glyph="artist"
             round
+            id={artId('artist', artist.name)}
             name={artist.name}
             under={`${artist.tracks} ${artist.tracks === 1 ? 'track' : 'tracks'}`}
-            onPress={() =>
-              router.push({ pathname: '/list', params: { kind: 'artist', name: artist.name } })
-            }
+            onPress={() => {
+              lift(artId('artist', artist.name));
+              router.push({ pathname: '/list', params: { kind: 'artist', name: artist.name } });
+            }}
           />
         ))}
       </Section>
@@ -148,8 +159,10 @@ export default function Library() {
           <Row
             key={composer.name}
             theme={theme}
-            icon="artist"
+            art={composer.name}
+            glyph="artist"
             round
+            id={artId('composer', composer.name)}
             name={composer.name}
             under={[
               lifespan(composer.born, composer.died),
@@ -157,9 +170,10 @@ export default function Library() {
             ]
               .filter(Boolean)
               .join(' · ')}
-            onPress={() =>
-              router.push({ pathname: '/browse', params: { kind: 'works', name: composer.name } })
-            }
+            onPress={() => {
+              lift(artId('composer', composer.name));
+              router.push({ pathname: '/browse', params: { kind: 'works', name: composer.name } });
+            }}
           />
         ))}
       </Section>
@@ -201,6 +215,8 @@ function Row({
   under,
   icon,
   art,
+  glyph,
+  id,
   round,
   onPress,
 }: {
@@ -210,6 +226,16 @@ function Row({
   icon?: IconName;
   /** Draw the generated cover for this name instead of a glyph. */
   art?: string;
+  /** What kind of thing the cover stands for, drawn faintly on it. */
+  glyph?: IconName;
+  /**
+   * Which record this is, so the square can fly to the page it opens.
+   *
+   * Without one the cover is an ordinary `SharedArt` that registers nothing
+   * anybody asks for, which is exactly what a row with no page-sized twin
+   * wants.
+   */
+  id?: string;
   round?: boolean;
   onPress: () => void;
 }) {
@@ -221,7 +247,15 @@ function Row({
       accessibilityRole="button"
     >
       {art ? (
-        <Artwork seed={art} size={48} theme={theme} />
+        <SharedArt
+          id={id ?? art}
+          end="row"
+          seed={art}
+          size={48}
+          theme={theme}
+          round={round}
+          glyph={glyph}
+        />
       ) : (
         <View style={[s.square, round && s.round]}>
           <Icon name={icon ?? 'note'} size={20} tint={theme.dim} />
@@ -240,7 +274,7 @@ function Row({
   );
 }
 
-const styles = (t: Theme) =>
+const styles = sheet((t: Theme) =>
   StyleSheet.create({
     page: { flex: 1, backgroundColor: t.bg },
     head: {
@@ -283,4 +317,5 @@ const styles = (t: Theme) =>
     text: { flex: 1, gap: 2 },
     name: { fontFamily: FONT, fontSize: 15, fontWeight: '600', color: t.text },
     under: { fontFamily: FONT, fontSize: 12, color: t.dim },
-  });
+  }),
+);

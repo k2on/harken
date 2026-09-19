@@ -13,17 +13,30 @@
  * thing under your finger is the thing that arrives — and the same value, run
  * backwards, is the close.
  *
- * **Two gestures, split by axis**, which is what keeps them from fighting:
+ * **The collapsed bar is a card, not a shelf.** It used to be a full-bleed
+ * strip with a hairline along its top, which is the one arrangement that makes
+ * a bar look like part of the tab bar rather than like the thing that is
+ * playing: two full-width bands stacked, sharing an edge, reading as one lump
+ * of chrome. It is inset from both sides and rounded now, with a gap under it,
+ * so it floats over the list — and `PlayerScrim` in the shell fades the page
+ * out underneath it rather than cutting it off with a rule. A card has to be
+ * *over* something for that to read, which is what the fade is for.
  *
- * - vertical on the container opens and closes, from anywhere, including
- *   anywhere on the expanded sheet. It fails on a horizontal drag, which is
- *   what leaves the seek bar's own gesture alone;
- * - horizontal on the *bar* skips, because a mini bar is the one control you
- *   reach for without looking and a thumb's flick is the gesture people
- *   already try.
+ * **Three gestures on it, split by axis and by what they are about:**
  *
- * Both track the finger rather than firing on release: a sheet that only moves
- * after you let go is a sheet you are not sure you are dragging.
+ * - vertical opens and closes, from anywhere, including anywhere on the
+ *   expanded sheet. It fails on a horizontal drag, which is what leaves the
+ *   seek bar's own gesture alone;
+ * - horizontal on the bar **shows the track before and after** — the faces sit
+ *   in a row three wide and the row follows the finger, so a drag reveals the
+ *   neighbour rather than firing a skip you cannot see coming. Let go past a
+ *   third of a face and that neighbour becomes the track; let go short and it
+ *   springs back with nothing changed. At either end of the queue there is
+ *   nothing to reveal, so the row leans against `wall` and returns;
+ * - a tap opens it.
+ *
+ * All three track the finger rather than firing on release: a sheet that only
+ * moves after you let go is a sheet you are not sure you are dragging.
  */
 
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
@@ -39,18 +52,86 @@ import Animated, {
 } from 'react-native-reanimated';
 
 import { clock } from '@/format';
-import type { Player } from '@/player';
-import { FONT, radius, space, type Theme } from '@/theme';
+import { useClock, type Player, type Track } from '@/player';
+import { FONT, radius, space, type Theme, sheet } from '@/theme';
 import { Artwork } from './artwork';
 import { Icon } from './icon';
+import { wall } from './rubber';
 import { SeekBar } from './seekbar';
 import { TAB_BAR } from './tabbar';
 
-/** How tall the collapsed bar is. Everything that has to agree about where it
+/** How tall the collapsed card is. Everything that has to agree about where it
  *  sits is laid out before it is drawn, so this is a constant. */
-export const BAR = 58;
+export const BAR = 60;
+/** …how far it is held off each side, so it reads as a card on the page. */
+export const BAR_SIDE = space.md;
+/** …and off the tab bar, which is the other half of the same idea: a card
+ *  touching the thing under it is not floating over anything. */
+export const BAR_GAP = space.sm;
+/** How far above the card the page is faded out. Enough for a track title to
+ *  dissolve rather than be cut in half by an edge. */
+export const BAR_FADE = 36;
 
 const SPRING = { damping: 22, stiffness: 240, mass: 0.7 };
+/** The carousel's own, which is tighter: this one lands on a track rather than
+ *  settling into a resting place, so overshoot would read as a bounce past the
+ *  thing you asked for. */
+const SLIDE = { damping: 26, stiffness: 320, mass: 0.7 };
+
+/**
+ * A colour with its alpha taken off, for the far end of a fade.
+ *
+ * `'transparent'` is not the answer: it is `rgba(0,0,0,0)` everywhere, so a
+ * gradient running to it passes through darkening greys on a light theme —
+ * a grubby shadow under the card instead of a fade. What is wanted is *this*
+ * background at zero opacity, which is a different colour on each theme and
+ * the same hue as what it is fading from.
+ */
+function clear(hex: string): string {
+  const h = hex.replace('#', '');
+  const full = h.length === 3 ? h.split('').map((c) => c + c).join('') : h;
+  const n = parseInt(full.slice(0, 6), 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, 0)`;
+}
+
+/**
+ * The fade under the bar, drawn by the shell rather than by the player.
+ *
+ * It belongs to the *page*, not to the card: it is what the list disappears
+ * into, it is there whether or not anything is playing (the tab bar needs the
+ * same treatment), and it must not move when the sheet is dragged. Put inside
+ * the player's own container it would slide up with it and take the page's
+ * bottom edge along for the ride.
+ */
+export function PlayerScrim({
+  theme,
+  bottom,
+  playing,
+}: {
+  theme: Theme;
+  /** The safe area. */
+  bottom: number;
+  /** Whether the card is there to make room for. */
+  playing: boolean;
+}) {
+  const height = BAR_FADE + (playing ? BAR + BAR_GAP : 0) + TAB_BAR + bottom;
+  // Solid from the card's own top edge down — the card floats on the page's
+  // background, and a gradient still running underneath it would leave the
+  // tab bar sitting on a wash.
+  const solid = BAR_FADE / height;
+  return (
+    <LinearGradient
+      pointerEvents="none"
+      colors={[clear(theme.bg), theme.bg, theme.bg]}
+      locations={[0, solid, 1]}
+      style={[s0.scrim, { height }]}
+    />
+  );
+}
+
+const s0 = StyleSheet.create({
+  scrim: { position: 'absolute', left: 0, right: 0, bottom: 0 },
+});
 
 export function PlayerSheet({
   player,
@@ -82,9 +163,10 @@ export function PlayerSheet({
   const [expanded, setExpanded] = useState(false);
   const track = player.track;
 
-  // How far the container travels between the two faces: the bar's resting
-  // top edge, measured from the top of the screen.
-  const travel = Math.max(1, height - bottom - TAB_BAR - BAR);
+  // How far the container travels between the two faces: the card's resting
+  // top edge, measured from the top of the screen. The gap is part of it —
+  // the card sits a gap above the tab bar, not against it.
+  const travel = Math.max(1, height - bottom - TAB_BAR - BAR_GAP - BAR);
 
   const settle = useCallback((to: number) => {
     setExpanded(to === 1);
@@ -119,19 +201,6 @@ export function PlayerSheet({
 
   const liftSheet = useMemo(makeLift, [makeLift]);
   const liftBar = useMemo(makeLift, [makeLift]);
-
-  const { skip } = player;
-  const flick = useMemo(
-    () =>
-      Gesture.Pan()
-        .activeOffsetX([-24, 24])
-        .failOffsetY([-18, 18])
-        .onEnd((e) => {
-          if (Math.abs(e.translationX) < 60 && Math.abs(e.velocityX) < 700) return;
-          runOnJS(skip)(e.translationX < 0 ? 1 : -1);
-        }),
-    [skip],
-  );
 
   const tap = useMemo(
     () =>
@@ -197,88 +266,245 @@ export function PlayerSheet({
         </Animated.View>
       </GestureDetector>
 
-      {/* …and the bar, pinned to the container's top edge, which is exactly
+      {/* …and the card, pinned to the container's top edge, which is exactly
           where it belongs when the container is down. */}
-      <Animated.View style={[s.barWrap, barFace]} pointerEvents={expanded ? 'none' : 'auto'}>
-        <GestureDetector gesture={Gesture.Race(liftBar, flick, tap)}>
-          <View>
-            <MiniBar player={player} album={album} theme={theme} onDevices={onDevices} />
-          </View>
-        </GestureDetector>
+      <Animated.View
+        style={[s.barWrap, barFace]}
+        pointerEvents={expanded ? 'none' : 'box-none'}
+      >
+        <MiniBar
+          player={player}
+          album={album}
+          theme={theme}
+          lift={liftBar}
+          tap={tap}
+          onDevices={onDevices}
+        />
       </Animated.View>
     </Animated.View>
   );
 }
 
 /**
- * The bar: what is playing, where it is playing, and play/pause.
+ * The card: what is playing, where it is playing, and play/pause.
  *
  * Three things and no more. This is one thumb's width from the bottom of the
  * screen and is the only control that has to be reachable from anywhere, so
- * everything else is a swipe or a tap away — next and previous are the flick,
+ * everything else is a swipe or a tap away — next and previous are the drag,
  * and the rest is the sheet.
+ *
+ * **What the drag moves is the faces, not the whole card.** The transport
+ * stays exactly where a thumb left it: a play button that slides away under a
+ * gesture about *which track* is a play button you have to look at to press.
  */
 const MiniBar = memo(function MiniBar({
   player,
   album,
   theme,
+  lift,
+  tap,
   onDevices,
 }: {
   player: Player;
   album: string;
   theme: Theme;
+  lift: ReturnType<typeof Gesture.Pan>;
+  tap: ReturnType<typeof Gesture.Tap>;
   onDevices: () => void;
 }) {
-  const track = player.track;
   const s = styles(theme);
+  const { track, queue, at, skip } = player;
+  // How wide one face is, which the drag is measured in. Measured rather than
+  // computed, because what is left for the faces depends on whether there is a
+  // device button — and a carousel whose stride is a guess lands between two
+  // tracks.
+  const [face, setFace] = useState(0);
+  const dx = useSharedValue(0);
+
+  const before = at > 0 ? (queue[at - 1] ?? null) : null;
+  const after = at >= 0 && at + 1 < queue.length ? (queue[at + 1] ?? null) : null;
+
+  const slide = useMemo(
+    () =>
+      Gesture.Pan()
+        .activeOffsetX([-16, 16])
+        .failOffsetY([-16, 16])
+        .onUpdate((e) => {
+          const t = e.translationX;
+          // Nothing to reveal on that side, so it leans and comes back. The
+          // queue stops at both ends rather than wrapping — a list that loops
+          // silently is hard to tell from one that is stuck — and the bar says
+          // so by refusing to travel.
+          const room = t > 0 ? before !== null : after !== null;
+          dx.value = room ? t : wall(t, 36);
+        })
+        .onEnd((e) => {
+          const far = face > 0 && Math.abs(e.translationX) > face * 0.35;
+          const quick = Math.abs(e.velocityX) > 550;
+          const dir = e.translationX < 0 ? 1 : -1;
+          const has = dir === 1 ? after !== null : before !== null;
+          if (has && (far || quick)) runOnJS(skip)(dir);
+          // Home either way, and the skip is *not* waited for.
+          //
+          // The obvious version parks the reel on the neighbour until the new
+          // track arrives, and it cannot be made to work: `skip` is a message
+          // to whichever device is playing, so when the sound is on a laptop
+          // the answer comes back over a socket — or not at all — and a bar
+          // frozen mid-slide is the failure. Springing home immediately is
+          // right in both cases. Playing here, React has swapped the middle
+          // face by the time the spring has moved a few pixels, so what
+          // settles into the centre *is* the track you dragged towards; on
+          // another device the bar returns and the title changes when the
+          // broadcast says it has, which is the honest answer rather than a
+          // guess about somebody else's queue.
+          dx.value = withSpring(0, SLIDE);
+        })
+        // A gesture the system takes away mid-drag — a back swipe winning, a
+        // call arriving — never reaches `onEnd`. `success` is false exactly
+        // then, which is what keeps this from re-starting the spring `onEnd`
+        // has already begun.
+        .onFinalize((_e, success) => {
+          if (!success) dx.value = withSpring(0, SLIDE);
+        }),
+    [after, before, dx, face, skip],
+  );
+
+  const row = useAnimatedStyle(() => ({ transform: [{ translateX: dx.value }] }));
+
   if (!track) return null;
-  const pct = player.duration > 0 ? Math.min(100, (player.position / player.duration) * 100) : 0;
   return (
-    <View style={s.bar}>
-      <View style={s.line}>
-        <View style={[s.lineFill, { width: `${pct}%` }]} />
-      </View>
-      <View style={s.barRow}>
-        <Artwork seed={album || track.title} size={40} theme={theme} />
-        <View style={s.text}>
-          <Text style={s.title} numberOfLines={1}>
-            {track.title}
-          </Text>
-          {/* Where it is playing takes the second line when it is not here,
-              because that is the more surprising fact: a phone that is silent
-              with a full bar is a phone somebody thinks is broken. */}
-          {player.elsewhere ? (
-            <Playing on={player.output?.name ?? 'another device'} theme={theme} small />
-          ) : (
-            <Text style={s.meta} numberOfLines={1}>
-              {player.buffering ? 'buffering…' : track.url ? track.creator : 'nothing to stream'}
-            </Text>
-          )}
-        </View>
-        {player.devices.length > 0 ? (
+    <GestureDetector gesture={Gesture.Race(lift, slide, tap)}>
+      <View style={s.bar}>
+        <View style={s.barRow}>
+          <View
+            style={s.faces}
+            onLayout={(e) => {
+              const w = e.nativeEvent.layout.width;
+              if (w > 0 && Math.abs(w - face) > 0.5) setFace(w);
+            }}
+          >
+            <Animated.View style={[s.reel, { width: face * 3, left: -face }, row]}>
+              <Face track={before} width={face} theme={theme} />
+              <Face
+                track={track}
+                width={face}
+                theme={theme}
+                album={album}
+                meta={<Now player={player} theme={theme} />}
+              />
+              <Face track={after} width={face} theme={theme} />
+            </Animated.View>
+          </View>
+
+          {player.devices.length > 0 ? (
+            <Pressable
+              hitSlop={10}
+              onPress={onDevices}
+              style={s.button}
+              accessibilityRole="button"
+              accessibilityLabel="which device is playing"
+            >
+              <Icon name="devices" size={20} tint={player.elsewhere ? theme.accent : theme.dim} />
+            </Pressable>
+          ) : null}
           <Pressable
             hitSlop={10}
-            onPress={onDevices}
+            onPress={player.toggle}
             style={s.button}
             accessibilityRole="button"
-            accessibilityLabel="which device is playing"
+            accessibilityLabel={player.playing ? 'pause' : 'play'}
           >
-            <Icon name="devices" size={20} tint={player.elsewhere ? theme.accent : theme.dim} />
+            <Icon name={player.playing ? 'pause' : 'play'} size={24} tint={theme.text} />
           </Pressable>
-        ) : null}
-        <Pressable
-          hitSlop={10}
-          onPress={player.toggle}
-          style={s.button}
-          accessibilityRole="button"
-          accessibilityLabel={player.playing ? 'pause' : 'play'}
-        >
-          <Icon name={player.playing ? 'pause' : 'play'} size={24} tint={theme.text} />
-        </Pressable>
+        </View>
+        <BarProgress theme={theme} />
+      </View>
+    </GestureDetector>
+  );
+});
+
+/**
+ * One track as the card draws it, drawn three times over.
+ *
+ * `null` is a real case and draws nothing: it is the empty space past either
+ * end of the queue, and something there would be a track that does not exist.
+ */
+function Face({
+  track,
+  width,
+  theme,
+  album,
+  meta,
+}: {
+  track: Track | null;
+  width: number;
+  theme: Theme;
+  /** The album as the library knows it now, which can be fresher than the copy
+   *  frozen into the queue. Only the middle face is given one. */
+  album?: string;
+  /** What the second line says, when it is something other than the creator. */
+  meta?: React.ReactNode;
+}) {
+  const s = styles(theme);
+  if (!track) return <View style={{ width }} />;
+  return (
+    <View style={[s.face, { width }]}>
+      <Artwork seed={album || track.album || track.title} size={40} theme={theme} />
+      <View style={s.text}>
+        <Text style={s.title} numberOfLines={1}>
+          {track.title}
+        </Text>
+        {meta ?? (
+          <Text style={s.meta} numberOfLines={1}>
+            {track.creator || '—'}
+          </Text>
+        )}
       </View>
     </View>
   );
-});
+}
+
+/**
+ * The second line of the middle face.
+ *
+ * Where it is playing takes it when it is not here, because that is the more
+ * surprising fact: a phone that is silent with a full bar is a phone somebody
+ * thinks is broken. Its own component so that `buffering` — which is the
+ * clock's, and moves — does not re-render the reel around it.
+ */
+function Now({ player, theme }: { player: Player; theme: Theme }) {
+  const { buffering } = useClock();
+  const s = styles(theme);
+  if (player.elsewhere) {
+    return <Playing on={player.output?.name ?? 'another device'} theme={theme} small />;
+  }
+  const track = player.track;
+  return (
+    <Text style={s.meta} numberOfLines={1}>
+      {buffering ? 'buffering…' : track?.url ? track.creator : 'nothing to stream'}
+    </Text>
+  );
+}
+
+/**
+ * A hairline of progress along the card's bottom edge.
+ *
+ * Enough to say the thing is moving without becoming a second control — and
+ * along the *bottom* rather than the top, because the card is rounded now and
+ * a bar across the top would be a line drawn through two corners. It is its
+ * own component for the reason `Now` is: it reads the clock, and the clock
+ * moves four times a second.
+ */
+function BarProgress({ theme }: { theme: Theme }) {
+  const { position, duration } = useClock();
+  const s = styles(theme);
+  const pct = duration > 0 ? Math.min(100, (position / duration) * 100) : 0;
+  return (
+    <View style={s.line} pointerEvents="none">
+      <View style={[s.lineFill, { width: `${pct}%` }]} />
+    </View>
+  );
+}
 
 /**
  * Where the sound is coming from, in the accent, with a speaker beside it.
@@ -372,17 +598,7 @@ function Expanded({
           </Pressable>
         </View>
 
-        <SeekBar
-          position={player.position}
-          duration={player.duration}
-          onSeek={player.seek}
-          theme={theme}
-          scrubbable={Boolean(track.url) || player.elsewhere}
-        />
-        <View style={s.clocks}>
-          <Text style={s.clock}>{clock(player.position)}</Text>
-          <Text style={s.clock}>{clock(player.duration)}</Text>
-        </View>
+        <Scrubber player={player} theme={theme} />
 
         <View style={s.transport}>
           <Pressable onPress={() => player.skip(-1)} hitSlop={10} accessibilityLabel="previous">
@@ -435,7 +651,29 @@ function Expanded({
   );
 }
 
-const styles = (t: Theme) =>
+/** The seek bar and the two clocks, which are the sheet's moving part and
+ *  therefore the sheet's only subscriber to the clock. */
+function Scrubber({ player, theme }: { player: Player; theme: Theme }) {
+  const { position, duration } = useClock();
+  const s = styles(theme);
+  return (
+    <>
+      <SeekBar
+        position={position}
+        duration={duration}
+        onSeek={player.seek}
+        theme={theme}
+        scrubbable={Boolean(player.track?.url) || player.elsewhere}
+      />
+      <View style={s.clocks}>
+        <Text style={s.clock}>{clock(position)}</Text>
+        <Text style={s.clock}>{clock(duration)}</Text>
+      </View>
+    </>
+  );
+}
+
+const styles = sheet((t: Theme) =>
   StyleSheet.create({
     shell: { position: 'absolute', left: 0, right: 0, top: 0 },
     // The four edges written out: these typings expose `absoluteFill` as a
@@ -444,17 +682,34 @@ const styles = (t: Theme) =>
     expanded: { flex: 1, backgroundColor: t.bg },
     barWrap: { position: 'absolute', top: 0, left: 0, right: 0 },
     bar: {
-      backgroundColor: t.raised,
-      borderTopWidth: StyleSheet.hairlineWidth,
-      borderTopColor: t.border,
+      marginHorizontal: BAR_SIDE,
       height: BAR,
+      backgroundColor: t.raised,
+      borderRadius: radius.md,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: t.border,
+      // So the progress line follows the corners rather than squaring them
+      // off, and so a face sliding through cannot spill out of the card.
+      overflow: 'hidden',
+      // A card is only floating if something says so. Android takes the
+      // elevation and iOS the shadow; both are deliberately slight, because
+      // this sits on a fade that is already doing most of the lifting.
+      elevation: 6,
+      shadowColor: '#000',
+      shadowOpacity: t.dark ? 0.45 : 0.14,
+      shadowRadius: 12,
+      shadowOffset: { width: 0, height: 4 },
     },
-    // A hairline of progress along the top edge. Enough to say the thing is
-    // moving without becoming a second control.
-    line: { height: 2, backgroundColor: t.border },
-    lineFill: { height: 2, backgroundColor: t.accent },
     barRow: {
       flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingRight: space.sm,
+    },
+    // The window the reel of faces moves through.
+    faces: { flex: 1, height: '100%', overflow: 'hidden', justifyContent: 'center' },
+    reel: { position: 'absolute', flexDirection: 'row', alignItems: 'center' },
+    face: {
       flexDirection: 'row',
       alignItems: 'center',
       gap: space.md,
@@ -464,6 +719,8 @@ const styles = (t: Theme) =>
     title: { fontFamily: FONT, fontSize: 14, fontWeight: '600', color: t.text },
     meta: { fontFamily: FONT, fontSize: 12, color: t.dim },
     button: { padding: space.xs },
+    line: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 2, backgroundColor: t.border },
+    lineFill: { height: 2, backgroundColor: t.accent },
     playingOn: { flexDirection: 'row', alignItems: 'center', gap: 5 },
     playingText: { fontFamily: FONT, fontSize: 12.5, color: t.accent, fontWeight: '600', flexShrink: 1 },
     playingSmall: { fontFamily: FONT, fontSize: 11.5 },
@@ -511,4 +768,5 @@ const styles = (t: Theme) =>
     devicesPressed: { backgroundColor: t.cardHigh },
     devicesText: { fontFamily: FONT, fontSize: 12.5, color: t.dim },
     trouble: { fontFamily: FONT, fontSize: 12, lineHeight: 17, color: t.danger, textAlign: 'center' },
-  });
+  }),
+);

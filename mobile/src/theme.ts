@@ -90,6 +90,29 @@ export const space = { xs: 4, sm: 8, md: 12, lg: 16, xl: 24 } as const;
 /** Corner radii. `pill` is anything taller than it is round. */
 export const radius = { sm: 8, md: 12, lg: 18, xl: 26, pill: 999 } as const;
 
+/**
+ * A stylesheet per theme, made once.
+ *
+ * `const styles = (t: Theme) => StyleSheet.create({…})` called from a
+ * component body is a `StyleSheet.create` per render — which on a list is one
+ * per row per frame, and the whole reason the library is a maintained view is
+ * that a change costs the rows that moved. There are exactly two themes and
+ * both are module constants, so the answer can simply be kept: the map is
+ * keyed by the theme object, never grows past two, and a component asking for
+ * its styles gets the same object every time — which is also what makes a
+ * `memo` comparing styles by identity honest.
+ */
+export function sheet<T>(make: (t: Theme) => T): (t: Theme) => T {
+  const made = new Map<Theme, T>();
+  return (t: Theme) => {
+    const had = made.get(t);
+    if (had) return had;
+    const now = make(t);
+    made.set(t, now);
+    return now;
+  };
+}
+
 export function palette(dark: boolean): Theme {
   return dark ? DARK : LIGHT;
 }
