@@ -36,6 +36,7 @@ import {
   type Work,
 } from 'harken-native';
 
+import { listening } from './listening';
 import { before, install, watch } from './mutators';
 // Generated from the module's own schema section by `nix run .#mutators`. A call
 // site naming a verb the module does not have, or passing the wrong arguments
@@ -364,6 +365,15 @@ export function usePeer(login: Login, server: string | null): Peer {
       return NativePeer.open(databasePath(user), user, login.session);
     },
     query: (client, scratch) => read(scratch, client),
+    // The listening session, on the same socket and on the session's own
+    // clock — so a laptop's pause button reaches this phone whether or not a
+    // screen is mounted to have asked for it.
+    //
+    // A `tick` and not the query, deliberately: what comes back on that
+    // channel is what is true *now* and moves no row, so re-reading the
+    // library on it would be paying for the whole read model once a second
+    // for ever. `listening` tells its own subscribers instead.
+    tick: (client) => listening.pump(client),
     install,
     watch,
   });

@@ -91,10 +91,10 @@ function Signed({ server, login: first }: { server: string; login: Login }) {
   const [picking, setPicking] = useState(false);
   const [note, setNote] = useState<string | null>(null);
 
-  // Where this phone's listening session is, and who it is there. The socket
-  // outlives every screen — the provider that drives it is at the root — so
-  // this points it rather than owning it, exactly as the peer's session is
-  // pointed.
+  // Where this phone's listening session is, and who it is there. It has no
+  // socket of its own any more — it rides the peer's, as a `petros::live`
+  // room — so there is no token to give it: the engine already proved who
+  // this is, on the one connection both now share.
   useEffect(() => {
     if (offline()) {
       listening.close();
@@ -103,8 +103,8 @@ function Signed({ server, login: first }: { server: string; login: Login }) {
     // A device *is* a login: `login.session` is one login on one device,
     // already issued, already stable across a relaunch, and honestly new when
     // somebody signs out and back in.
-    listening.point(server, login.token, login.session);
-  }, [server, login.token, login.session]);
+    listening.open(server, login.session);
+  }, [server, login.session]);
 
   const trackOf = useCallback(
     (item: Item): Track => ({
@@ -257,6 +257,7 @@ function Signed({ server, login: first }: { server: string; login: Login }) {
             <Devices
               devices={player.devices}
               output={player.output?.id ?? null}
+              moving={player.moving}
               me={player.me}
               theme={theme}
               bottom={insets.bottom}

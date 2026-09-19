@@ -475,8 +475,9 @@ function Face({
 function Now({ player, theme }: { player: Player; theme: Theme }) {
   const { buffering } = useClock();
   const s = styles(theme);
-  if (player.elsewhere) {
-    return <Playing on={player.output?.name ?? 'another device'} theme={theme} small />;
+  const at = where(player);
+  if (at) {
+    return <Playing on={at.name} connecting={at.connecting} theme={theme} small />;
   }
   const track = player.track;
   return (
@@ -514,16 +515,48 @@ function BarProgress({ theme }: { theme: Theme }) {
  * other than the phone in your hand, and then it is the most important thing
  * on the screen.
  */
-function Playing({ on, theme, small }: { on: string; theme: Theme; small?: boolean }) {
+function Playing({
+  on,
+  theme,
+  small,
+  connecting,
+}: {
+  on: string;
+  theme: Theme;
+  small?: boolean;
+  connecting?: boolean;
+}) {
   const s = styles(theme);
   return (
     <View style={s.playingOn}>
       <Icon name="devices" size={small ? 12 : 15} tint={theme.accent} />
       <Text style={[s.playingText, small && s.playingSmall]} numberOfLines={1}>
-        {on}
+        {connecting ? `connecting to ${on}…` : on}
       </Text>
     </View>
   );
+}
+
+/**
+ * Which device the bar names, and whether the sound is on its way there.
+ *
+ * A hand-off in flight outranks the output, and has to: pressing a speaker in
+ * the house starts a second or two of it clearing its queue and fetching the
+ * first track, and for that second or two the sound is still *here*. Drawing
+ * the old device through it says the press did nothing, and drawing the new
+ * one as though it were playing is a bar counting along silence. So the one
+ * line says what is actually happening, in the place the thumb already is.
+ *
+ * `null` is "here, and nothing on its way" — which is when the second line
+ * goes back to being the artist's.
+ */
+function where(player: Player): { name: string; connecting: boolean } | null {
+  const named = (id: string | null) => player.devices.find((d) => d.id === id)?.name;
+  if (player.moving) {
+    return { name: named(player.moving) ?? 'another device', connecting: true };
+  }
+  if (!player.elsewhere) return null;
+  return { name: player.output?.name ?? 'another device', connecting: false };
 }
 
 /** The full-screen face. */
@@ -555,6 +588,7 @@ function Expanded({
   if (!track) return null;
   // Big, but not so big that the transport is off the bottom of a small phone.
   const art = Math.min(width - space.xl * 4, height * 0.38);
+  const at = where(player);
   return (
     <View style={s.expanded}>
       <LinearGradient
@@ -626,8 +660,8 @@ function Expanded({
             accessibilityRole="button"
             accessibilityLabel="which device is playing"
           >
-            {player.elsewhere ? (
-              <Playing on={player.output?.name ?? 'another device'} theme={theme} />
+            {at ? (
+              <Playing on={at.name} connecting={at.connecting} theme={theme} />
             ) : (
               <>
                 <Icon name="devices" size={15} tint={theme.dim} />
