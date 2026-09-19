@@ -12,7 +12,7 @@
  * silently redirected by somebody else's edit arriving.
  */
 
-import { useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -20,9 +20,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { asId } from '@/mutators.gen';
 import { usePlayer } from '@/player';
 import type { Source } from '@/peer';
-import { FONT, space, radius, useTheme, type Theme } from '@/theme';
+import { FONT, space, radius, useTheme, type Theme, sheet } from '@/theme';
 import { Artwork } from '@/ui/artwork';
-import { Icon } from '@/ui/icon';
+import { Icon, type IconName } from '@/ui/icon';
+import { artId, SharedArt, useSharedArt } from '@/ui/shared';
 import { TrackList } from '@/ui/tracklist';
 import { useShell } from './_layout';
 
@@ -60,16 +61,59 @@ export default function List() {
   const title = source.kind === 'library' ? 'All tracks' : (params.name ?? '');
   const s = styles(theme);
 
-  const start = (at: number) => {
-    const row = rows[at];
+  /**
+   * The cover this page shares with the row that opened it.
+   *
+   * `null` for the library and for a recording, which are pages nothing in a
+   * list draws a cover for — and a flight with only one end is no flight,
+   * which the provider already treats as the ordinary case.
+   */
+  const art = useMemo<{ id: string; glyph: IconName; round: boolean } | null>(() => {
+    if (source.kind === 'album') return { id: artId('album', source.name), glyph: 'note', round: false };
+    if (source.kind === 'artist') return { id: artId('artist', source.name), glyph: 'artist', round: true };
+    if (source.kind === 'playlist') {
+      return { id: artId('playlist', source.id), glyph: 'playlist', round: false };
+    }
+    return null;
+  }, [source]);
+
+  // The rows the list is drawing, reachable from a callback that never has to
+  // change because of them. Without this every tick of the player rebuilt
+  // `onPress`, which is a new prop on every visible row, which defeats the
+  // memo each row is wrapped in — and that is most of what made a long list
+  // feel heavy while something was playing.
+  const showing = useRef(rows);
+  showing.current = rows;
+  const play = useRef(player.play);
+  play.current = player.play;
+  const of = useRef(trackOf);
+  of.current = trackOf;
+
+  const start = useCallback((at: number) => {
+    const list = showing.current;
+    const row = list[at];
     if (!row) return;
-    player.play(trackOf(row), rows.map(trackOf));
-  };
+    play.current(of.current(row), list.map(of.current));
+  }, []);
+
+  const press = useCallback(
+    (item: { id: string }) => start(showing.current.findIndex((r) => r.id === item.id)),
+    [start],
+  );
+
+  const { drop } = useSharedArt();
+  const leave = useCallback(() => {
+    // Before the pop rather than after it: the page is still where it is and
+    // can still be measured, which is the only moment a flight out of it can
+    // be started from.
+    if (art) drop(art.id, title, art.glyph);
+    router.back();
+  }, [art, drop, title]);
 
   return (
     <View style={s.page}>
       <View style={[s.head, { paddingTop: insets.top + space.sm }]}>
-        <Pressable onPress={() => router.back()} hitSlop={12} accessibilityLabel="back">
+        <Pressable onPress={leave} hitSlop={12} accessibilityLabel="back">
           <Icon name="back" size={24} tint={theme.text} />
         </Pressable>
         <Text style={s.headLabel} numberOfLines={1}>
@@ -84,7 +128,7 @@ export default function List() {
         playingId={player.track?.id}
         theme={theme}
         bottom={inset}
-        onPress={(item) => start(rows.findIndex((r) => r.id === item.id))}
+        onPress={press}
         onAdd={addTo}
         onSoon={soon}
         empty={
@@ -94,7 +138,20 @@ export default function List() {
         }
         header={
           <View style={s.top}>
-            <Artwork seed={title} size={168} theme={theme} corner={radius.md} />
+            {art ? (
+              <SharedArt
+                id={art.id}
+                end="page"
+                seed={title}
+                size={168}
+                theme={theme}
+                corner={radius.md}
+                round={art.round}
+                glyph={art.glyph}
+              />
+            ) : (
+              <Artwork seed={title} size={168} theme={theme} corner={radius.md} />
+            )}
             <Text style={s.title} numberOfLines={2}>
               {title}
             </Text>
@@ -139,7 +196,7 @@ const KIND: Record<Source['kind'], string> = {
   recording: 'Recording',
 };
 
-const styles = (t: Theme) =>
+const styles = sheet((t: Theme) =>
   StyleSheet.create({
     page: { flex: 1, backgroundColor: t.bg },
     head: {
@@ -180,4 +237,5 @@ const styles = (t: Theme) =>
       backgroundColor: t.accent,
     },
     playOff: { opacity: 0.4 },
-  });
+  }),
+);

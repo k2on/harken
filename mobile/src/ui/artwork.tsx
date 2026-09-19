@@ -16,7 +16,7 @@ import { View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 
 import { radius, type Theme } from '@/theme';
-import { Icon } from './icon';
+import { Icon, type IconName } from './icon';
 
 /** FNV-1a, enough to say "this name is not that name". */
 function hash(text: string): number {
@@ -33,12 +33,24 @@ export function Artwork({
   size,
   theme,
   corner = radius.sm,
+  glyph = 'note',
 }: {
   /** What the square stands for: an album's name, or a track's title. */
   seed: string;
   size: number;
   theme: Theme;
   corner?: number;
+  /**
+   * What kind of thing it is, faintly, in the middle.
+   *
+   * A note for a record, a person for a person, a list for a list — because
+   * the gradient says *which* one and only the glyph says what it is, and a
+   * library of squares that are all notes makes a playlist look like an
+   * album. The two ends of a shared-element flight have to agree on it, which
+   * is why it travels with the seed rather than being decided by whoever is
+   * drawing.
+   */
+  glyph?: IconName;
 }) {
   const [from, to] = theme.art[hash(seed) % theme.art.length];
   return (
@@ -58,7 +70,7 @@ export function Artwork({
       {/* Faint, because it is a placeholder and not a logo: it should read as
           "a record" at a glance and disappear on a second look. */}
       <View style={{ opacity: theme.dark ? 0.45 : 0.35 }}>
-        <Icon name="note" size={size * 0.38} tint={theme.text} />
+        <Icon name={glyph} size={size * 0.38} tint={theme.text} />
       </View>
     </LinearGradient>
   );

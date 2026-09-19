@@ -12,13 +12,13 @@
  * album matched would bury the track you actually typed.
  */
 
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Item } from 'harken-native';
 
 import { usePlayer } from '@/player';
-import { FONT, space, radius, useTheme, type Theme } from '@/theme';
+import { FONT, space, radius, useTheme, type Theme, sheet } from '@/theme';
 import { Icon } from '@/ui/icon';
 import { TrackList } from '@/ui/tracklist';
 import { useShell } from './_layout';
@@ -41,6 +41,20 @@ export default function Search() {
       return words.every((word) => hay.includes(word));
     });
   }, [peer.items, query]);
+
+  // The same trick `list.tsx` uses, for the same reason: `onPress` must not
+  // be a new function every time something else on the screen moves, or every
+  // visible row re-renders with it.
+  const showing = useRef(rows);
+  showing.current = rows;
+  const play = useRef(player.play);
+  play.current = player.play;
+  const of = useRef(trackOf);
+  of.current = trackOf;
+  const press = useCallback((item: Item) => {
+    const list = showing.current;
+    play.current(of.current(item), list.map(of.current));
+  }, []);
 
   const s = styles(theme);
   return (
@@ -71,7 +85,7 @@ export default function Search() {
         playingId={player.track?.id}
         theme={theme}
         bottom={inset}
-        onPress={(item) => player.play(trackOf(item), rows.map(trackOf))}
+        onPress={press}
         onAdd={addTo}
         onSoon={soon}
         empty={
@@ -84,7 +98,7 @@ export default function Search() {
   );
 }
 
-const styles = (t: Theme) =>
+const styles = sheet((t: Theme) =>
   StyleSheet.create({
     page: { flex: 1, backgroundColor: t.bg },
     title: { fontFamily: FONT, fontSize: 27, fontWeight: '800', color: t.text, paddingHorizontal: space.lg },
@@ -101,4 +115,5 @@ const styles = (t: Theme) =>
       borderColor: t.border,
     },
     input: { flex: 1, fontFamily: FONT, fontSize: 15, color: t.text, paddingVertical: 2 },
-  });
+  }),
+);

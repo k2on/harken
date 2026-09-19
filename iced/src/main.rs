@@ -547,7 +547,8 @@ struct Bar {
     duration: f64,
 }
 
-/// What `view_devices` draws a row at, and `fit` has to assume.
+/// What `view_devices` draws a row at, and `devices_origin` right-aligns to
+/// the bar's own edge.
 const DEVICES_WIDTH: f32 = 216.0;
 
 /// How the next change to what is shown should reach the history.
@@ -2079,6 +2080,16 @@ impl App {
     /// is nothing to ask where the cursor's row currently is. Near the top of
     /// the list, against the same ⋯ column every other menu uses.
     const MENU_BY_KEY_Y: f32 = 120.0;
+    /// How tall the play bar is.
+    ///
+    /// Given to the container rather than left to whatever its contents come
+    /// to, for the reason `PANEL_ENTRY` is given to a panel row: the device
+    /// picker sits on top of the bar and `devices_origin` places it *before*
+    /// iced lays anything out, so the bar's height has to be a number rather
+    /// than a measurement. The contents come to a shade under it — two lines
+    /// of 14 and 12 over the container's own padding — so declaring it moves
+    /// nothing on screen and makes the arithmetic above it true.
+    const BAR_HEIGHT: f32 = 48.0;
 
     /// Where the cursor is in a pane.
     fn at(&self, pane: Pane) -> usize {
@@ -3524,18 +3535,10 @@ impl App {
         }
 
         if let Some(at) = self.devices {
-            // Placed by the same rule the row menu is, which is the point of
-            // `fit` being a function: this one is always asked for from the
-            // bottom of the window, so it always opens upwards — and it does
-            // that because of where it was asked from rather than because it
-            // was told to.
-            let rows = self.listening.devices().len() + 1;
-            let origin = Self::fit(
-                self.cursor,
-                self.window,
-                DEVICES_WIDTH,
-                8.0 + 27.0 + 27.0 * rows as f32,
-            );
+            // Off the speaker button that opened it, and off nothing else —
+            // see `devices_origin`, which is where this stopped being a
+            // function of the pointer.
+            let origin = Self::devices_origin(self.window, self.listening.devices().len() + 1);
             layers = layers
                 .push(
                     mouse_area(container(text("")).width(Length::Fill).height(Length::Fill))
@@ -3559,6 +3562,56 @@ impl App {
     /// ends where the list ends, which is where the button is.
     fn dots_x(window: iced::Size, width: f32) -> f32 {
         (window.width - Self::PAGE_PADDING - SCROLLBAR - width).max(Self::EDGE)
+    }
+
+    /// Where the device picker goes: hanging off the speaker button at the
+    /// right-hand end of the play bar.
+    ///
+    /// **A control's menu opens at the control**, which is the rule
+    /// `Anchor::Dots` follows one panel over and for the same reason: a menu
+    /// that turns up wherever the pointer happens to have drifted reads as
+    /// detached from the button that opened it. There is no `Anchor` to
+    /// choose between here, because there is only one way to ask — the
+    /// button, and `d`, which has no pointer at all and used to get the
+    /// panel dropped wherever the mouse was last resting.
+    ///
+    /// It is also what stops the panel *following* the pointer, which is the
+    /// bug this replaced. It was placed with `fit(self.cursor, …)` from
+    /// inside `view`, and `self.cursor` is the *live* position — the root's
+    /// `on_move` reports every one — so the picker was re-pinned on every
+    /// frame and slid about under the hand that had just opened it. The row
+    /// menu never did that because it stores the origin it was opened at.
+    /// This one needs no origin to store: a panel placed from nothing that
+    /// moves cannot move, which is the stronger of the two guarantees and
+    /// the reason the fix is a function rather than a field.
+    ///
+    /// Right-aligned to the edge the bar's own contents end at, so the panel
+    /// ends where the button does; and sitting on the bar's top edge, so it
+    /// opens upwards without being told to — which is the one thing the old
+    /// call did get right, and it got it from where it was asked rather than
+    /// from what it was about.
+    fn devices_origin(window: iced::Size, rows: usize) -> iced::Point {
+        let x = (window.width - Self::PAGE_PADDING - DEVICES_WIDTH).max(Self::EDGE);
+        let y =
+            (window.height - Self::PAGE_PADDING - Self::BAR_HEIGHT - Self::devices_height(rows))
+                .max(Self::EDGE);
+        iced::Point::new(x, y)
+    }
+
+    /// How tall the device picker comes out: the panel's padding, its title
+    /// line, and a row per device plus the one that stops it everywhere.
+    ///
+    /// The panel's own numbers, exactly as `menu_height` uses them —
+    /// `view_devices` gives its title `MENU_TITLE` and draws its rows with
+    /// `panel_entry`, so this is true by construction rather than close. It
+    /// was `8.0 + 27.0 + 27.0 * rows` written out at the call site: the same
+    /// three constants from memory, with the title's guessed a row too tall
+    /// and the rows' being whatever a hand-rolled container came to. That is
+    /// the trap `SUBMENU_CHROME` documents — a placement believing a height
+    /// the panel does not have — and it is only invisible here because the
+    /// panel was moving anyway.
+    fn devices_height(rows: usize) -> f32 {
+        PANEL_PADDING * 2.0 + Self::MENU_TITLE + PANEL_ENTRY * rows as f32
     }
 
     /// Where to pin a menu asked for on the row at `cursor.y`.
@@ -4897,7 +4950,11 @@ impl App {
                 line = line.push(container(text("")).width(Length::Fill));
                 line = line.push(output);
             }
-            return container(line).padding([8, 4]).into();
+            return container(line)
+                .padding([8, 4])
+                .height(Length::Fixed(Self::BAR_HEIGHT))
+                .align_y(iced::Alignment::Center)
+                .into();
         };
 
         let duration = bar.duration.max(0.1);
@@ -4951,7 +5008,13 @@ impl App {
             line = line.push(output);
         }
 
-        container(line).padding([6, 4]).into()
+        // A declared height, because the device picker is placed on top of
+        // this bar before iced has laid any of it out. See `BAR_HEIGHT`.
+        container(line)
+            .padding([6, 4])
+            .height(Length::Fixed(Self::BAR_HEIGHT))
+            .align_y(iced::Alignment::Center)
+            .into()
     }
 
     /// Where the sound is, and everywhere it could be.
@@ -4994,37 +5057,27 @@ impl App {
             } else {
                 middle(&device.name, 24)
             };
-            // A tick only where the sound is. The blank one is as tall as the
-            // tick it stands in for, because an empty container has no height
-            // and the rows without a tick would come out shorter than the one
-            // with it — the same trap the table's transport column has.
-            let mark: Element<'_, Message> = if is_output {
-                icon::tick(on_cursor).into()
-            } else {
-                container(text(""))
-                    .width(Length::Fixed(icon::TRANSPORT))
-                    .height(Length::Fixed(icon::TRANSPORT))
-                    .into()
-            };
-            let entry = container(
-                row![
-                    mark,
-                    text(label)
-                        .size(13)
-                        .style(move |theme: &iced::Theme| text::Style {
-                            color: Some(match (on_cursor, takeable) {
-                                (false, false) => {
-                                    palette::of(theme).background.base.text.scale_alpha(0.4)
-                                }
-                                (lit, _) => entry_text(theme, lit),
-                            }),
+            // A tick only where the sound is. `panel_entry` draws the glyph
+            // column whether or not there is a glyph in it, so the rows keep
+            // one indent and one height either way — which is the rule that
+            // used to be a blank container of exactly the tick's size here,
+            // written out a second time.
+            let mark = is_output.then(|| Element::from(icon::tick(on_cursor)));
+            let entry = panel_entry(
+                mark,
+                text(label)
+                    .size(13)
+                    .style(move |theme: &iced::Theme| text::Style {
+                        color: Some(match (on_cursor, takeable) {
+                            (false, false) => {
+                                palette::of(theme).background.base.text.scale_alpha(0.4)
+                            }
+                            (lit, _) => entry_text(theme, lit),
                         }),
-                ]
-                .spacing(6)
-                .align_y(iced::Alignment::Center),
+                    })
+                    .into(),
+                None,
             )
-            .width(Length::Fill)
-            .padding([5, 10])
             .style(move |theme: &iced::Theme| entry_fill(theme, on_cursor, true));
             // A row for a device that cannot be heard is not a target: the
             // server would refuse the transfer anyway, and a control that
@@ -5044,30 +5097,40 @@ impl App {
 
         let last = devices.len();
         let on_cursor = at == last;
-        rows =
-            rows.push(
-                mouse_area(
-                    container(text("Stop everywhere").size(13).style(
-                        move |theme: &iced::Theme| text::Style {
+        rows = rows.push(
+            mouse_area(
+                panel_entry(
+                    None,
+                    text("Stop everywhere")
+                        .size(13)
+                        .style(move |theme: &iced::Theme| text::Style {
                             color: Some(if on_cursor {
                                 palette::of(theme).primary.base.text
                             } else {
                                 palette::of(theme).background.base.text.scale_alpha(0.7)
                             }),
-                        },
-                    ))
-                    .width(Length::Fill)
-                    .padding([5, 10])
-                    .style(move |theme: &iced::Theme| entry_fill(theme, on_cursor, true)),
+                        })
+                        .into(),
+                    None,
                 )
-                .on_enter(Message::DeviceAt(last))
-                .on_press(Message::DeviceAt(last))
-                .on_release(Message::PickDevice(None)),
-            );
+                .style(move |theme: &iced::Theme| entry_fill(theme, on_cursor, true)),
+            )
+            .on_enter(Message::DeviceAt(last))
+            .on_press(Message::DeviceAt(last))
+            .on_release(Message::PickDevice(None)),
+        );
 
         panel(
             column![
-                container(text("Playing on").size(11).style(style::dim)).padding([4, 10]),
+                // Given the height `MENU_TITLE` claims rather than left to
+                // measure, the same as the row menu's title and for the same
+                // reason: `devices_origin` places this panel before iced lays
+                // it out, so a title that merely comes out near that number
+                // is a panel drawn where nothing is.
+                container(text("Playing on").size(11).style(style::dim))
+                    .height(Length::Fixed(Self::MENU_TITLE))
+                    .align_y(iced::Alignment::Center)
+                    .padding([0, ENTRY_PAD_X as u16]),
                 rows,
             ]
             .spacing(0),
@@ -5820,7 +5883,8 @@ mod cards {
 #[cfg(all(test, feature = "demo"))]
 mod context {
     use super::{
-        glyphs, tail, vim, Anchor, App, Entry, Focus, Message, Pane, Picker, RowMenu, PANEL_PADDING,
+        glyphs, tail, vim, Anchor, App, Entry, Focus, Message, Pane, Picker, RowMenu,
+        DEVICES_WIDTH, PANEL_PADDING,
     };
 
     /// The demo's own boot, which is a seeded peer and nothing else — on a
@@ -6536,6 +6600,62 @@ mod context {
     /// window — the widest one goes negative below about 454px and the
     /// narrowest not until 232, and a loop over only the narrow case would
     /// stop covering the wide one the day `MENU_MAX_WIDTH` moved.
+    /// The device picker hangs off the speaker button, and nothing about
+    /// where the pointer is can move it.
+    ///
+    /// The first half is the signature: `devices_origin` takes a window and a
+    /// row count and cannot consult a cursor, which is the whole of the fix —
+    /// the panel was placed with `fit(self.cursor, …)` from inside `view`, so
+    /// every mouse move re-pinned it and it slid about under the hand that
+    /// had opened it. The second half is what it is placed *against*, and
+    /// this is what says it: the panel's right edge is the edge the bar's own
+    /// contents end at, and its bottom edge is the bar's top.
+    ///
+    /// **Said twice, the second time as literals**, for the reason
+    /// `a_submenu_slides_to_fit` keeps its `assert_eq!(lap, 4.0)`: written
+    /// only against the constants, both sides of the comparison move together
+    /// and the assertion holds whatever they are set to. 628 and 423 are this
+    /// panel at 860×600 with two devices, worked out by hand — 860 − 16 − 216,
+    /// and 600 − 16 − 48 − (8 + 24 + 27 × 3).
+    #[test]
+    fn the_device_picker_hangs_off_the_speaker_button() {
+        let window = iced::Size::new(860.0, 600.0);
+        let at = App::devices_origin(window, 3);
+        assert_eq!(
+            at.x + DEVICES_WIDTH,
+            window.width - App::PAGE_PADDING,
+            "the picker does not end where the bar's contents do"
+        );
+        assert_eq!(
+            at.y + App::devices_height(3),
+            window.height - App::PAGE_PADDING - App::BAR_HEIGHT,
+            "the picker does not sit on top of the bar"
+        );
+        assert_eq!((at.x, at.y), (628.0, 423.0));
+    }
+
+    /// …and it stays on the glass on a window too small to hold it.
+    ///
+    /// `pin` clips rather than scrolls, so a panel placed above the top edge
+    /// simply loses those rows — the same failure `a_menu_never_hangs_off_the_glass`
+    /// is about, from the other direction, because this one grows *upwards*.
+    /// Thirty devices is what a house full of speakers looks like and is well
+    /// past what a 600px window can show. Falsify it by dropping either `.max`
+    /// in `devices_origin`.
+    #[test]
+    fn the_device_picker_never_hangs_off_the_glass() {
+        for rows in 1..=30 {
+            for width in [120.0, 240.0, 860.0, 4000.0] {
+                let window = iced::Size::new(width, 600.0);
+                let at = App::devices_origin(window, rows);
+                assert!(
+                    at.x >= App::EDGE && at.y >= App::EDGE,
+                    "{rows} devices on a {width}px window put the picker at {at:?}"
+                );
+            }
+        }
+    }
+
     #[test]
     fn a_menu_never_hangs_off_the_glass() {
         for menu in [App::MENU_MIN_WIDTH, App::MENU_MAX_WIDTH] {

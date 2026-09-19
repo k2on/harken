@@ -41,14 +41,14 @@ ciborium = "0.2"
 #
 # A branch whose engine changes is broken for everyone but the person who has
 # both checkouts, and the local patch hides that perfectly.
-petros = { git = "https://github.com/k2on/petros", rev = "17ceded5cfe790cf2553d93c15882624208e9587" }
-petros-wasm-host = { git = "https://github.com/k2on/petros", rev = "17ceded5cfe790cf2553d93c15882624208e9587" }
-petros-schema = { git = "https://github.com/k2on/petros", rev = "17ceded5cfe790cf2553d93c15882624208e9587" }
-petros-sql = { git = "https://github.com/k2on/petros", rev = "17ceded5cfe790cf2553d93c15882624208e9587" }
-petros-testkit = { git = "https://github.com/k2on/petros", rev = "17ceded5cfe790cf2553d93c15882624208e9587" }
-petros-wasm-guest = { git = "https://github.com/k2on/petros", rev = "17ceded5cfe790cf2553d93c15882624208e9587" }
-petros-axum = { git = "https://github.com/k2on/petros", rev = "17ceded5cfe790cf2553d93c15882624208e9587" }
-petros-auth = { git = "https://github.com/k2on/petros", rev = "17ceded5cfe790cf2553d93c15882624208e9587" }
+petros = { git = "https://github.com/k2on/petros", rev = "eaf67f37417dcfea53b5c847a0c4079434725db9" }
+petros-wasm-host = { git = "https://github.com/k2on/petros", rev = "eaf67f37417dcfea53b5c847a0c4079434725db9" }
+petros-schema = { git = "https://github.com/k2on/petros", rev = "eaf67f37417dcfea53b5c847a0c4079434725db9" }
+petros-sql = { git = "https://github.com/k2on/petros", rev = "eaf67f37417dcfea53b5c847a0c4079434725db9" }
+petros-testkit = { git = "https://github.com/k2on/petros", rev = "eaf67f37417dcfea53b5c847a0c4079434725db9" }
+petros-wasm-guest = { git = "https://github.com/k2on/petros", rev = "eaf67f37417dcfea53b5c847a0c4079434725db9" }
+petros-axum = { git = "https://github.com/k2on/petros", rev = "eaf67f37417dcfea53b5c847a0c4079434725db9" }
+petros-auth = { git = "https://github.com/k2on/petros", rev = "eaf67f37417dcfea53b5c847a0c4079434725db9" }
 harken = { path = "domain", default-features = false }
 # No `fira-sans`: the font is `branding/font/`, embedded by `iced/src/main.rs`
 # from `iced/assets/Inter-Regular.ttf`. A font *must* be embedded either way —

@@ -32,7 +32,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeIn, FadeOut, SlideInDown } from 'react-native-reanimated';
 
 import { Kind, type Device } from '@/listening';
-import { FONT, radius, space, type Theme } from '@/theme';
+import { FONT, radius, space, type Theme, sheet } from '@/theme';
 import { Icon } from './icon';
 
 /** What a row is drawn as. One glyph per kind, and nothing infers it: the
@@ -160,7 +160,7 @@ export function Devices({
   );
 }
 
-const styles = (t: Theme) =>
+const styles = sheet((t: Theme) =>
   StyleSheet.create({
     // Written out rather than spread from `absoluteFill`: these typings expose
     // it as a registered style and not as an object, so it cannot be spread
@@ -197,4 +197,5 @@ const styles = (t: Theme) =>
     rowNameOn: { color: t.accent, fontWeight: '600' },
     rowOff: { color: t.faint },
     rowWhy: { fontFamily: FONT, fontSize: 11.5, color: t.faint },
-  });
+  }),
+);

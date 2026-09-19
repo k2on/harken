@@ -1905,9 +1905,10 @@ Four things about it that are each a decision:
 - **Two gestures, split by axis.** Vertical opens and closes, from anywhere,
   including anywhere on the expanded sheet; it fails on a horizontal drag,
   which is what leaves the seek bar's own gesture alone. Horizontal *on the
-  bar* skips, because a mini bar is the one control people reach for without
-  looking. Both track the finger rather than firing on release: a sheet that
-  only moves after you let go is a sheet you are not sure you are dragging.
+  bar* moves through the queue, because a mini bar is the one control people
+  reach for without looking. Both track the finger rather than firing on
+  release: a sheet that only moves after you let go is a sheet you are not
+  sure you are dragging.
 - **The lift gesture is built twice from one description.** A `Gesture`
   belongs to the detector it is given to, and this one has to be on the sheet
   *and* on the bar.
@@ -1920,10 +1921,114 @@ Four things about it that are each a decision:
 - **The tab bar is drawn first, so the expanded player covers it.** A
   full-screen player with a tab bar across the bottom is two apps.
 
+**The collapsed bar is a card on a fade, not a strip across the bottom.** It
+was full-bleed with a hairline along its top, which is the shape of a toolbar
+and reads as part of the chrome rather than as the thing playing. Now it is
+inset by `BAR_SIDE` with a radius, a hairline border and a slight shadow, and
+`PlayerScrim` — a `LinearGradient` from nothing to the page's own background —
+runs under it and the tab bar so the list dissolves into the chrome instead of
+sliding beneath a hard edge.
+
+Four things about it:
+
+- **The scrim is drawn by the shell, not by the player.** The player is one
+  full-screen container that translates, so a gradient inside it would ride up
+  with the sheet. It ends up `bottom: 0` in `(app)/_layout.tsx`, between the
+  `Stack` and the tab bar, and its height is the whole of the chrome plus the
+  `BAR_FADE` above it.
+- **A gradient's clear end is the page's background at zero alpha, never
+  `'transparent'`.** That keyword is `rgba(0, 0, 0, 0)`, so on a light theme a
+  fade to it goes through grey — a dirty smear at the top of the fade rather
+  than nothing at all. `clear()` in `ui/player.tsx` writes the theme's own
+  background with a zero alpha.
+- **The fade is part of the shell's `inset`.** Every scrolling screen already
+  pads its bottom by what the chrome takes, and a fade the lists did not know
+  about would wash out the last row of each of them.
+- **The progress hairline moved to the card's bottom edge**, because the card
+  is rounded now and a line across the top is a line drawn through two
+  corners.
+
+**And a horizontal drag on it reveals the neighbouring tracks.** The faces sit
+in a row three wide inside the card and the row follows the finger, so what a
+drag shows is the track before and the track after rather than a skip you
+could not see coming. Past a third of a face, or fast enough, that neighbour
+becomes the track; short of it the row springs back with nothing changed. At
+either end of the queue there is nothing to reveal, so the row leans against
+`wall` and returns.
+
+**The reel is not parked waiting for the skip to land**, which is the one
+thing here that had to be decided rather than drawn. `skip` goes through
+`ask`, so on a phone that is not the output it is a *message* to whichever
+device is playing — and a reel held at the neighbour until `track.id` moved
+would sit there frozen when that device is slow or gone. So the commit fires
+the skip and springs the row home in the same breath, and the faces redraw
+from whatever the session then says.
+
+**The tab bar's height is its content plus the safe-area inset, not one
+number.** It was a fixed height with the inset applied as padding *inside* it,
+so on a phone with a 34px home indicator the icons and their labels had about
+ten pixels to share and the bar read as cut off. `TAB_BAR` is the content
+height now and the inset is added to it, which is also what every screen's
+`inset` is computed from, so nothing else had to move.
+
+**A tab press is a `replace` with no animation.** Three tabs are three peers,
+not a stack, so sliding between them says a hierarchy that is not there — and
+pressing the tab you are already on does nothing at all rather than replaying
+the route. The tab bar keeps the last tab it lit, so a record pushed over a
+tab leaves that tab lit underneath.
+
+**Album and playlist art flies between a row and the page it opens**, in
+`ui/shared.tsx`. Reanimated 4 dropped `sharedTransitionTag` and every library
+that offers this is a native module — which here would move `nodeModulesHash`
+and the recorded Maven graph — so it is hand-rolled: the row measures itself
+on press, the page measures itself on layout, and one absolutely positioned
+square is animated between the two rectangles over an overlay. `lift` starts
+the flight in and `drop` starts it back out, from the back button, *before*
+the pop, because that is the last moment the page can still be measured.
+Every failure path — no provider, an end that never registered, a page with no
+cover — degrades to no flight rather than to a stuck square.
+
+**Not verified on a device.** Nothing in the container this was written in can
+build an APK, so the card, the fade, the flight and the reel are all reasoned
+and type-checked rather than seen.
+
+**The scrolling was choppy for three compounding reasons, and none of them was
+the list.** Worth writing down because each one is invisible in the file it
+is in:
+
+- **The whole player context re-rendered four times a second.** `expo-audio`
+  reports status at 250ms and the position rode on the same object every
+  screen reads, so a ticking clock re-rendered every subscriber of
+  `usePlayer()`. `useClock()` is a second context beside it carrying the
+  position, the duration and `buffering`, and the three small components that
+  actually draw a moving number are its only subscribers.
+- **`onPress` was rebuilt on every one of those renders**, which is a new prop
+  on every visible row, which defeats the memo each row is wrapped in. The
+  screens hold the rows and the play function in refs and hand the list one
+  callback whose identity never moves.
+- **`StyleSheet.create` ran per render.** Every file wrote
+  `const styles = (t: Theme) => StyleSheet.create({...})` and called it inside
+  the component, so each render registered a fresh sheet and every style prop
+  was a new value. `sheet()` in `theme.ts` memoises that by theme — two
+  entries, ever — and every file in `mobile/src` is wrapped in it now.
+
+On top of that the rows are a declared `ROW` tall rather than whatever their
+contents came to, so `FlatList` can place a screenful without measuring one,
+and its windowing is tuned down from the defaults.
+
 **A row has two swipes**, in `ui/swipe.tsx`: right to put the track on a
 playlist, left for what is not built yet. It snaps back either way rather than
 staying open, because both actions are immediate and a row that stays open is
-a row with a second state to close. The left one saying "Play next is not
+a row with a second state to close.
+
+**It follows the finger to the threshold and resists past it.** A row that
+tracks a drag all the way across says it can be dragged all the way across,
+and there is nothing over there; one that simply stops dead at the threshold
+reads as a row that has jammed. `ui/rubber.ts` is the one answer to both —
+free travel to the point where the action would fire, then an exponential
+approach to a hard limit, which is the rubber band every list on a phone
+already has. The bar's reel leans on the same function at the ends of the
+queue, because it is the same question. The left one saying "Play next is not
 built yet" out loud is deliberate — a swipe that appears to do nothing is a
 gesture people try once.
 

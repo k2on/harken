@@ -13,7 +13,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { FONT, radius, space, useTheme, type Theme } from '@/theme';
+import { FONT, radius, space, useTheme, type Theme, sheet } from '@/theme';
 import { Icon } from '@/ui/icon';
 import { useShell } from './_layout';
 
@@ -97,7 +97,7 @@ function Link({
   );
 }
 
-const styles = (t: Theme) =>
+const styles = sheet((t: Theme) =>
   StyleSheet.create({
     page: { flex: 1, backgroundColor: t.bg },
     inner: { paddingHorizontal: space.lg, gap: space.sm },
@@ -124,4 +124,5 @@ const styles = (t: Theme) =>
     linkText: { flex: 1, gap: 1 },
     linkLabel: { fontFamily: FONT, fontSize: 15, color: t.text, fontWeight: '700' },
     linkWhy: { fontFamily: FONT, fontSize: 12.5, color: t.dim },
-  });
+  }),
+);
