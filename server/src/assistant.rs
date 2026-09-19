@@ -37,6 +37,18 @@ use harken::listening::{url, Command, Device, DeviceId, Track};
 /// are still looking at the screen they did it from.
 const SETTLE: u8 = 5;
 
+/// How many polls a speaker that *was* playing ours may answer with something
+/// else, or not answer at all, before it is let go.
+///
+/// Not zero, which it was. Between two tracks Home Assistant can report a
+/// player with no `media_content_id` for a poll, a Sonos integration that
+/// reloads makes the entity `unavailable` for a moment, and a proxy in front
+/// of the house can refuse one request in a hundred — and each of those, read
+/// as "it has been sent somewhere else", was a hand-off released and the
+/// speaker paused in the middle of a track, for no reason anyone could see.
+/// Three seconds is longer than any of those and shorter than a doorbell.
+const LAPSE: u8 = 3;
+
 /// How Home Assistant describes a player, pared down to what decides
 /// anything.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -133,9 +145,9 @@ struct Holding {
     /// The same tracks as the speaker was given them, so what it reports back
     /// can be matched to an index without re-deriving anything.
     urls: Vec<String>,
-    /// How many more polls it may answer with something that is not ours
-    /// before it is let go. Set by a hand-off and cleared by the first report
-    /// that names one of our URLs.
+    /// How many more polls it may answer with something that is not ours, or
+    /// not answer at all, before it is let go. [`SETTLE`] on a hand-off,
+    /// [`LAPSE`] again after every poll that names one of our URLs.
     settling: u8,
 }
 
@@ -264,15 +276,9 @@ impl Bridge {
         // entirely — a radio stream, a doorbell chime — and the only thing
         // that tells those apart is how long ago we handed it something.
         let Some(at) = held.urls.iter().position(|u| *u == now.url) else {
-            if held.settling > 0 {
-                held.settling -= 1;
-                return Some(Heard::Settling);
-            }
-            let user = held.user.clone();
-            self.held.remove(entity);
-            return Some(Heard::Gone { user });
+            return self.lapse(entity);
         };
-        held.settling = 0;
+        held.settling = LAPSE;
         Some(Heard::Said(Said {
             user: held.user.clone(),
             device: entity.to_string(),
@@ -283,11 +289,24 @@ impl Bridge {
         }))
     }
 
-    /// The speaker stopped answering. It is let go, and whoever had it is
-    /// told — for the reason [`Act::Release`] gives.
+    /// The speaker did not answer this poll. A few of those in a row and it is
+    /// let go, and whoever had it is told — for the reason [`Act::Release`]
+    /// gives; one alone is a lapse, for the reason [`LAPSE`] gives.
     pub fn lost(&mut self, entity: &str) -> Option<Heard> {
-        let held = self.held.remove(entity)?;
-        Some(Heard::Gone { user: held.user })
+        self.lapse(entity)
+    }
+
+    /// One poll that was not the speaker playing ours: spent from the grace it
+    /// has, and the last one lets it go.
+    fn lapse(&mut self, entity: &str) -> Option<Heard> {
+        let held = self.held.get_mut(entity)?;
+        if held.settling > 0 {
+            held.settling -= 1;
+            return Some(Heard::Settling);
+        }
+        let user = held.user.clone();
+        self.held.remove(entity);
+        Some(Heard::Gone { user })
     }
 
     /// Whose queue this speaker is playing, if anybody's.
@@ -505,24 +524,62 @@ mod tests {
             ),
             Some(Heard::Said(_))
         ));
+        // Having started, silence is a lapse rather than fetching: three
+        // polls of it — a track boundary, a blink of the integration — and
+        // the fourth is the one that lets it go. Literal counts, for the
+        // reason above.
+        for tick in 0..3 {
+            assert_eq!(
+                bridge.heard("media_player.kitchen", &quiet),
+                Some(Heard::Settling),
+                "a lapse, {tick} ticks in"
+            );
+        }
         assert_eq!(
             bridge.heard("media_player.kitchen", &quiet),
             Some(Heard::Gone {
                 user: "alice".into()
             }),
-            "having started once, silence is not fetching any more"
+            "silent for three seconds, it is not ours any more"
         );
+        // …and a poll that matched in between starts the three again, which
+        // is what keeps a speaker on a long album.
+        bridge.told("alice", "media_player.kitchen", start(&["music/a.mp3"], 0));
+        for _ in 0..4 {
+            bridge.heard(
+                "media_player.kitchen",
+                &playing("http://10.0.0.2:8787/media/music/a.mp3", 0),
+            );
+            bridge.heard("media_player.kitchen", &quiet);
+            bridge.heard("media_player.kitchen", &quiet);
+        }
+        assert_eq!(bridge.holder("media_player.kitchen"), Some("alice"));
     }
 
     /// A speaker that has stopped answering is let go too, and whoever had it
     /// is told: a bar counting up for a speaker that is not there is worse
-    /// than one that stops.
+    /// than one that stops. Not on the first poll it misses, though — a proxy
+    /// refusing one request, or an integration reloading, is a second of
+    /// silence and not a speaker that is gone.
     #[test]
     fn a_speaker_that_stops_answering_is_let_go() {
         let mut bridge = bridge();
         assert!(bridge.lost("media_player.kitchen").is_none());
         bridge.told("alice", "media_player.kitchen", start(&["music/a.mp3"], 0));
+        let Some(Heard::Said(_)) = bridge.heard(
+            "media_player.kitchen",
+            &playing("http://10.0.0.2:8787/media/music/a.mp3", 0),
+        ) else {
+            panic!("playing ours")
+        };
         assert_eq!(bridge.holder("media_player.kitchen"), Some("alice"));
+        for miss in 0..3 {
+            assert_eq!(
+                bridge.lost("media_player.kitchen"),
+                Some(Heard::Settling),
+                "still held after {miss} unanswered polls"
+            );
+        }
         assert_eq!(
             bridge.lost("media_player.kitchen"),
             Some(Heard::Gone {
@@ -783,6 +840,7 @@ pub mod ha {
                 }
             }
             for entity in dropped {
+                println!("  {entity}: the room moved its sound elsewhere; paused");
                 bridge.forget(&entity);
                 call(config, &entity, "media_pause", None);
             }
@@ -792,11 +850,13 @@ pub mod ha {
 
             // …and what they are actually doing.
             for entity in holding(bridge) {
-                let answer = match state(config, &entity) {
-                    Some(now) => bridge.heard(&entity, &now),
+                let now = state(config, &entity);
+                let answer = match &now {
+                    Some(now) => bridge.heard(&entity, now),
                     // Unreachable, unavailable, or renamed. Letting go is the
                     // honest answer: a bar counting up for a speaker that is
-                    // not there is worse than one that stops.
+                    // not there is worse than one that stops — after a few
+                    // polls of it, since one is a proxy blinking.
                     None => bridge.lost(&entity),
                 };
                 match answer {
@@ -805,15 +865,27 @@ pub mod ha {
                     // is what leaves `moving` set and the picker reading
                     // *connecting* rather than *playing*.
                     Some(Heard::Settling) | None => {}
-                    Some(Heard::Gone { user }) => perform(
-                        config,
-                        hub,
-                        &wires,
-                        Act::Release {
-                            user,
-                            entity: entity.clone(),
-                        },
-                    ),
+                    Some(Heard::Gone { user }) => {
+                        // Said out loud, because a speaker being let go looks
+                        // exactly like one that stopped for no reason, and
+                        // the reason is only ever known here.
+                        match &now {
+                            Some(now) => println!(
+                                "  {entity}: {} {:?}, which is not ours; let go",
+                                now.state, now.url
+                            ),
+                            None => println!("  {entity}: not answering; let go"),
+                        }
+                        perform(
+                            config,
+                            hub,
+                            &wires,
+                            Act::Release {
+                                user,
+                                entity: entity.clone(),
+                            },
+                        );
+                    }
                 }
             }
 
@@ -882,6 +954,7 @@ pub mod ha {
             // because this room closed would be the bug the release rule
             // exists to avoid, arriving from the other side.
             if bridge.holder(&entity).is_some_and(|u| u == room) {
+                println!("  {entity}: nobody is listening as {room} any more; paused");
                 bridge.forget(&entity);
                 call(config, &entity, "media_pause", None);
             }
@@ -996,6 +1069,11 @@ pub mod ha {
                 let Some(first) = urls.get(at) else {
                     return;
                 };
+                println!(
+                    "  {entity}: handed {} track(s) from {at}, {}",
+                    urls.len(),
+                    if playing { "playing" } else { "paused" }
+                );
                 call(config, &entity, "clear_playlist", None);
                 if !call(config, &entity, "play_media", Some(media(first, "play"))) {
                     return;

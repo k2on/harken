@@ -2228,6 +2228,25 @@ Six things that are each a decision:
   URL that is not in the queue it was given — a radio stream, a doorbell
   chime — the session stops claiming it, because a bar with a scrubber
   counting along somebody else's audio is a lie.
+
+  **After three polls of it, not one.** The grace used to end with the first
+  poll that matched, so a playing speaker was one poll from release: a track
+  boundary where Home Assistant reports no `media_content_id`, a Sonos
+  integration reloading and the entity `unavailable` for a second, a proxy
+  refusing one request in a hundred. Each read as "sent somewhere else", and
+  each was a hand-off released and the speaker paused in the middle of a
+  track — "it stopped playing randomly", with nothing anywhere saying why.
+  `LAPSE` is three polls, reset by every poll that names one of our URLs, and
+  a speaker that does not answer at all spends the same three. Longer than any
+  of those blinks and shorter than a doorbell.
+
+  **And letting go is said out loud.** The bridge prints every hand-off, every
+  release with what the speaker reported at the time, and every pause it
+  issues with which rule issued it — into the journal, because a speaker that
+  stops is indistinguishable from a speaker that was told to, and the reason
+  was only ever known in this thread. Read `journalctl -u harken` before
+  reading Home Assistant's history, which on this deployment records nothing
+  for `media_player`.
 - **Only a held player is polled.** A speaker nobody handed anything to costs
   nothing, and a server whose house is asleep makes no requests at all.
 - **A speaker fetches from a different address than a phone.** `mediaUrl` is
