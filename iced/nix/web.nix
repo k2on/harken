@@ -101,6 +101,14 @@
           cp iced/web/index.html iced/web/favicon.svg $out/
           wasm-bindgen --target web --no-typescript --out-dir $out/pkg \
             target/wasm32-unknown-unknown/release/harken-iced.wasm
+          # The page names the module and the wasm by build, so a browser that
+          # cached the last one — heuristically fresh for years, off the
+          # store's 1970 mtimes — is handed URLs it has never seen. The hash
+          # is this output's own: it moves with every rebuild and never
+          # without one. `server/src/web.rs` reads the same hash back as the
+          # ETag.
+          substituteInPlace $out/index.html \
+            --replace-fail "v=dev" "v=$(basename $out | cut -c1-32)"
           runHook postInstall
         '';
       };

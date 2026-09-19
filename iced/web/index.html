@@ -170,11 +170,21 @@
   <body>
     <div id="boot"><img src="favicon.svg" alt="harken" /></div>
     <script type="module">
-      import init from "./pkg/harken-iced.js";
+      // `?v=dev` is rewritten to the build's store hash by `iced/nix/web.nix`,
+      // and it is on both files because a browser holding the last build never
+      // asks about either: with no `Cache-Control` and a `Last-Modified` of
+      // 1970 — which is what every file in the nix store carries — the module
+      // and the wasm are heuristically fresh for years and a reload does not
+      // revalidate a subresource. A new page naming URLs the cache has never
+      // seen is the one thing that reaches it; the server's validator
+      // (`harken_server::web`) is what keeps the next cache honest. The wasm
+      // is named here rather than left to the glue, which derives it from
+      // its own URL with the query dropped.
+      import init from "./pkg/harken-iced.js?v=dev";
       // The wasm module's `start` runs the app; take the splash down once it
       // has, and not before — the canvas is painting underneath the whole
       // time, so this is a reveal rather than a load.
-      await init();
+      await init({ module_or_path: new URL("pkg/harken-iced_bg.wasm?v=dev", document.baseURI) });
 
       const boot = document.getElementById("boot");
       // A transform on a canvas moves the box winit reads the pointer out of,

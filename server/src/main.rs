@@ -35,12 +35,12 @@ use axum::routing::get;
 use axum::Router;
 use harken::HarkenApp;
 use harken_server::assistant::ha;
-use harken_server::{library, listening};
+use harken_server::{library, listening, web};
 use petros_auth::oidc::Provider;
 use petros_auth::server::{Auth, Mode};
 use petros_auth::session::SessionStore;
 use petros_axum::Hub;
-use tower_http::services::{ServeDir, ServeFile};
+use tower_http::services::ServeDir;
 
 type Shared = Arc<Hub<HarkenApp>>;
 
@@ -152,10 +152,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // the directory is laid out. Anything else falls through to the files, and
     // anything the files do not have falls back to `index.html` — which is what
     // makes a reload of a deep link work in a single-page client.
+    // Every answer carries the build as its validator, because a store path
+    // cannot: nix gives every file in one an mtime of 1, and a browser told
+    // `Last-Modified: 1970` keeps what it has for years and is told `304`
+    // when it asks. See `harken_server::web`.
     let web = std::env::var_os("HARKEN_WEB");
     if let Some(dir) = &web {
-        let index = std::path::Path::new(dir).join("index.html");
-        app = app.fallback_service(ServeDir::new(dir).fallback(ServeFile::new(index)));
+        app = app.fallback_service(web::router(std::path::PathBuf::from(dir)));
     }
 
     let listener = tokio::net::TcpListener::bind(&addr).await?;

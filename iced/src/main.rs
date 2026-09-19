@@ -49,7 +49,7 @@ use iced::widget::{
     text_input, Row,
 };
 use iced::{Element, Length, Subscription, Task};
-use petros::{AutoCtx, Changes, Client};
+use petros::{AutoCtx, Changes, Client, ServerMsg};
 use player::{Player, Track};
 // The tab's title and the platform's media controller are the browser's, the
 // way the `<audio>` element is; the desktop build has neither.
@@ -1222,6 +1222,11 @@ struct Card {
 struct Peer {
     client: Client<HarkenApp>,
     link: Option<Link<harken::Payload>>,
+    /// `ServerMsg::Heard` frames the wire delivered, decoded or not. Against
+    /// `listening::Stats` this is the one number that says a frame arrived
+    /// and this build could not read it — which is a picker that stays empty
+    /// with everything else saying it is connected.
+    heard_frames: u64,
     /// The library, maintained rather than re-read.
     ///
     /// It is hydrated once and then told what each mutation changed, so a tap
@@ -1302,6 +1307,9 @@ struct App {
     search: String,
     /// `?` — a keymap nobody can guess is a keymap nobody uses.
     help: bool,
+    /// The debug screen: every number the session holds, for when the picker
+    /// is wrong and the bar can only say "connected".
+    debug: bool,
     /// `a` — which playlists the track under the cursor is on. A popup over
     /// the list rather than in place of it: it is about a row, and a panel
     /// that replaces the rows hides the one it is about.
@@ -1405,6 +1413,7 @@ impl Peer {
         let mut peer = Peer {
             client,
             link: None,
+            heard_frames: 0,
             library: harken::library_view(playlist),
             playlist,
             source: Source::Library,
@@ -1758,6 +1767,9 @@ impl Peer {
         if let Some(link) = &self.link {
             while let Some(msg) = link.try_recv() {
                 moved = true;
+                if matches!(msg, ServerMsg::Heard { .. }) {
+                    self.heard_frames += 1;
+                }
                 if let Err(e) = self.client.recv(msg) {
                     note = Some(e.to_string());
                 }
@@ -1829,6 +1841,7 @@ impl App {
             keys: vim::Keys::new(),
             search: String::new(),
             help: false,
+            debug: false,
             picker: None,
             menu: None,
             nav: Nav::Push,
@@ -1869,6 +1882,7 @@ impl App {
                 keys: vim::Keys::new(),
                 search: String::new(),
                 help: false,
+                debug: false,
                 picker: None,
                 menu: None,
                 nav: Nav::Push,
@@ -2274,6 +2288,7 @@ impl App {
             vim::Action::Match(delta) => self.seek(delta),
             vim::Action::Cancel => {
                 self.help = false;
+                self.debug = false;
                 self.note.clear();
                 Task::none()
             }
@@ -2283,6 +2298,12 @@ impl App {
             vim::Action::Key(c) => match c {
                 '?' => {
                     self.help = !self.help;
+                    Task::none()
+                }
+                // Every number this end of the session holds. A letter and not a
+                // route, like `?`: it is about this window, not about a page.
+                'D' => {
+                    self.debug = !self.debug;
                     Task::none()
                 }
                 // Not a motion and not a mode: `a` on a track asks the one
@@ -4624,6 +4645,12 @@ impl App {
                 .push(self.view_status(peer))
                 .into();
         }
+        if self.debug {
+            return main
+                .push(self.view_debug(peer))
+                .push(self.view_status(peer))
+                .into();
+        }
 
         main.push(head)
             .push(rule::horizontal(1))
@@ -4768,6 +4795,10 @@ impl App {
                 "which playlists this track is on \u{2014} and make one",
             ),
             ("d", "which device is making the sound, and move it"),
+            (
+                "D",
+                "every number the session holds, for when the picker is wrong",
+            ),
             ("/", "search this pane; <Enter> accepts, <Esc> drops it"),
             ("n  N", "the next match, the one before"),
             ("{  }", "the previous track, the next one"),
@@ -4786,6 +4817,153 @@ impl App {
             .padding(12)
             .height(Length::Fill)
             .into()
+    }
+
+    /// Every number this end of the session holds, as a table.
+    ///
+    /// The phone has `ui/debug.tsx` for the same reason: "connected" is one
+    /// bit and an empty picker is several different sentences — no session
+    /// yet, a session nobody has joined, a room that answered in words this
+    /// build cannot read, a pump that is not running — and the bar cannot
+    /// tell them apart. The numbers can, read against each other: `heard
+    /// frames` above `heard state` is a frame that arrived and did not decode;
+    /// `introduced on` below `epoch` is a `Here` never said; an outbox that is
+    /// not 0 across two frames is a pump that has stopped.
+    fn view_debug(&self, peer: &Peer) -> Element<'_, Message> {
+        let l = &self.listening;
+        let stats = l.stats();
+        let session = l.session();
+        let yes = |b: bool| if b { "yes" } else { "no" };
+        let mut rows: Vec<(String, String)> = vec![
+            ("server".into(), self.server.clone()),
+            (
+                "login".into(),
+                self.login
+                    .as_ref()
+                    .map(|l| format!("{} · session {}", l.user.id, l.session))
+                    .unwrap_or_else(|| "none".into()),
+            ),
+            ("this device".into(), format!("{} · {}", l.name(), l.me())),
+            ("audible".into(), yes(Player::AUDIBLE).into()),
+            (String::new(), String::new()),
+            ("link".into(), yes(peer.link.is_some()).into()),
+            ("client linked".into(), yes(peer.client.linked()).into()),
+            (
+                "epoch · introduced on".into(),
+                format!("{} · {}", peer.client.epoch(), l.introduced_on()),
+            ),
+            (
+                "said here · report · do · transfer".into(),
+                format!(
+                    "{} · {} · {} · {}",
+                    stats.said_here, stats.said_report, stats.said_do, stats.said_transfer
+                ),
+            ),
+            ("outbox".into(), l.outbox().to_string()),
+            ("heard frames (wire)".into(), peer.heard_frames.to_string()),
+            (
+                "heard state · do (decoded)".into(),
+                format!("{} · {}", stats.heard_state, stats.heard_do),
+            ),
+            (
+                "last state".into(),
+                match l.state_age_ms() {
+                    Some(ms) => format!("{:.1}s ago", ms / 1000.0),
+                    None => "never".into(),
+                },
+            ),
+            (String::new(), String::new()),
+            ("session".into(), yes(session.is_some()).into()),
+            (
+                "output · moving".into(),
+                format!(
+                    "{} · {}",
+                    session.and_then(|s| s.output.as_deref()).unwrap_or("none"),
+                    session.and_then(|s| s.moving.as_deref()).unwrap_or("none"),
+                ),
+            ),
+            (
+                "here · elsewhere".into(),
+                format!("{} · {}", yes(l.outputs_here()), yes(l.elsewhere())),
+            ),
+            (
+                "playing · at · queue · position".into(),
+                match session {
+                    Some(s) => format!(
+                        "{} · {} · {} · {}",
+                        yes(s.playing),
+                        s.at,
+                        s.queue.len(),
+                        clock(l.position_ms() as f64 / 1000.0)
+                    ),
+                    None => "—".into(),
+                },
+            ),
+            (
+                "player".into(),
+                format!(
+                    "{} · {}",
+                    self.player
+                        .track()
+                        .map(|t| t.title.as_str())
+                        .unwrap_or("nothing loaded"),
+                    if self.player.is_playing() {
+                        "playing"
+                    } else {
+                        "paused"
+                    }
+                ),
+            ),
+            (
+                "devices".into(),
+                if l.devices().is_empty() {
+                    "none".into()
+                } else {
+                    l.devices().len().to_string()
+                },
+            ),
+        ];
+        for d in l.devices() {
+            rows.push((
+                format!("  {}", d.name),
+                format!(
+                    "{} · {:?} · audible {} · here {}",
+                    d.id,
+                    d.kind,
+                    yes(d.audible),
+                    yes(d.here)
+                ),
+            ));
+        }
+        rows.push((String::new(), String::new()));
+        rows.push((
+            "log cursor · pending · songs".into(),
+            format!(
+                "{} · {} · {}",
+                peer.client.cursor(),
+                peer.pending,
+                peer.items.len()
+            ),
+        ));
+        let table = rows.into_iter().fold(column![].spacing(4), |col, (k, v)| {
+            col.push(
+                row![
+                    text(k)
+                        .size(13)
+                        .style(style::dim)
+                        .width(Length::Fixed(260.0)),
+                    text(v).size(13),
+                ]
+                .spacing(12),
+            )
+        });
+        container(
+            scrollable(column![text("the session, in numbers").size(16), table].spacing(12))
+                .style(style::bars),
+        )
+        .padding(12)
+        .height(Length::Fill)
+        .into()
     }
 
     /// The engine showing through: `cursor` is how much of the server's log has

@@ -13,3 +13,4 @@
 pub mod assistant;
 pub mod library;
 pub mod listening;
+pub mod web;

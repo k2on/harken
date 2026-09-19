@@ -1859,6 +1859,19 @@ somebody needs to see is the laptop that is not answering. It is labelled
 house takes a second or two to clear its queue and fetch, and a row that says
 nothing for those two seconds reads as a press that missed.
 
+**And `D` draws every number this end of the session holds**, the desktop's
+`ui/debug.tsx`: the login and the device id, the link and the client's
+`epoch` against the connection this device last said `Here` on, what has been
+said and heard by kind, how long ago the room last described itself, and the
+session with every device in it. "Connected" is one bit and an empty picker is
+several sentences — no session yet, a room nobody has joined, a frame this
+build could not read — and the numbers tell them apart read against each
+other: `heard frames` above `heard state` is a frame that arrived and did not
+decode; `introduced on` below `epoch` is a `Here` never said; an outbox that
+is not 0 across two frames is a pump that has stopped. It was written the
+afternoon a browser said "connected" over an empty picker and nothing on
+screen could say which of those it was.
+
 **And the desktop is in the session now**, where this was a browser-only
 feature before. Not because a desktop had nothing to say: `/listen` would have
 needed a native WebSocket client, which was a dependency this workspace did
@@ -3149,6 +3162,56 @@ Twelve things it needed:
   repeats. This is a one-shot settle of twenty percent over a second on page
   load, and the call is that it stays for everybody.
 
+## A browser keeps the client it was first given, and the store is why
+
+The listening session moved off `/listen` and onto the sync socket, the
+server was redeployed, and every device picker went empty — on a server that
+was doing everything right. `server/tests/bridge.rs` walks a phone and a
+stood-in speaker through a real `Hub` and both land in the picker; the
+production server was serving the new wasm, checked by fetching it. What was
+running in the browser was the *old* client, dialling a socket that no longer
+exists, and it would have gone on doing so for years.
+
+Two facts about a nix store path, each harmless alone:
+
+- **Every file in it is modified at second 1 of 1970.** `ServeDir` reports
+  that as `Last-Modified` and sets no `Cache-Control`, so a browser applies
+  its heuristic — fresh for a tenth of the time since modification, which is
+  about five and a half years. A reload revalidates the page it is *on*; the
+  module the page imports and the wasm the module fetches are subresources,
+  and Chrome takes those from the cache without a request.
+- **And a rebuild has the same second.** So the one time a browser does ask,
+  `If-Modified-Since: …1970…` against a new file whose mtime is that same
+  second is answered `304 Not Modified`. Both halves of HTTP caching agree
+  the client has not changed, about a build that replaced every byte.
+
+The fix is in two places because the two failures are in two places, and
+**neither alone reaches a browser that is already stale**:
+
+- `harken_server::web` serves the directory with the *build* as the
+  validator: `ETag` is the store hash of `HARKEN_WEB`, which moves with every
+  rebuild and never without one, on every file; `Cache-Control: no-cache`, so
+  the browser asks every time and is answered `304` with no body — one
+  conditional GET for a fifteen-megabyte module, which is what a cache is
+  for; `Last-Modified` stripped from the response and `If-Modified-Since`
+  from the request, so the date is never compared. Off the store
+  (`HARKEN_WEB=iced/web` on a laptop) the validator is the module's mtime
+  and length, which is what changes there.
+- `iced/web/index.html` names the module and the wasm with `?v=dev`, and
+  `iced/nix/web.nix` rewrites that to the output's own store hash at install.
+  This is the half for the browser that never asks: its cached copies are
+  heuristically fresh, so no header the server sends can reach them — but the
+  page it *does* revalidate now points at URLs the cache has never seen. The
+  wasm is named explicitly (`init({ module_or_path })`) because the glue
+  derives it from its own URL with the query dropped.
+
+The phone has the same problem in different clothes: an APK is the build it
+was installed from, and a server change that drops an endpoint strands every
+phone until the new APK is installed. Nothing here can fix that from the
+server side; it is worth knowing which sentence the picker being empty is.
+
+`server/tests/web.rs` holds all of it over a real socket, including the
+exchange a stale browser makes: `If-Modified-Since` for 1970 answered `200`.
 
 ## Both clients maintain their list; only one of them re-reads anything
 

@@ -83,6 +83,27 @@ pub struct Remote {
     /// heard of this device — and the engine counts connections for exactly
     /// this.
     epoch: u64,
+    /// What has crossed, counted. For the debug screen and nothing else.
+    stats: Stats,
+}
+
+/// Every number this end of the session holds, for the one screen that draws
+/// them: what it has said, what it has heard, and when. The picker being empty
+/// is one of several sentences — no session, a session with no devices, a
+/// room that never answered — and the bar cannot tell them apart. These can.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Stats {
+    /// `Here`, `Report`, `Do`, `Transfer` actually handed to the client —
+    /// not queued: what was said while unlinked is dropped, and is not here.
+    pub said_here: u64,
+    pub said_report: u64,
+    pub said_do: u64,
+    pub said_transfer: u64,
+    /// `State` and `Do` frames that decoded as [`Hear`]. What the wire
+    /// carried is the peer's count to keep; the gap between the two is a
+    /// frame this build could not read.
+    pub heard_state: u64,
+    pub heard_do: u64,
 }
 
 impl Remote {
@@ -115,6 +136,36 @@ impl Remote {
     /// bar has a device picker to draw.
     pub fn live(&self) -> bool {
         self.session.is_some()
+    }
+
+    /// The counts, for the debug screen.
+    pub fn stats(&self) -> Stats {
+        self.stats
+    }
+
+    /// The connection this device last said `Here` on, against
+    /// [`petros::Client::epoch`]: equal means it has introduced itself on the
+    /// current socket, and 0 means never.
+    pub fn introduced_on(&self) -> u64 {
+        self.epoch
+    }
+
+    /// What is waiting for the next pump. Anything but 0 for more than a tick
+    /// is a pump that is not running.
+    pub fn outbox(&self) -> usize {
+        self.out.len()
+    }
+
+    /// What this device calls itself in the room.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// How long ago the server last described the session, by this clock.
+    pub fn state_age_ms(&self) -> Option<f64> {
+        self.session
+            .as_ref()
+            .map(|_| (now_ms() - self.since).max(0.0))
     }
 
     pub fn session(&self) -> Option<&Session> {
@@ -217,16 +268,26 @@ impl Remote {
             );
         }
         for say in self.out.drain(..) {
+            match &say {
+                Say::Here { .. } => self.stats.said_here += 1,
+                Say::Report { .. } => self.stats.said_report += 1,
+                Say::Do { .. } => self.stats.said_do += 1,
+                Say::Transfer { .. } => self.stats.said_transfer += 1,
+            }
             let _ = client.say(&say);
         }
         let mut todo = Vec::new();
         for hear in client.heard::<Hear>() {
             match hear {
                 Hear::State { session } => {
+                    self.stats.heard_state += 1;
                     self.session = Some(session);
                     self.since = now_ms();
                 }
-                Hear::Do { command } => todo.push(command),
+                Hear::Do { command } => {
+                    self.stats.heard_do += 1;
+                    todo.push(command);
+                }
             }
         }
         todo
@@ -347,6 +408,7 @@ fn device_name() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use petros::ServerMsg;
 
     fn session(output: Option<&str>) -> Session {
         Session {
@@ -436,5 +498,71 @@ mod tests {
         remote.session = Some(session(Some("other")));
         remote.report(&[], 0, true, 0);
         assert!(remote.out.is_empty());
+    }
+
+    /// The debug screen's numbers, against a real client: what the pump
+    /// hands over is counted as said, what it decodes is counted as heard,
+    /// and a frame the wire carried that is not [`Hear`] is counted by
+    /// neither — which is the gap that screen exists to show.
+    #[test]
+    fn the_numbers_the_debug_screen_draws_are_what_crossed() {
+        let mut client = Client::<harken::HarkenApp>::open(
+            petros::open_memory().unwrap(),
+            "me",
+            petros::AutoCtx::system(),
+        )
+        .unwrap();
+        // A fresh client assumes something is carrying its frames; a peer with
+        // no server is told otherwise, as the app tells it.
+        client.disconnected();
+        let mut remote = Remote::new();
+        remote.open("login-1");
+
+        // Unlinked: nothing is said, and nothing is counted as said.
+        remote.ask(Command::Play);
+        assert!(remote.pump(&mut client).is_empty());
+        assert_eq!(remote.stats(), Stats::default());
+        assert_eq!(remote.outbox(), 0, "dropped, not kept, while unlinked");
+
+        // A connection: the pump introduces this device on it, once.
+        client.connected().unwrap();
+        remote.pump(&mut client);
+        remote.pump(&mut client);
+        assert_eq!(remote.stats().said_here, 1);
+        assert_eq!(remote.introduced_on(), client.epoch());
+        assert!(remote.state_age_ms().is_none(), "no session yet");
+
+        // The room describes itself; a `Do` arrives; and a frame in words this
+        // build does not know arrives too.
+        let state = petros::encode(&Hear::State {
+            session: Session {
+                output: Some("login-1".into()),
+                ..Session::default()
+            },
+        })
+        .unwrap();
+        let doing = petros::encode(&Hear::Do {
+            command: Command::Pause,
+        })
+        .unwrap();
+        let alien = petros::encode(&("not", "a", "hear")).unwrap();
+        for hear in [state, doing, alien] {
+            client.recv(ServerMsg::Heard { hear }).unwrap();
+        }
+        let todo = remote.pump(&mut client);
+        assert_eq!(todo, vec![Command::Pause]);
+        let stats = remote.stats();
+        assert_eq!((stats.heard_state, stats.heard_do), (1, 1));
+        assert!(remote.live());
+        assert!(remote.outputs_here());
+        assert!(remote.state_age_ms().is_some_and(|ms| ms < 5_000.0));
+
+        // Said, now that it is linked: a report and a transfer each count once.
+        remote.report(&[], 0, true, 0);
+        remote.transfer(None);
+        remote.pump(&mut client);
+        let stats = remote.stats();
+        assert_eq!((stats.said_report, stats.said_transfer), (1, 1));
+        assert_eq!(remote.outbox(), 0);
     }
 }
