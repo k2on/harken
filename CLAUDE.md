@@ -907,7 +907,22 @@ against one of them.
   `nodeModulesHash` in `mobile/nix/default.nix` is the hash of the installed
   tree, per platform, and each can only be computed on the machine it belongs
   to — a stale one fails the build and nix prints the right one, which is the
-  whole mechanism. A new *native* module moves `mobile/gradle-deps.json` as
+  whole mechanism.
+
+  **Except on a store that already holds the old output.** It is a
+  fixed-output derivation, and nix decides whether one is built from its hash
+  alone: an output with that hash in the store means *done*, whatever
+  `package.json` says now. 494a38a moved the `@petros/client` pin and left
+  both hashes where they were; the first CI run after failed for an unrelated
+  reason and every one since restored the previous run's store, found
+  yesterday's `node_modules` under today's hash, and passed — so v0.1.10 shipped
+  a phone whose client had no `tick`, which is the pump the listening session
+  rides. It stood in every room saying nothing, the picker never appeared on
+  it, and no other device ever saw it. The log has no line about
+  `harken-expo-node-modules` at all, which is the tell: a derivation that was
+  not built was substituted, and a stale FOD substitutes silently. Move both
+  hashes with the pin, even to a value that is wrong — a wrong hash fails and
+  names itself; an old one passes. A new *native* module moves `mobile/gradle-deps.json` as
   well: gradle's Maven graph is recorded and replayed offline, so an artifact
   nobody recorded is not a slow download but a build that cannot reach it.
   Re-record with the `gradle-deps` workflow button (`nix run .#gradle-deps`),

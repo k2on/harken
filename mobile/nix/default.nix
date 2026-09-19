@@ -22,17 +22,32 @@ in
       # resolves the optional dependencies that carry native binaries for the
       # machine it installs on. Both move whenever `package.json` or
       # `bun.lock` does, and each can only be computed on the machine it
-      # belongs to. When one goes stale, nix prints the right one.
+      # belongs to. When one goes stale, nix prints the right one —
       #
-      # **So only the platform that last built one has a fresh number here.**
-      # A dependency change moves both, and nothing can compute a hash for a
-      # machine it is not on — so the other fails on its first build after,
-      # names itself, and prints what to paste. That is the mechanism rather
-      # than a thing to fix before pushing, and it is why these two are
-      # allowed to disagree about how recently they were true.
+      # **— on a store that does not already hold the old answer.** This is a
+      # fixed-output derivation, and nix decides whether one needs building
+      # from its *hash alone*: a store that has an output with this hash has
+      # this derivation built, whatever `package.json` says now. So a pin bump
+      # beside an unmoved hash is not a build that fails and names itself. On
+      # CI it is a build that restores the last run's store, finds yesterday's
+      # `node_modules` under today's hash, and ships it green: v0.1.10 carried
+      # an `@petros/client` without the `tick` the phone's listening pump
+      # rides, and every phone on it stood in the room saying nothing. The
+      # mechanism only fires cold. **Move both hashes with the pin, even if
+      # one of them has to be a wrong value you cannot compute here** — a
+      # wrong hash fails and prints the right one; an old hash passes.
+      #
+      # Nothing can compute a hash for a machine it is not on, so from an
+      # aarch64 laptop the x86_64 one is asked of ark — which is x86_64, and
+      # is also the Gitea runner, so its store *is* the one holding the stale
+      # output. `--rebuild` is what makes nix build it again regardless and
+      # then say what it got:
+      #
+      #   ssh ark nix shell nixpkgs#git --command \
+      #     nix build github:k2on/harken/<rev>#expoModules --rebuild --no-link
       nodeModulesHash = {
-        aarch64-linux = "sha256-Lo8p11fynW14olU8Sz5HAPQFrwtEe/xS/4t5v9qj5Hc=";
-        x86_64-linux = "sha256-7lhXosmf7bvVIAisLiNIxhBYkq+zg/urFku2KDzzxd8=";
+        aarch64-linux = "sha256-uxYBKb8kJva4e4JfTU5S0TOE3YpvvRc1rNhGcnm0KLs=";
+        x86_64-linux = "sha256-glX2/MhnM+R/8ZH7eeHLAIEpyk4U/y4I8QFq2eRrYHI=";
       };
 
       # The generator ships no lockfile — the npm package is the built CLI and
